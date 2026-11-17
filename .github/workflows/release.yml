@@ -24,8 +24,10 @@ jobs:
     env:
       # Through env, never inlined into a script: a tag name is pushed text.
       TAG: ${{ github.ref_name }}
-      OUT: ${{ runner.temp }}/release
     steps:
+      - name: Where the release is built
+        # `runner` has no value in a job's env (GitHub refuses the whole file), so the path is set here.
+        run: echo "OUT=$RUNNER_TEMP/release" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0  # the tag's commit is checked against main's history below
