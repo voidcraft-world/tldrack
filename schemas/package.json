@@ -1,0 +1,34 @@
+{
+  "name": "@tldrack/schemas",
+  "version": "0.1.0",
+  "description": "The zod contracts tldrack's bridge, plugins and pages agree on: every wire the rack reads, the Laya ledger, and the eval results file.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voidcraft-world/tldrack.git",
+    "directory": "schemas"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./*.ts": "./src/*.ts",
+    "./*": "./src/*.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^6.0.3"
+  }
+}

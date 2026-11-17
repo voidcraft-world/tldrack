@@ -1,0 +1,586 @@
+/**
+ * The shared panel, tag, callout, meter and motion classes of these pages (the rack, Laya
+ * review, the diagram, the office), loaded once by `styles/boot.ts`. The look is FUI
+ * ("fictional user interface"): sharp corners, graphite glass, accent corner brackets and
+ * monospace readouts.
+ *
+ * Usage:
+ *   <div class="fui-panel">
+ *     <span class="fui-corner tl"></span><span class="fui-corner tr"></span>
+ *     <span class="fui-corner bl"></span><span class="fui-corner br"></span>
+ *     ...content...
+ *   </div>
+ *
+ * - Set `--fui-accent` on the panel (or an ancestor) to recolor border + brackets.
+ * - Tune `--fui-corner-size` / `--fui-corner-inset` / `--fui-corner-weight` per panel.
+ * - Drop any of the four corners you don't want (omit `.tr` to clear room for a close
+ *   button; a button-sized frame draws TL + BR only).
+ *
+ * Palette roles: graphite workspace glass with lavender focus. Mint is status and slate
+ * is documents. The tokens: owned by `styles/tokens.css`.
+ *
+ * NOTE: this file is imported ONCE, globally. Do NOT `@import` it from a component's
+ * `\3c style scoped>` block: under Vite 8 a scoped `@import` IS scoped. Each importing
+ * component then emits its own `.fui-panel[data-v-*]` copy, and because a child component's
+ * root also carries its parent's scope attribute, a parent's copy can tie a component's own
+ * theme override on specificity and win by injection order. One global unscoped copy keeps
+ * utility specificity at 0-1-0, so any scoped component rule overrides it every time.
+ */
+
+:root {
+    /* Context and status surfaces can override the workspace focus accent. */
+    --fui-accent: var(--fui-workspace);
+    --fui-corner-size: 10px;
+    --fui-corner-weight: 1px;
+    --fui-corner-rest: 58%;
+
+    /* ── The modal scrim ─────────────────────────────────────────────────────
+       The SAME material as the slate glass, at the heavy end of its ladder: a scrim
+       SUPPRESSES what is behind it and hosts nothing, so it does not take a newly
+       invented black.
+
+       Blur is the cheap half and gives a depth ladder: page 0 → scrim 8 → panel
+       glass 15 (`.fui-panel` below). Blurring a busy backdrop is what lets the alpha
+       stop short of opaque.
+
+       NO LIGHT-THEME VARIANT, ON PURPOSE. Light or dark is a property of the PANEL.
+       A pale scrim would fog what is behind it AND make the panel's edge harder to
+       find. */
+
+    /* ── The house glass, as ONE token ───────────────────────────────────────
+       Every always-visible blurred surface resolves its `backdrop-filter` from here.
+
+       WHY IT IS A TOKEN. `backdrop-filter` re-samples and re-filters everything
+       painted beneath the element WHENEVER THAT BACKDROP CHANGES. Over a canvas or a
+       live terminal the backdrop changes many times a second, so each blurred
+       surface re-blurs each time, and the cost is per ELEMENT. One token lets the
+       whole family switch off on one selector.
+
+       `--fui-glass-bg-boost` is the compensation, not a second style knob: with the
+       blur gone the panel has to carry its own contrast, so the off block below
+       raises it. Surfaces that use it write
+       `color-mix(… var(--fui-glass-bg-boost) …)`. */
+    --fui-glass-blur: blur(15px) saturate(160%);
+    --fui-glass-bg-boost: 0%;
+
+    /* The three numbers that vary between glass surfaces, so the RECIPE below is
+       written once. A surface that differs overrides a TOKEN and inherits every fix
+       to the recipe itself.
+
+       Override them on the surface, never here. A local `background:` re-declaration
+       takes the surface off the shared rule for good. */
+    --fui-glass-fill: rgba(var(--fui-glass-rgb), 0.94);
+    --fui-glass-border-mix: 20%;
+    --fui-glass-glow-mix: 3%;
+}
+
+/* ── The motion vocabulary ───────────────────────────────────────────────────
+   A small set of verbs, defined here and nowhere else. Timings come from
+   `config/fui-motion-flags.ts`, which publishes them as the custom properties the
+   `var()` fallbacks below mirror.
+
+     ENGAGE  a surface or marker ARRIVES     3 held states, steps(3, jump-none)
+     LATCH   a readout's VALUE CHANGED       snap on, step off
+     RELAY   a CHANNEL switched (accent)     steps(2, jump-start): one held mix
+     FIRE    a control TOOK INPUT            LATCH's shape, on a control
+     WORK    a control is STILL RUNNING      loops while the work is outstanding
+
+   The axis is DISCRETE against continuous, not "how much". A smooth ramp reads as
+   light dimming, which is an organic gesture. A system does not dim, it switches.
+
+   Every verb but WORK ends in a state that does NOT move. Nothing idles, and
+   nothing on a reading surface takes part.
+
+   `.fui-motion-off` on <html> (published by the flags module from the OS
+   reduced-motion query or the flags themselves) makes every verb inert. See the
+   end of this file. */
+
+.fui-panel {
+    position: relative;
+    /* The boost is 0% unless the glass token is off, so this resolves to exactly
+       the previous colour on every device that keeps the blur. */
+    background: color-mix(in srgb, #000 var(--fui-glass-bg-boost), var(--fui-glass-fill));
+    backdrop-filter: var(--fui-glass-blur);
+    -webkit-backdrop-filter: var(--fui-glass-blur);
+    border: 1px solid color-mix(in srgb, var(--fui-accent) var(--fui-glass-border-mix), transparent);
+    border-radius: 3px;
+    box-shadow:
+        0 8px 32px 0 rgba(0, 0, 0, 0.8),
+        0 0 20px color-mix(in srgb, var(--fui-accent) var(--fui-glass-glow-mix), transparent);
+    /* RELAY: a panel may retint itself by rewriting `--fui-accent`. A snap there is
+       below what the eye registers. One held 50% mix makes the change visible.
+
+       DECLARATION ORDER IS LOAD-BEARING: a rule that animates a panel's entry on
+       the same element (a <Transition> root that is also a `.fui-panel`) ties
+       this one on specificity and collides on `transition`. Source order decides,
+       so such a rule must come AFTER this one. */
+    transition:
+        border-color var(--fui-relay-ms, 140ms) steps(2, jump-start),
+        box-shadow var(--fui-relay-ms, 140ms) steps(2, jump-start);
+}
+
+/* ── Touch density ──────────────────────────────────────────────────────────
+   ONE owner for how big a finger target is on a coarse pointer, and how tight the
+   chrome round it sits. 36px is still a full thumb pad, and the hit area is the
+   whole button box. Read these; never restate a number.
+
+   `--fui-rail-btn` is the tile of a side rail. It is declared here because a
+   rail's width is read page-wide and must resolve on `<html>`. */
+:root {
+    --fui-touch-target: 44px;
+    --fui-rail-btn: 44px;
+}
+
+@media (pointer: coarse) {
+    :root {
+        --fui-touch-target: 36px;
+        --fui-rail-btn: var(--fui-touch-target);
+    }
+}
+
+/* ── Targeting-reticle corner brackets ──────────────────────────────────────
+   Each corner is an L-stroke in the accent. Size / inset / weight are tunable
+   per panel via the custom properties below. */
+.fui-corner {
+    position: absolute;
+    width: var(--fui-corner-size, 14px);
+    height: var(--fui-corner-size, 14px);
+    pointer-events: none;
+    /* RELAY on the hover brighten and on any `--fui-accent` rewrite. */
+    transition: border-color var(--fui-relay-ms, 140ms) steps(2, jump-start);
+
+    /* ENGAGE — the signature move. See the @keyframes block below.
+       LONGHANDS, never the `animation` shorthand: the shorthand resets
+       `animation-name`, so a component writing `animation: none` (or any other
+       shorthand) here would silently unbind all four corner keyframes. */
+    animation-duration: var(--fui-corner-draw-ms, 150ms);
+    animation-timing-function: steps(3, jump-none);
+    animation-fill-mode: both;
+}
+
+.fui-corner.tl {
+    top: var(--fui-corner-inset, 5px);
+    left: var(--fui-corner-inset, 5px);
+    border-top: var(--fui-corner-weight, 1.5px) solid color-mix(in srgb, var(--fui-accent) var(--fui-corner-rest), transparent);
+    border-left: var(--fui-corner-weight, 1.5px) solid color-mix(in srgb, var(--fui-accent) var(--fui-corner-rest), transparent);
+    animation-name: fui-bracket-tl;
+}
+
+.fui-corner.tr {
+    top: var(--fui-corner-inset, 5px);
+    right: var(--fui-corner-inset, 5px);
+    border-top: var(--fui-corner-weight, 1.5px) solid color-mix(in srgb, var(--fui-accent) var(--fui-corner-rest), transparent);
+    border-right: var(--fui-corner-weight, 1.5px) solid color-mix(in srgb, var(--fui-accent) var(--fui-corner-rest), transparent);
+    animation-name: fui-bracket-tr;
+    animation-delay: calc(var(--fui-corner-draw-stagger-ms, 30ms) * 1);
+}
+
+.fui-corner.bl {
+    bottom: var(--fui-corner-inset, 5px);
+    left: var(--fui-corner-inset, 5px);
+    border-bottom: var(--fui-corner-weight, 1.5px) solid color-mix(in srgb, var(--fui-accent) var(--fui-corner-rest), transparent);
+    border-left: var(--fui-corner-weight, 1.5px) solid color-mix(in srgb, var(--fui-accent) var(--fui-corner-rest), transparent);
+    animation-name: fui-bracket-bl;
+    animation-delay: calc(var(--fui-corner-draw-stagger-ms, 30ms) * 3);
+}
+
+.fui-corner.br {
+    bottom: var(--fui-corner-inset, 5px);
+    right: var(--fui-corner-inset, 5px);
+    border-bottom: var(--fui-corner-weight, 1.5px) solid color-mix(in srgb, var(--fui-accent) var(--fui-corner-rest), transparent);
+    border-right: var(--fui-corner-weight, 1.5px) solid color-mix(in srgb, var(--fui-accent) var(--fui-corner-rest), transparent);
+    animation-name: fui-bracket-br;
+    animation-delay: calc(var(--fui-corner-draw-stagger-ms, 30ms) * 2);
+}
+
+/* ── BRACKET ENGAGE ─────────────────────────────────────────────────────────
+   The frame ASSEMBLES instead of appearing: each L-stroke grows out of its own
+   corner through three held states, the four staggered clockwise
+   TL → TR → BR → BL. It makes a panel read as a system coming online, not as a
+   div being inserted.
+
+   NO JAVASCRIPT, and it cannot idle: an @keyframes on a freshly inserted node
+   runs exactly once, and keyframes carry their own start state.
+
+   `clip-path` is compositor-side and its default reference box is the border
+   box, so the L-stroke clips exactly along its own drawn edges. It is also a
+   property nothing else in this file touches: an animation on a property that
+   another rule locks with `!important` silently never runs.
+
+   `steps(3, jump-none)` yields progress {0, 0.5, 1}: absent, half-drawn, full.
+   The first state is a real invisible hold, which is what `fill-mode: both`
+   is for. A staggered corner stays hidden through its delay instead of
+   flashing fully formed and then animating. */
+@keyframes fui-bracket-tl {
+    from { clip-path: inset(0 100% 100% 0); }
+    to { clip-path: inset(0); }
+}
+
+@keyframes fui-bracket-tr {
+    from { clip-path: inset(0 0 100% 100%); }
+    to { clip-path: inset(0); }
+}
+
+@keyframes fui-bracket-br {
+    from { clip-path: inset(100% 0 0 100%); }
+    to { clip-path: inset(0); }
+}
+
+@keyframes fui-bracket-bl {
+    from { clip-path: inset(100% 100% 0 0); }
+    to { clip-path: inset(0); }
+}
+
+/* Hover brightens the bracket frame on interactive panels. */
+.fui-panel:hover > .fui-corner,
+.fui-panel:focus-within > .fui-corner {
+    border-color: color-mix(in srgb, var(--fui-accent) 90%, white);
+}
+
+/* ── FIRE: "this control TOOK INPUT" ────────────────────────────────────────
+   LATCH's control-side twin, and deliberately the same SHAPE: same step count,
+   same snap-on and step-off decay, same `filter` channel. LATCH's subject is a
+   readout whose value changed; FIRE's is a control that took input.
+
+   Only the keyframes live here. A page or a host that wants a press acknowledged
+   binds them on its own control (`animation-name: fui-fire`, steps, the
+   `--fui-fire-ms` duration).
+
+   THE CHANNELS ARE CHOSEN BY ELIMINATION. A button's `background`, `border` and
+   `box-shadow` are usually spoken for, and an `!important` author declaration
+   outranks an animation in the cascade, so an animation on one of them can
+   silently never run. FIRE animates only properties nothing else owns:
+
+     filter    the flash and the accent glow: the only way to a halo when
+               `box-shadow` is taken.
+     scale     the squash. NOT `transform`: the standalone `scale` property
+               composes with `transform` instead of replacing it, so a hover
+               lift survives the press.
+
+   `drop-shadow(… var(--fui-accent))` means every control glows in its OWN hue.
+
+   NOT applied to `.fui-corner`. A corner already has `animation-name` bound to
+   its ENGAGE draw, and a second rule setting `animation` there would unbind it.
+
+   NO `fill-mode`: the 100% keyframe is already the resting value, and a filled
+   animation outranks plain author declarations, which is how a stuck `filter`
+   or `scale` would become permanent. */
+@keyframes fui-fire {
+    from {
+        filter: brightness(1.7) drop-shadow(0 0 8px var(--fui-accent));
+        scale: var(--fui-fire-scale, 0.94);
+    }
+    to {
+        filter: brightness(1) drop-shadow(0 0 0 transparent);
+        scale: 1;
+    }
+}
+
+/* ── WORK: "this control is STILL RUNNING" ──────────────────────────────────
+   The only SUSTAINED verb. The others are transitions, each over inside 140ms.
+   None of them can say "and it is still going", which is the fact an operator
+   waits on.
+
+   Why a verb and not another `opacity: 0.7`: a branch verb crosses the local
+   bridge with a budget of seconds (`agent-rack/worktree-client.ts`
+   `ACTION_TIMEOUT_MS`). If the only answer is to disable every button in the
+   group, disabled and running look the same, and a slow REMOVE WORKTREE cannot
+   be told from a click that never landed.
+
+   FIRE answers "did it hear me". WORK answers "is it still working". A press
+   needs both.
+
+   It LOOPS, and that is the one exception to "nothing idles": the loop IS the
+   state. It runs exactly while work is outstanding and stops on the frame the
+   work lands.
+
+   For the same reason WORK is ABSENT from the `.fui-motion-off` block below.
+   Freezing it would leave a static bar under a button, which says "stuck", not
+   "working": a frozen spinner communicates nothing (WCAG 2.2.2). Motion-off stops
+   the decoration, not the reporting.
+
+   The channel is `translate` on a free `::after`. The bar is painted from
+   `--fui-accent`, so a danger-red REMOVE WORKTREE marches red and a mint FETCH
+   marches mint with no per-button rule.
+
+   The contract for an element that wears it:
+   1. It needs a positioning context.
+   2. It must leave `::after` free. A button that draws brackets on its
+      pseudo-elements gives the bar a child element instead.
+   3. Quantized like everything else: three HELD positions, not a slide. */
+@keyframes fui-work {
+    from {
+        translate: 0 0;
+    }
+    to {
+        /* 233% of a 30%-wide bar = 70% of the host, so the bar's trailing edge
+           lands exactly on the host's right edge and never overhangs it. The
+           two numbers are a pair: change one and the bar escapes the button. */
+        translate: 233% 0;
+    }
+}
+
+/* ── Close affordance ───────────────────────────────────────────────────────
+   A bracketed glyph, `[✕]`.
+
+   The brackets ARE the frame. There is deliberately no border box: `[✕]` inside a
+   bordered square frames it twice. Brackets are drawn from `--fui-accent` (the
+   frame) while the glyph stays `currentColor` (the content), so a close button
+   tracks its panel's accent for free.
+
+   Use a real `<button type="button">`. Native `disabled` works, and the glyph is
+   content (`✕`, U+2715), not an icon font.
+
+   Size is the one thing surfaces differ on, so it is a knob:
+
+       .my-panel-close { --fui-close-size: 22px; }
+*/
+.fui-close {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* Height is the size knob; width follows the `[✕]` run so the brackets are
+       never clipped. min-width keeps a square-ish hit target on the small variants. */
+    min-width: var(--fui-close-size, 30px);
+    height: var(--fui-close-size, 30px);
+    gap: var(--fui-close-bracket-gap, 0.1em);
+    padding: 0 0.2em;
+    background: none;
+    border: 0;
+    border-radius: 2px;
+    /* Explicit, not inherited: these sit in tracked mono headers (`.fui-techtext`
+       and friends), and inherited letter-spacing would push the brackets off the
+       glyph they belong to. */
+    letter-spacing: 0;
+    font-family: var(--fui-mono, "SF Mono", "Monaco", "Cascadia Code", "Roboto Mono", Consolas, monospace);
+    font-size: var(--fui-close-glyph-size, 0.9rem);
+    line-height: 1;
+    /* `currentColor` + opacity, NOT a hard-coded white: a panel with a light
+       variant sets a dark text color, and a white glyph would vanish on it.
+       Same reason the hover fill is accent-derived instead of
+       `rgba(255,255,255,…)`. */
+    color: currentColor;
+    opacity: 0.7;
+    cursor: pointer;
+    /* Load-bearing, and the reason this is here and not on each surface: a panel
+       laid over a live surface may be `pointer-events: none` so the surface under
+       it stays usable, and every interactive child then opts back in. A close
+       button that forgets to still shows `cursor: pointer` and takes no click. */
+    pointer-events: auto;
+    transition: background 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* The brackets. Pseudo-elements, not markup, so no template carries them and the
+   accessible name stays the `✕` the button actually contains. */
+.fui-close::before,
+.fui-close::after {
+    color: var(--fui-accent);
+    opacity: 0.8;
+    font-weight: 400;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.fui-close::before { content: '['; }
+.fui-close::after { content: ']'; }
+
+.fui-close:hover:not(:disabled) {
+    opacity: 1;
+    background: color-mix(in srgb, var(--fui-accent) 12%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--fui-accent) 18%, transparent);
+}
+
+/* Hover spreads the brackets: the quiet form of the bracket kick a press makes. */
+.fui-close:hover:not(:disabled)::before { transform: translateX(-1px); opacity: 1; }
+.fui-close:hover:not(:disabled)::after { transform: translateX(1px); opacity: 1; }
+
+.fui-close:focus-visible {
+    outline: 2px solid var(--fui-accent);
+    outline-offset: 2px;
+}
+
+/* Real state, not decoration: a surface disables its close while work that must
+   not be abandoned is in flight. */
+.fui-close:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Shared monospace tech-text: the "data readout" type used across these pages. */
+.fui-techtext {
+    font-family: "SF Mono", "Monaco", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+/* ── Callouts & tags: inline status furniture ───────────────────────────────
+   .fui-callout: a sentence-length notice with a left accent bar. .fui-tag: a
+   short mono status tag. Variants: --warn amber, --ok mint. The palette is
+   dark-first; a light surface overrides per context (`laya-review.css` does). */
+.fui-callout {
+    border-left: 3px solid;
+    border-radius: 2px;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.fui-callout--warn {
+    border-left-color: #f8c146;
+    background: rgba(248, 193, 70, 0.08);
+    color: #f8c146;
+}
+
+.fui-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 8px;
+    border: 1px solid;
+    border-radius: 2px;
+    font-family: "SF Mono", "Monaco", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    line-height: 1.7;
+    white-space: nowrap;
+}
+
+.fui-tag--warn {
+    border-color: rgba(248, 193, 70, 0.55);
+    background: rgba(248, 193, 70, 0.08);
+    color: #f8c146;
+}
+
+.fui-tag--ok {
+    border-color: rgba(66, 255, 168, 0.55);
+    background: rgba(66, 255, 168, 0.07);
+    color: #b7f5c2;
+}
+
+/* ── Inline readout furniture ────────────────────────────────────────────────
+   `.fui-key`: the faint key hint after a button's label (`UNDO U`).
+   `.fui-count`: a dim tabular count beside a head (`3 OUT · 1 IN`).
+   Both are mono because they are readouts, not prose. */
+.fui-key {
+    margin-left: 5px;
+    font-family: var(--fui-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    opacity: 0.55;
+}
+
+.fui-count {
+    font-family: var(--fui-mono);
+    font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--fui-text-dim);
+}
+
+/* ── Meter: one ratio against a limit ───────────────────────────────────────
+   A readout beats a sentence. The progress bar: a track, a FILL for the value,
+   and an optional MARK for the target line. Widths and the mark's `left` are
+   set inline in percent.
+
+   Children are <i>, not <span>, so a host rule that forces a text colour on
+   span/div does not reach them, and a fill drawn from currentColor or the accent
+   keeps its tint. `--fui-meter-color` recolours the whole bar; a variant only
+   writes that property, so a caller's own inline colour composes instead of
+   racing on source order. */
+.fui-meter {
+    /* The fill's ink strength. A split whose second part has its own hue (two teams) mixes that hue at this
+       same strength, so neither part reads as the louder one. */
+    --fui-meter-strength: 62%;
+    position: relative;
+    height: 10px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.fui-meter__fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    display: block;
+    width: 0;
+}
+
+.fui-meter__fill {
+    background: color-mix(in srgb, var(--fui-meter-color, var(--fui-accent)) var(--fui-meter-strength), transparent);
+    border-radius: 0 2px 2px 0;
+}
+
+/* MARCHING stripes: "this bar is WORKING, not filling".
+   A determinate meter's fill answers "how far"; a marching one answers "still
+   running" for work with no honest percentage (a worktree being created, a
+   branch being fetched). The stripes travel exactly one period per cycle, so
+   the motion reads as continuous and not as a bar that jumps back.
+
+   `steps(8, jump-none)` on purpose: motion here is QUANTIZED (see the motion
+   vocabulary at the top of this file), so the stripes tick and do not glide.
+
+   NOT gated on `.fui-motion-off`, deliberately: a progress indicator is the
+   exception, because a frozen spinner communicates nothing (WCAG 2.2.2).
+
+   It stops dead when the row stops marching, because the element is gone. Do
+   NOT delete this as ambient motion. */
+.fui-meter--march .fui-meter__fill {
+    background-image: repeating-linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.28) 0 4px,
+        transparent 4px 12px
+    );
+    background-size: 12px 100%;
+    animation: fui-meter-march 900ms steps(8, jump-none) infinite;
+}
+
+@keyframes fui-meter-march {
+    from { background-position-x: 0; }
+    to { background-position-x: 12px; }
+}
+
+.fui-meter__mark {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    width: 2px;
+    margin-left: -1px;
+    background: currentColor;
+    opacity: 0.85;
+}
+
+.fui-meter--warn {
+    --fui-meter-color: var(--fui-warn);
+}
+
+/* ── Reduced motion: the single kill switch ─────────────────────────────────
+   `.fui-motion-off` is written to <html> by `apply_fui_motion_flags()`
+   (config/fui-motion-flags.ts) whenever `should_animate()` is false. That is the
+   OR of the OS `prefers-reduced-motion` query (with a LIVE `change` listener, so
+   flipping it mid-session works) and the flags a page or a host sets.
+
+   ONE class instead of a second `@media` block listing every selector again.
+   That is sound because every verb above is mount-triggered and
+   `apply_fui_motion_flags()` runs at module import, before Vue mounts anything,
+   so no `.fui-corner` can exist before the class is decided. It also keeps the
+   OS-level and the page-level opt-out on one code path.
+
+   END OF FILE placement is load-bearing: these are specificity ties with the
+   rules they cancel, so source order is the whole mechanism.
+
+   Killing transitions here is safe because nothing in this repository listens
+   for `transitionend`. Progress indicators are deliberately NOT covered: see
+   WORK and the marching meter above. */
+.fui-motion-off .fui-corner {
+    animation-name: none;
+}
+
+.fui-motion-off .fui-panel,
+.fui-motion-off .fui-corner,
+.fui-motion-off .fui-close::before,
+.fui-motion-off .fui-close::after {
+    transition: none;
+}

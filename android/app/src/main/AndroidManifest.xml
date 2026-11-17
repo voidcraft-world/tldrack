@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Loopback only: the phone-link listener the Mac's `adb reverse` puts at 127.0.0.1:7683. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      No backup and no device-to-device copy: files/ holds the phone-link token, an HMAC key that belongs to this
+      phone and the Mac that pushed it (res/xml/data_extraction_rules.xml).
+      networkSecurityConfig: cleartext to 127.0.0.1 only (res/xml/network_security_config.xml owns why).
+    -->
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Tldrack">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!--
+              tldrack://review: the bridge's daily push opens it (LayaRules.is_review_link). Browsable, so a link in
+              a note works too: the screen only reads loopback, and every grade is a press on it.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="review"
+                    android:scheme="tldrack" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

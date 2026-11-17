@@ -1,0 +1,78 @@
+# A `v*` tag becomes a GitHub release that carries the two npm tarballs, `@tldrack/schemas` and
+# `@tldrack/ui`. `scripts/release.py tag` pushes the tag after its own checks, and waits for this run.
+# The build and both `npm pack` calls are `scripts/pack.py`, the same script `release.py` runs on the
+# maintainer's machine before it tags (it owns the version rule and the stamp). Actions are pinned to
+# the commit SHAs ci.yml uses (dependabot keeps the `# vN` comments true).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the release and attach its files; nothing else
+    env:
+      # Through env, never inlined into a script: a tag name is pushed text.
+      TAG: ${{ github.ref_name }}
+      OUT: ${{ runner.temp }}/release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # the tag's commit is checked against main's history below
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+      - name: A release is cut from main
+        run: |
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$TAG points at a commit that is not on main"; exit 1; }
+      - name: Nothing private ships
+        # Publication mode: no hit of either tier, whatever the baseline excuses, and the operator's
+        # word list must be configured (the TLDRACK_PURITY_WORDS secret; `# none` when there are none).
+        env:
+          TLDRACK_PURITY_WORDS_TEXT: ${{ secrets.TLDRACK_PURITY_WORDS }}
+        run: python3 tests/test_purity.py --publish
+      - name: A final release cites only public commits
+        # Every bench results file must name a commit in this history (ui/tests/unit/bench-commits.test.ts
+        # owns why). A release candidate may still carry the pre-launch run; a final tag may not.
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          TLDRACK_REQUIRE_CITED_COMMITS: '1'
+        run: node --test ui/tests/unit/bench-commits.test.ts
+      - name: Build, pack and check both packages
+        # pack.py opens each finished tarball and scans what it really holds (scripts/check_archive.py),
+        # build output included, then writes SHA256SUMS for the files it checked.
+        env:
+          TLDRACK_PURITY_WORDS_TEXT: ${{ secrets.TLDRACK_PURITY_WORDS }}
+        run: python3 scripts/pack.py --version "${TAG#v}" --out "$OUT"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # A re-run of this job: replace the files, keep the release and its notes.
+            gh release upload "$TAG" "$OUT"/tldrack-*.tgz --clobber
+          else
+            flags=(--verify-tag --title "tldrack ${TAG#v}" --generate-notes)
+            case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+            gh release create "$TAG" "$OUT"/tldrack-*.tgz "${flags[@]}"
+          fi
+      - name: The uploaded files are the checked files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fetched="$RUNNER_TEMP/fetched"
+          mkdir -p "$fetched"
+          gh release download "$TAG" --pattern 'tldrack-*.tgz' --dir "$fetched" --clobber
+          (cd "$fetched" && sha256sum -c "$OUT/SHA256SUMS")

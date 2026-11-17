@@ -1,0 +1,8 @@
+# Keeps the pinned action SHAs current: a pinned SHA with no updater rots. The
+# projects' own dependencies get their entries when the projects arrive.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

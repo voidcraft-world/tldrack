@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window chrome only; everything drawn is Compose (ui/Theme.kt owns the palette). -->
+    <style name="Theme.Tldrack" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/rack_void</item>
+    </style>
+</resources>

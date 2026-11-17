@@ -1,0 +1,125 @@
+# One gate for every pull request. `purity` needs nothing installed and runs first in
+# spirit: a leak fails here whatever else passes. `lint` is ruff over every Python file,
+# rules and layout (ruff.toml), and oxlint over the TypeScript, Vue and JavaScript (.oxlintrc.json). `projects` lists what the tree holds
+# (scripts/projects.py owns what a project is), and the two matrices test each one.
+# `ci-ok` is the single check to require on `main`: the matrices change shape as
+# projects arrive, and an empty matrix is skipped, never failed.
+# Actions are pinned to commit SHAs (dependabot keeps the `# vN` comments true).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A newer push to a PR supersedes the run in flight; a run on main never does.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  purity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+      - name: Nothing private ships
+        # The operator's own word list is a repository secret, never a file in the tree
+        # (tests/test_purity.py owns why). A fork's pull request gets no secret and runs tier 1 only.
+        env:
+          TLDRACK_PURITY_WORDS_TEXT: ${{ secrets.TLDRACK_PURITY_WORDS }}
+        run: python3 tests/test_purity.py
+      - name: The purity test's own tests
+        run: uvx --from pytest==9.1.1 pytest -q tests
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+      - name: Ruff
+        # The rules, and the ladder of the ones not on yet: owned by ruff.toml — see the note there.
+        run: uvx ruff@0.17.5 check .
+      - name: Ruff format
+        run: uvx ruff@0.17.5 format --check .
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+      - name: Oxlint
+        # TypeScript, Vue and JavaScript: owned by .oxlintrc.json — see the note there.
+        run: npx -y oxlint@1.94.0 --deny-warnings .
+
+  projects:
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.list.outputs.python }}
+      node: ${{ steps.list.outputs.node }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - id: list
+        run: python3 scripts/projects.py --github-output
+
+  python:
+    needs: projects
+    if: needs.projects.outputs.python != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.projects.outputs.python) }}
+    runs-on: ubuntu-latest
+    name: python (${{ matrix.project }})
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+      - name: Test
+        run: python3 "$GITHUB_WORKSPACE/scripts/projects.py" --run . --kind python
+      - name: Types
+        # mypy, held to each file's count in tests/mypy-baseline.json: owned by scripts/typecheck.py — see the note there.
+        run: python3 "$GITHUB_WORKSPACE/scripts/typecheck.py" --run .
+
+  node:
+    needs: projects
+    if: needs.projects.outputs.node != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.projects.outputs.node) }}
+    runs-on: ubuntu-latest
+    name: node (${{ matrix.project }})
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+      - name: Install
+        run: if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install --no-audit --no-fund; fi
+      - name: Test
+        # The same command as the edit hook: the project's own `test` script when it has one.
+        run: python3 "$GITHUB_WORKSPACE/scripts/projects.py" --run . --kind node
+      - name: Types
+        # tsc for schemas, vue-tsc for ui: each project's own `typecheck` script, and zero errors.
+        run: npm run typecheck --if-present
+
+  ci-ok:
+    needs: [purity, lint, projects, python, node]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or had nothing to test
+        # Through env, never inlined: the outputs hold directory names from the PR's tree.
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 -c '
+          import json, os, sys
+          bad = {k: v["result"] for k, v in json.loads(os.environ["NEEDS"]).items() if v["result"] not in ("success", "skipped")}
+          sys.exit(f"failed: {bad}" if bad else 0)'

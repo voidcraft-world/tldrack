@@ -1,0 +1,82 @@
+/**
+ * The skin of a full-page board: the root palette, the header strip and the button.
+ * The Laya review page wears it (`laya-review/main.ts` imports it).
+ *
+ * GLOBAL, and imported from the page's `main.ts`, never `@import`-ed into a
+ * `\3c style scoped>` block: Vite 8 scopes an `@import` inside a scoped block,
+ * which would silently re-scope every rule below to one component. Do not move
+ * these rules into a component.
+ */
+
+/**
+ * Cool-slate: the palette of a full-screen reading or working surface.
+ *
+ * Declared on the ROOT (not just the header) so every `.fui-corner` on the page
+ * inherits it, including the ones inside the buttons below.
+ *
+ * A literal with its own alpha, not an opaque token: `.fui-corner` reads
+ * `--fui-accent` raw, so the alpha is the bracket's actual weight.
+ */
+.nv-board {
+    --fui-accent: rgba(157, 218, 255, 0.9);
+    box-sizing: border-box;
+    min-height: 100vh;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    color: #dbeafe;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    background: #080c12;
+}
+
+/** The header strip. Pair it with `.fui-panel` for the glass and brackets. */
+.nv-head {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+}
+
+/* ── The bracket language at button scale ────────────────────────────────
+   The brackets are NOT hand-rolled: `.fui-corner` in `fui-panel.css` owns that
+   geometry, so a button carries two `<span>`s instead of a local copy of the
+   L-strokes. TL + BR only: at button scale four corners crowd the label.
+
+   Every colour is mixed off `--fui-accent`, so retuning a page's palette retunes
+   its buttons. No `rgba()` literals here. */
+.board-btn {
+    --fui-corner-size: 7px;
+    --fui-corner-inset: 3px;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 15px;
+    color: var(--color-text-slate);
+    background: var(--fui-glass-slate);
+    border: 1px solid color-mix(in srgb, var(--fui-accent) 58%, transparent);
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: var(--fui-mono);
+    /* 0.7rem: on the label rung of the type ladder (>= 0.68rem), not below it. */
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    /* Only compositor-cheap channels plus the two colours. `scale` is
+       deliberately absent: it is FIRE's channel (`fui-panel.css`), and a
+       transition on it would outrank a press animation. */
+    transition:
+        background-color 0.25s ease,
+        border-color 0.25s ease,
+        box-shadow 0.25s ease;
+}
+
+.board-btn:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--fui-accent) 88%, transparent);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--fui-accent) 30%, transparent);
+}
+
+/* Dims the brackets with the button, since they are children. */
+.board-btn:disabled { cursor: not-allowed; opacity: 0.4; }

@@ -1,0 +1,281 @@
+/* The canvas kit. Two readers: kit.js builds a typed doc's blocks with these
+   classes, and agents writing markup use the subset listed in
+   .claude/skills/agent-canvas/SKILL.md (a class meant for agents is added
+   there too). Colours are the rack UI's palette
+   (ui/src/styles/rack-palette.css owns the values). */
+:root {
+    --mint: rgb(140 205 170);
+    --mint-dim: rgb(140 205 170 / 0.35);
+    --mint-faint: rgb(140 205 170 / 0.08);
+    --amber: rgb(248 193 70);
+    --red: rgb(200 60 60);
+    --text: #edf0f3;
+    --dim: #b5bdc6;
+    --glass: #2d3035;
+    --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+    color-scheme: dark;
+}
+* { box-sizing: border-box; scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; }
+html, body { margin: 0; background: var(--glass); color: var(--text); }
+body { font: 0.86rem/1.45 var(--sans); padding: 12px 14px 24px; }
+main { display: flex; flex-direction: column; gap: 10px; }
+main > * { margin: 0; }
+
+h1, h2, h3 {
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--mint); margin: 4px 0 0; font-weight: 600;
+}
+h1 { font-size: 0.95rem; }
+h2 { font-size: 0.82rem; }
+h3 { font-size: 0.72rem; color: var(--dim); }
+p { margin: 0; }
+ul, ol { margin: 0; padding-left: 1.3em; }
+li + li { margin-top: 2px; }
+a { color: var(--mint); }
+code { font: 0.8rem var(--mono); color: var(--mint); }
+pre { font: 0.78rem/1.4 var(--mono); margin: 0; padding: 8px 10px; overflow: auto;
+      background: var(--mint-faint); border-left: 2px solid var(--mint-dim); }
+hr { border: 0; border-top: 1px solid var(--mint-dim); margin: 4px 0; width: 100%; }
+.muted { color: var(--dim); font-size: 0.8rem; }
+
+/* A block — the bracket-framed FUI panel, corners only. */
+.card {
+    position: relative; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
+    background: var(--mint-faint);
+    background-image:
+        linear-gradient(var(--mint), var(--mint)), linear-gradient(var(--mint), var(--mint)),
+        linear-gradient(var(--mint), var(--mint)), linear-gradient(var(--mint), var(--mint)),
+        linear-gradient(var(--mint), var(--mint)), linear-gradient(var(--mint), var(--mint)),
+        linear-gradient(var(--mint), var(--mint)), linear-gradient(var(--mint), var(--mint));
+    background-repeat: no-repeat;
+    background-size: 10px 1px, 1px 10px, 10px 1px, 1px 10px, 10px 1px, 1px 10px, 10px 1px, 1px 10px;
+    background-position: 0 0, 0 0, 100% 0, 100% 0, 0 100%, 0 100%, 100% 100%, 100% 100%;
+}
+.card > h2:first-child, .card > h3:first-child { margin-top: 0; }
+
+/* Side by side; collapses to one column when the pane is narrow. */
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+
+/* Key → value readout. <dl class="kv"><dt>tests</dt><dd>41 pass</dd>…</dl> */
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 0; }
+.kv dt { font: 0.7rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); padding-top: 2px; }
+.kv dd { margin: 0; }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.8rem; }
+th { font: 0.68rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim);
+     text-align: left; border-bottom: 1px solid var(--mint-dim); padding: 4px 8px 4px 0; }
+td { border-bottom: 1px solid var(--mint-faint); padding: 4px 8px 4px 0; vertical-align: top; }
+td.num, th.num { text-align: right; font-family: var(--mono); }
+
+/* Before / after. <div class="diff"><del>old</del><ins>new</ins></div> */
+.diff { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font: 0.78rem/1.4 var(--mono); }
+.diff del, .diff ins { text-decoration: none; padding: 6px 8px; white-space: pre-wrap; display: block; }
+.diff del { background: rgb(200 60 60 / 0.12); border-left: 2px solid var(--red); }
+.diff ins { background: rgb(140 205 170 / 0.12); border-left: 2px solid var(--mint); }
+.diff del::before { content: 'BEFORE'; display: block; font-size: 0.64rem; letter-spacing: 0.12em; color: var(--dim); }
+.diff ins::before { content: 'AFTER'; display: block; font-size: 0.64rem; letter-spacing: 0.12em; color: var(--dim); }
+
+/* A ratio. <div class="meter" style="--v:62%">context</div> */
+.meter { position: relative; height: 18px; border: 1px solid var(--mint-dim);
+         font: 0.68rem/16px var(--mono); text-transform: uppercase; letter-spacing: 0.1em; padding: 0 6px; }
+.meter::before { content: ''; position: absolute; inset: 0 auto 0 0; width: var(--v, 0%);
+                 background: var(--mint-dim); z-index: -1; }
+.meter { isolation: isolate; }
+.meter.warn::before { background: rgb(248 193 70 / 0.45); }
+.meter.bad::before { background: rgb(200 60 60 / 0.5); }
+
+/* A short label. ok / warn / bad tint it. */
+.tag { display: inline-block; font: 0.68rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em;
+       border: 1px solid var(--mint-dim); color: var(--mint); padding: 0 5px; line-height: 1.5; }
+.tag.ok { border-color: var(--mint); }
+.tag.warn { border-color: var(--amber); color: var(--amber); }
+.tag.bad { border-color: var(--red); color: rgb(235 120 120); }
+
+pre.mermaid { background: none; border: 0; padding: 0; text-align: center; }
+
+/* A question. Buttons with data-reply type their value into the agent. */
+.choice { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+          border: 1px solid var(--amber); background: rgb(248 193 70 / 0.06); }
+.choice__buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.choice button, .choice__other button {
+    font: 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; cursor: pointer;
+    background: transparent; color: var(--text); border: 1px solid var(--mint-dim); padding: 5px 10px;
+}
+.choice button:hover:not(:disabled) { border-color: var(--mint); color: var(--mint); }
+.choice button:disabled { cursor: default; opacity: 0.45; }
+.choice button.is-chosen { opacity: 1; border-color: var(--mint); color: var(--glass); background: var(--mint); }
+.choice__other { display: flex; gap: 6px; }
+.choice__other input { flex: 1; min-width: 0; font: 0.8rem var(--sans); color: var(--text);
+                       background: var(--glass); border: 1px solid var(--mint-dim); padding: 4px 8px; }
+.choice__state { font: 0.68rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); }
+.choice__state.warn { color: var(--amber); }
+.choice__state.ok { color: var(--mint); }
+.choice.is-answered { border-color: var(--mint-dim); background: none; }
+
+/* An acting option (kit.js `option_card`): the button, then what it runs, what it deletes, how to undo. */
+.choice__how { font: 0.68rem var(--mono); letter-spacing: 0.1em; color: var(--dim); }
+.choice__opts { display: flex; flex-direction: column; gap: 6px; }
+.choice__opt { display: flex; gap: 10px; align-items: flex-start; padding: 6px 8px; border-left: 2px solid var(--mint-dim); }
+.choice__opt.outward { border-left-color: var(--amber); }
+.choice__opt.destructive { border-left-color: var(--red); background: rgb(200 60 60 / 0.06); }
+.choice__opt > button { flex: none; min-width: 9.5rem; text-align: left; display: flex; flex-direction: column; gap: 2px; }
+.choice__risk { font-size: 0.6rem; letter-spacing: 0.12em; color: var(--amber); }
+.choice__opt.destructive .choice__risk { color: var(--red); }
+.choice__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.choice__does { font: 0.8rem var(--sans); color: var(--text); }
+.choice__targets { margin: 0; padding-left: 1.1em; font: 0.74rem var(--mono); color: var(--text); }
+.choice__undo { font: 0.74rem var(--sans); color: var(--dim); }
+.choice button.is-armed { border-color: var(--red); color: var(--red); }
+.choice__opt.outward button.is-armed { border-color: var(--amber); color: var(--amber); }
+.choice.has-armed .choice__opt:not(:has(.is-armed)) { opacity: 0.45; }
+.choice.is-answered .choice__opt:not(.is-chosen) { opacity: 0.4; }
+.choice__opt.is-chosen { border-left-color: var(--mint); }
+@media (max-width: 420px) {
+    .choice__opt { flex-direction: column; gap: 4px; }
+    .choice__opt > button { min-width: 0; width: 100%; }
+}
+
+/* ── Typed-doc blocks (kit.js BLOCKS) ── */
+.stat { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; }
+.stat__value { font: 600 1.6rem/1.1 var(--mono); color: var(--mint); }
+.stat__unit { font-size: 0.72rem; color: var(--dim); margin-left: 6px; letter-spacing: 0.08em; }
+.stat__label { font: 0.68rem var(--mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim); }
+.stat.warn .stat__value { color: var(--amber); }
+.stat.bad .stat__value { color: rgb(235 120 120); }
+.meter { display: flex; justify-content: space-between; gap: 8px; }
+.meter__num { color: var(--dim); }
+
+.split { display: flex; flex-direction: column; gap: 4px; }
+.split__bar { display: flex; height: 10px; gap: 2px; }
+.split__seg { min-width: 2px; background: var(--mint); }
+.split__seg:nth-child(2n) { background: var(--mint-dim); }
+.split__seg:nth-child(3n) { background: var(--amber); }
+.split__legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font: 0.68rem var(--mono); text-transform: uppercase;
+                 letter-spacing: 0.08em; color: var(--dim); }
+.split__key i { display: inline-block; width: 8px; height: 8px; margin-right: 5px; background: var(--mint); }
+.split__key:nth-child(2n) i { background: var(--mint-dim); }
+.split__key:nth-child(3n) i { background: var(--amber); }
+
+.table-wrap { overflow-x: auto; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.link { font: 0.8rem var(--mono); }
+.col { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+
+.callout { padding: 8px 10px; border-left: 2px solid var(--amber); background: rgb(248 193 70 / 0.06); }
+.callout.ok { border-color: var(--mint); background: var(--mint-faint); }
+.callout.bad { border-color: var(--red); background: rgb(200 60 60 / 0.08); }
+.callout__title { font: 0.68rem var(--mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim);
+                  margin-bottom: 3px; }
+
+.disclosure > summary { cursor: pointer; font: 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em;
+                        color: var(--dim); list-style: none; }
+.disclosure > summary::-webkit-details-marker { display: none; }
+/* One chevron for every disclosure, the skills tree's rows included. */
+.disclosure > summary::before, .sk__skill > summary::before, .sk__file > summary::before {
+    content: '▸'; display: inline-block; width: 1.1em; color: var(--mint); transition: transform 0.12s; }
+.disclosure[open] > summary::before, .sk__skill[open] > summary::before, .sk__file[open] > summary::before {
+    transform: rotate(90deg); }
+.disclosure[open] > summary { margin-bottom: 8px; }
+.disclosure > :not(summary) + :not(summary) { margin-top: 8px; }
+
+.tabs { display: flex; flex-direction: column; gap: 8px; }
+.tabs__bar { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--mint-dim); }
+.tabs__tab { font: 0.7rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; cursor: pointer;
+             background: transparent; color: var(--dim); border: 0; border-bottom: 2px solid transparent;
+             padding: 4px 10px; margin-bottom: -1px; }
+.tabs__tab[aria-selected="true"] { color: var(--mint); border-bottom-color: var(--mint); }
+.tabs__panel { display: flex; flex-direction: column; gap: 10px; }
+
+/* Typed-doc questions: the .choice frame, plus fields and the send bar. */
+.choice__q { font: 600 0.8rem var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--amber); }
+.choice__free { font: 0.78rem var(--mono); color: var(--mint); }
+.field { display: flex; flex-direction: column; gap: 3px; }
+.field__label { font: 0.68rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); }
+.field input, .field textarea, .field select {
+    font: 0.8rem var(--sans); color: var(--text); background: var(--glass);
+    border: 1px solid var(--mint-dim); padding: 4px 8px; min-width: 0;
+}
+.field textarea { min-height: 54px; resize: vertical; }
+.field--toggle { flex-direction: row; align-items: center; gap: 8px; }
+.field--toggle input { accent-color: var(--mint); }
+.rank { display: flex; flex-direction: column; gap: 3px; padding-left: 1.6em; }
+.rank li { display: flex; align-items: center; gap: 4px; }
+.rank__label { flex: 1; }
+.choice .rank__move { padding: 0 6px; line-height: 1.4; }
+.submit { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0 0;
+          border-top: 1px solid var(--amber); }
+.submit button { font: 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; cursor: pointer;
+                 background: var(--amber); color: var(--glass); border: 0; padding: 6px 12px; }
+
+/* Kit chrome — not for agents. */
+[hidden] { display: none !important; }
+.vc-views { display: flex; justify-content: flex-end; gap: 6px; margin: -4px 0 6px; }
+.vc-view, .sk__chip { font: 0.68rem var(--mono); text-transform: uppercase; letter-spacing: 0.1em; cursor: pointer;
+                      background: transparent; color: var(--dim); border: 1px solid var(--mint-dim); padding: 1px 7px; }
+.vc-view:hover:not(:disabled), .sk__chip:hover:not(:disabled) { color: var(--mint); border-color: var(--mint); }
+.vc-view.is-news { color: var(--amber); border-color: var(--amber); }
+.sk__chip[aria-pressed="true"] { color: var(--glass); background: var(--mint); border-color: var(--mint); }
+.vc-status:empty { display: none; }
+.vc-status { display: flex; gap: 6px; margin-bottom: 8px; }
+.vc-empty { font: 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim);
+            padding: 16px 0; text-align: center; }
+.vc-errors { font: 0.7rem var(--mono); color: var(--amber); border: 1px solid var(--amber); padding: 4px 8px; flex: 1; }
+.vc-errors summary { cursor: pointer; text-transform: uppercase; letter-spacing: 0.1em; }
+.vc-errors ul { margin-top: 4px; color: var(--text); }
+
+/* The ◇ SKILLS face (skills.js). Bands are .disclosure; a skill and a file are rows. */
+.sk { display: flex; flex-direction: column; gap: 8px; }
+.sk__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sk__counts { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 100%; }
+.sk__filter { flex: 1; min-width: 120px; font: 0.8rem var(--sans); color: var(--text); background: var(--glass);
+              border: 1px solid var(--mint-dim); padding: 3px 8px; }
+.sk__tree { display: flex; flex-direction: column; gap: 6px; }
+.sk__band { border-top: 1px solid var(--mint-dim); padding-top: 6px; }
+.sk__group { padding-left: 10px; }
+.sk__group[open] > summary { margin-bottom: 4px; }
+.sk__skill, .sk__file { margin-left: 4px; }
+.sk__skill > summary, .sk__file > summary {
+    cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 8px; padding: 2px 0; min-width: 0; }
+.sk__skill > summary::-webkit-details-marker, .sk__file > summary::-webkit-details-marker { display: none; }
+.sk__skill > summary:hover, .sk__file > summary:hover { background: var(--mint-faint); }
+.sk__name { font: 0.78rem var(--mono); color: var(--mint); white-space: nowrap; }
+.sk__desc { flex: 1; min-width: 0; color: var(--dim); font-size: 0.78rem; white-space: nowrap; overflow: hidden;
+            text-overflow: ellipsis; }
+.sk__age, .sk__size { font: 0.68rem var(--mono); color: var(--dim); white-space: nowrap; }
+.sk__age { margin-left: auto; }
+.sk__size { min-width: 3.4em; text-align: right; }
+.sk__skill.is-superseded .sk__name { color: var(--dim); text-decoration: line-through; }
+.sk__body { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 8px 1.1em; }
+.sk__about { font-size: 0.8rem; }
+.sk__where { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sk__where code { font-size: 0.7rem; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sk__files { display: flex; flex-direction: column; gap: 2px; }
+.sk__text { max-height: 60vh; white-space: pre-wrap; word-break: break-word; margin: 4px 0 6px 1.1em; }
+
+/* The output shelf has its own scroll budget and never steals terminal focus. */
+html { height: 100%; }
+body { height: 100%; display: flex; flex-direction: column; gap: 8px; padding-bottom: 0; }
+#vc-canvas, #vc-skills { flex: 1; min-height: 0; overflow: auto; padding-bottom: 12px; }
+#vc-artifacts { flex: 0 1 auto; max-height: 40%; overflow: auto; border-top: 1px solid var(--mint-dim); padding: 12px 0; }
+#vc-artifacts h2 { margin: 0 0 10px; }
+.artifact-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 8px 0; }
+.artifact-label { flex: 1 1 100%; min-width: 0; }
+.artifact-label strong { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-label small { display: block; color: var(--dim); font-size: 11px; margin-top: 3px; }
+.artifact-row button, .artifact-row a, .artifact-preview button {
+    display: inline-flex; align-items: center; min-height: 30px; padding: 4px 10px;
+    background: #383c42; color: var(--text); border: 1px solid var(--mint-dim);
+    font: 12px var(--sans); text-decoration: none; cursor: pointer;
+}
+.artifact-row :focus-visible, .artifact-preview button:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+.artifact-row button:hover, .artifact-row a:hover { border-color: var(--mint); }
+.artifact-error, .artifact-label .artifact-error { color: var(--amber); }
+.artifact-preview { width: calc(100% - 16px); height: calc(100% - 16px); max-width: none; max-height: none; padding: 8px;
+    background: var(--glass); color: var(--text); border: 1px solid var(--mint-dim); }
+.artifact-preview[open] { display: flex; flex-direction: column; gap: 8px; }
+.artifact-preview::backdrop { background: #25272bcc; }
+.artifact-preview button { align-self: flex-end; }
+.artifact-preview iframe { flex: 1; min-height: 0; width: 100%; border: 0; }
+@media (pointer: coarse) { .artifact-row button, .artifact-row a, .artifact-preview button { min-height: 44px; } }

@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Report milestones or read the parent's durable context; no LLM or file polling."""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import urllib.request
+import urllib.error
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=['status', 'report', 'seal', 'pause', 'resume', 'retry'])
+    parser.add_argument('id')
+    parser.add_argument('--branch')
+    parser.add_argument('--stage', choices=['queued', 'research', 'implement', 'validate', 'ready', 'blocked', 'failed'])
+    parser.add_argument('--note', default='')
+    parser.add_argument('--publication-branch')
+    parser.add_argument('--title')
+    parser.add_argument('--body-file', type=Path)
+    parser.add_argument('--validated', action='store_true')
+    args = parser.parse_args()
+    port = int(os.environ.get('TLDRACK_STATUS_PORT', '7682'))
+    route = '/groups'
+    body = None
+    if args.command == 'report':
+        if not args.branch or not args.stage:
+            parser.error('report requires --branch and --stage')
+        body = {'id': args.id, 'branch': args.branch, 'stage': args.stage, 'note': args.note}
+        if args.publication_branch:
+            body['publication_branch'] = args.publication_branch
+        if args.stage == 'ready':
+            if not args.validated or not args.title or not args.body_file:
+                parser.error('ready requires --validated --title --body-file')
+            body.update(head=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+                        validated=True, title=args.title, body=args.body_file.read_text())
+        route = '/group-report'
+    elif args.command != 'status':
+        body = {'id': args.id, 'action': args.command}
+        route = '/group-control'
+    request = urllib.request.Request(f'http://127.0.0.1:{port}/plugin/worktree{route}',
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            result = json.loads(response.read())
+        if args.command == 'status':
+            result = next((g for g in result['groups'] if g['id'] == args.id), None)
+            if result is None:
+                raise ValueError('unknown task group')
+        print(json.dumps(result, indent=2))
+        return 0
+    except (urllib.error.URLError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

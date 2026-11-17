@@ -1,0 +1,8 @@
+/* Rack chrome is opaque graphite; semantic state colours keep their existing meanings. */
+:root {
+    --rack-surface: #2d3035;
+    --rack-raised: #383c42;
+    --rack-base: #25272b;
+    --rack-text: #edf0f3;
+    --rack-muted: #b5bdc6;
+}

@@ -1,0 +1,12 @@
+[project]
+name = "phone-link"
+version = "0.1.0"
+description = "tldrack plugin: a token-gated listener on 127.0.0.1:7683 that lets the Laya review app reach seven bridge routes over adb reverse"
+requires-python = ">=3.10,<4"
+dependencies = ["voidcraft-world-bridge>=0.1.4,<0.2"]
+
+[dependency-groups]
+dev = ["pytest>=9.1.1,<10"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

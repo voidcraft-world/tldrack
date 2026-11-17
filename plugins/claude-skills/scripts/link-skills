@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# link-skills — link this checkout's .claude/skills/<name>/ into ~/.claude/skills/, so tldrack's
+# skills load in every repository. Thin on purpose: every decision lives in
+# `claude_skills/link.py`; this file only finds a Python that can run it.
+#
+#   link-skills                     link (idempotent; never replaces anything that is not ours)
+#   link-skills --dry-run           print the plan, change nothing
+#   link-skills --remove            delete only the links that point into this checkout
+#   link-skills --dest DIR …        link into DIR instead of the defaults (repeatable)
+#   link-skills --force             also replace a link that points elsewhere (never a real dir)
+#   link-skills --json              one JSON object instead of lines
+#
+# The module is stdlib-only, so ANY Python >= 3.10 runs it, with no venv. Probe rather than
+# assume: some systems still ship an older python3.
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do                      # run through a symlink on PATH: find the real file
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in /*) SELF="$LINK" ;; *) SELF="$(dirname "$SELF")/$LINK" ;; esac
+done
+PLUGIN="$(cd "$(dirname "$SELF")/.." && pwd)"  # plugins/claude-skills
+
+for py in python3.14 python3.13 python3.12 python3.11 python3.10 python3; do
+  command -v "$py" >/dev/null 2>&1 || continue
+  "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null || continue
+  PYTHONPATH="$PLUGIN${PYTHONPATH:+:$PYTHONPATH}" exec "$py" -m claude_skills.link "$@"
+done
+
+echo "link-skills: no python >= 3.10 found" >&2
+exit 3

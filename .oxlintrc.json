@@ -1,0 +1,20 @@
+{
+  // One lint standard for the TypeScript, Vue and JavaScript in this repository. CI runs it (`lint`
+  // in .github/workflows/ci.yml) with the version pinned there, and a warning fails:
+  //
+  //     npx -y oxlint@1.94.0 --deny-warnings .
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/assets/vendor/**"],
+  "rules": {
+    // Stripping control characters from text a terminal or a page will show is what these regexes are for.
+    "no-control-regex": "off",
+    // A copy taken before a loop that removes from the collection it walks is deliberate.
+    "unicorn/no-useless-spread": "off"
+  },
+  "overrides": [
+    {
+      // A canvas page loads these as plain scripts that share one global scope: what one file declares, another uses.
+      "files": ["plugins/agent-canvas/agent_canvas/assets/*.js"],
+      "rules": { "no-unused-vars": "off" }
+    }
+  ]
+}

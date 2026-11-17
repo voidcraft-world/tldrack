@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- RackColors (ui/Theme.kt) that the window and the launcher icon need: they draw before Compose does. -->
+    <color name="rack_void">#FF050B08</color>
+    <color name="rack_mint">#FF93FFD4</color>
+    <color name="rack_warn">#FFFFC46B</color>
+</resources>

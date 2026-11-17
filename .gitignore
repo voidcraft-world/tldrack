@@ -1,0 +1,40 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+.vite/
+coverage/
+
+# Android
+.gradle/
+local.properties
+android/**/build/
+*.apk
+*.aab
+
+# Model weights and private data: a trained checkpoint learned from someone's own
+# sessions, so it never rides along by accident. tests/test_purity.py fails on these
+# suffixes too; this file only keeps them out of `git status`.
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.gguf
+*.onnx
+
+# Agents: per-machine settings (the edit hook keeps its state in the user cache)
+.claude/settings.local.json
+
+.DS_Store
+
+# Editors
+.idea/

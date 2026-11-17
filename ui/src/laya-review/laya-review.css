@@ -1,0 +1,499 @@
+/*
+ * The Laya REVIEW page's shared pieces: the deck and its RECENT list both draw them. Imported ONCE, globally, by
+ * `main.ts` (a host application that mounts the deck inside its own page imports it the same way): an `@import`
+ * inside `\3c style scoped>` is scoped per importer under Vite 8.
+ *
+ * WHY EVERY RULE THAT RESKINS THE KIT STARTS `.nv-board.lr`. The build links CSS chunks in no promised order. When
+ * `native-view-board.css` is linked AFTER this file, its one-class `.nv-board { color; background }` beats a
+ * one-class `.lr`, and LIGHT draws pale-blue ink on white panels over a navy board. Two classes outrank every
+ * one-class kit rule (`.nv-board`, `.board-btn`, `.fui-panel`, `.fui-tag`) from either side; a descendant selector
+ * from here outranks a kit component's scoped class + attribute. A component that must restyle a button sets the
+ * `--lr-btn-*` tokens on it rather than racing these rules on specificity.
+ */
+
+/* ── Reading first, FUI second ────────────────────────────────────────────────
+   The rule on this page since 2026-11-05: contrast and readability win over pure FUI. So no ink is dimmed with
+   `opacity` (that greys text under contrast on both themes): secondary text takes `--lr-ink-2`, hints `--lr-ink-3`,
+   each at least 4.5:1 on its panel. Labels, tags and buttons are sans, not tracked mono; numbers stay mono and
+   tabular. The panels are opaque, so the glass has nothing to blur.
+
+   Every colour the page draws is a token here, dark by default and re-pointed by `.lr--light` (the LIGHT switch,
+   `review-prefs.ts`). The FUI kit's own tokens are re-declared on the board rather than derived: a token computed
+   on :root (`--fui-glass-slate` from `--fui-glass-rgb`) keeps its dark value however its source is overridden here. */
+.nv-board.lr {
+    --lr-bg: #080c12;
+    --lr-panel: #0f1621;
+    --lr-btn: #142032;
+    --lr-ink: #e6eef8;
+    --lr-ink-2: #b4c3d4;
+    --lr-ink-3: #8fa2b8;
+    --lr-on-ink: #ffffff;
+    --lr-on-fill: rgba(157, 218, 255, 0.22);
+    --lr-well: #0a1019;
+    --lr-well-line: rgba(157, 218, 255, 0.2);
+    --lr-rule: rgba(157, 218, 255, 0.32);
+    --lr-tint: rgba(157, 218, 255, 0.1);
+    --lr-tint-amber: rgba(240, 180, 91, 0.13);
+    --lr-amber: #f0b45b;
+    --lr-good: #5fc78f;
+    --lr-bad: #ef8b8b;
+    /* A thread's identity hue (`thread-model.ts` `thread_hue`): four, and never the good / bad / amber above, so a
+       band's colour can never be read as a grade or a warning. */
+    --lr-t1: #86b4ff;
+    --lr-t2: #b9a1ff;
+    --lr-t3: #f193dc;
+    --lr-t4: #6fd3e3;
+    --lr-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+    --lr-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --fui-accent: rgba(157, 218, 255, 0.9);
+    --fui-glass-fill: var(--lr-panel);
+    --fui-glass-bg-boost: 0%;
+    --fui-glass-border-mix: 34%;
+    --fui-glass-slate: var(--lr-btn);
+    --color-text-slate: var(--lr-ink);
+    --fui-text: var(--lr-ink);
+    --fui-text-dim: var(--lr-ink-3);
+    color: var(--lr-ink);
+    background: var(--lr-bg);
+    font-family: var(--lr-sans);
+    font-size: 1rem;
+    line-height: 1.5;
+    color-scheme: dark;
+}
+.nv-board.lr.lr--light {
+    --lr-bg: #eef2f7;
+    --lr-panel: #ffffff;
+    --lr-btn: #f3f6fa;
+    --lr-ink: #0f1b2a;
+    --lr-ink-2: #3a4a5c;
+    --lr-ink-3: #55657a;
+    --lr-on-ink: #0b1622;
+    --lr-on-fill: rgba(31, 95, 153, 0.15);
+    --lr-well: #f7f9fc;
+    --lr-well-line: rgba(31, 85, 140, 0.25);
+    --lr-rule: rgba(31, 85, 140, 0.38);
+    --lr-tint: rgba(31, 95, 153, 0.08);
+    --lr-tint-amber: rgba(154, 91, 0, 0.1);
+    --lr-amber: #8a5300;
+    --lr-good: #17703f;
+    --lr-bad: #b3261e;
+    --lr-t1: #2f63c4;
+    --lr-t2: #7046c9;
+    --lr-t3: #a3307f;
+    --lr-t4: #0f7486;
+    --lr-shadow: 0 1px 3px rgba(19, 32, 47, 0.08), 0 4px 16px rgba(19, 32, 47, 0.08);
+    --fui-accent: rgba(31, 95, 153, 0.9);
+    --fui-slate: #1f5f99;
+    --fui-slate-rgb: 31, 95, 153;
+    --fui-warn: #b07400;
+    --fui-mint: #17703f;
+    color-scheme: light;
+}
+
+/* ── The kit, re-inked for reading ─────────────────────────────────────────── */
+.nv-board.lr .fui-panel {
+    box-shadow: none;
+}
+.nv-board.lr .fui-panel > .fui-corner { display: none; }
+/* The kit brightens a hovered panel's brackets toward white, which fades them on a white panel. */
+.nv-board.lr.lr--light .fui-panel:hover > .fui-corner,
+.nv-board.lr.lr--light .fui-panel:focus-within > .fui-corner {
+    border-color: var(--fui-accent);
+}
+.nv-board.lr .fui-techtext {
+    font-family: var(--lr-sans);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+}
+.nv-board.lr .fui-tag {
+    font-family: var(--lr-sans);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+.nv-board.lr.lr--light .fui-tag--warn {
+    border-color: rgba(176, 116, 0, 0.6);
+    background: rgba(176, 116, 0, 0.1);
+    color: var(--lr-amber);
+}
+.nv-board.lr.lr--light .fui-tag--ok {
+    border-color: rgba(23, 112, 63, 0.55);
+    background: rgba(23, 112, 63, 0.08);
+    color: var(--lr-good);
+}
+.nv-board.lr .fui-key {
+    opacity: 1;
+    color: var(--lr-ink-3);
+    font-size: 0.72rem;
+}
+.nv-board.lr .fui-count {
+    color: var(--lr-ink-3);
+    font-size: 0.78rem;
+}
+.nv-board.lr .fui-meter {
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.nv-board.lr .fui-callout {
+    border-left-color: var(--lr-rule);
+    background: var(--lr-panel);
+    color: var(--lr-ink);
+    font-size: 0.92rem;
+    line-height: 1.6;
+}
+.nv-board.lr .fui-disclose {
+    padding: 3px 10px;
+    border-color: var(--lr-rule);
+    color: var(--lr-ink-2);
+    font-family: var(--lr-sans);
+    font-size: 0.85rem;
+    opacity: 1;
+}
+.nv-board.lr .fui-disclose:hover {
+    border-color: var(--fui-accent);
+    color: var(--lr-ink);
+    opacity: 1;
+}
+.nv-board.lr .panel-down__head {
+    font-size: 0.85rem;
+}
+.nv-board.lr .panel-down__why {
+    font-size: 0.95rem;
+}
+.nv-board.lr .panel-down__how {
+    color: var(--lr-ink-2);
+    font-size: 0.9rem;
+    opacity: 1;
+}
+
+/* Buttons: sans labels, no brackets at button scale, a filled pressed state. A component sizes or tints one through
+   the `--lr-btn-*` tokens on it (see the header). */
+.nv-board.lr .board-btn {
+    min-height: var(--lr-btn-h, 34px);
+    padding: var(--lr-btn-pad, 6px 14px);
+    color: var(--lr-btn-ink, var(--lr-ink));
+    background: var(--lr-btn);
+    border-color: color-mix(in srgb, var(--fui-accent) 55%, transparent);
+    font-family: var(--lr-sans);
+    font-size: var(--lr-btn-fs, 0.82rem);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+}
+.nv-board.lr .board-btn > .fui-corner {
+    display: none;
+}
+.nv-board.lr .board-btn:hover:not(:disabled) {
+    border-color: var(--fui-accent);
+    background: color-mix(in srgb, var(--fui-accent) 10%, var(--lr-btn));
+    box-shadow: none;
+}
+.nv-board.lr .board-btn:focus-visible {
+    outline: 2px solid var(--fui-accent);
+    outline-offset: 2px;
+}
+/* A pressed toggle anywhere on the page: the view switch, the surface switch, a band filter, a graded verdict. */
+.nv-board.lr .board-btn.is-on,
+.nv-board.lr .board-btn.is-on:hover:not(:disabled) {
+    border-color: var(--fui-accent);
+    background: var(--lr-on-fill);
+    color: var(--lr-on-ink);
+}
+.nv-board.lr .board-btn:disabled {
+    opacity: 0.45;
+}
+
+/* ── The page's own pieces ─────────────────────────────────────────────────── */
+
+/* EXPLAIN's sentences: sentence-case sans, one rung under the body, wherever a mark needs its words. */
+.lr-explain {
+    margin: 0;
+    padding: 0 4px;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    color: var(--lr-ink-2);
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+.lr-explain li {
+    margin: 0;
+}
+.lr-grow {
+    flex: 1;
+}
+.lr-stats {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    padding: 0 4px;
+}
+.lr-meter {
+    flex: 1 1 160px;
+    min-width: 80px;
+}
+.lr-fig {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    font-family: var(--fui-mono);
+    font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+}
+.lr-loading {
+    padding: 16px 18px;
+    color: var(--lr-ink-3);
+    font-size: 0.85rem;
+}
+.lr-how {
+    display: block;
+    margin-bottom: 10px;
+    padding: 6px 10px;
+    border: 1px solid var(--lr-well-line);
+    border-radius: 3px;
+    background: var(--lr-well);
+    color: var(--lr-ink);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+.lr-retry {
+    display: inline-flex;
+    gap: 8px;
+}
+.lr-status {
+    min-height: 1.3em;
+    color: var(--lr-ink-2);
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+}
+.lr-status--bad {
+    color: var(--lr-bad);
+}
+/* ── Threads: RECENT's bands, their turns, and the one grade group ─────────────
+   A band is one conversation (`thread-model.ts`); colour is its identity and reaches only the left rule here and the
+   badge in `LayaThreadHeader.vue`. The deck's card wears the same rule. */
+.nv-board.lr .lr-hue-0 { --lr-thread: var(--lr-t1); }
+.nv-board.lr .lr-hue-1 { --lr-thread: var(--lr-t2); }
+.nv-board.lr .lr-hue-2 { --lr-thread: var(--lr-t3); }
+.nv-board.lr .lr-hue-3 { --lr-thread: var(--lr-t4); }
+
+.nv-board.lr .lr-thread {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border: 1px solid var(--lr-well-line);
+    border-left: 3px solid var(--lr-thread, var(--lr-rule));
+    border-radius: 4px;
+    background: var(--lr-panel);
+}
+.nv-board.lr .lr-thread > .lth {
+    border-bottom: 1px solid var(--lr-well-line);
+}
+.nv-board.lr .lr-card--thread {
+    border-left: 3px solid var(--lr-thread, var(--lr-rule));
+}
+/* A caller indents a list of turns through `--lr-turns-indent` (RECENT's prompt groups), not a rule of its own: this
+   one comes later in the build and wins the tie (see the header). */
+.nv-board.lr .lr-turns {
+    margin: 0 0 0 var(--lr-turns-indent, 0);
+    padding: 0;
+    list-style: none;
+}
+.nv-board.lr .lr-turn {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: 10px 14px 12px;
+    border-top: 1px solid var(--lr-well-line);
+    cursor: pointer;
+    /* Clear of RECENT's sticky pager bar above and its bottom grade bar below (both measured in LayaRecentList.vue). */
+    scroll-margin-top: calc(var(--lr-sticky-top, 0px) + 8px);
+    scroll-margin-bottom: calc(var(--lr-gradebar-h, 0px) + 8px);
+}
+.nv-board.lr .lr-turn:first-child {
+    border-top: 0;
+}
+.nv-board.lr .lr-turn--on {
+    outline: 2px solid var(--fui-accent);
+    outline-offset: -2px;
+    background: color-mix(in srgb, var(--fui-accent) 5%, var(--lr-panel));
+    cursor: auto;
+}
+.nv-board.lr .lr-turn__line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    min-width: 0;
+    font-size: 0.85rem;
+}
+.nv-board.lr .lr-turn__age {
+    color: var(--lr-ink-3);
+    font-family: var(--fui-mono);
+}
+.nv-board.lr .lr-turn__laya {
+    color: var(--lr-ink-2);
+    font-family: var(--fui-mono);
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.nv-board.lr .lr-turn__edge {
+    color: var(--lr-amber);
+    font-variant-numeric: tabular-nums;
+}
+.nv-board.lr .lr-chip {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+}
+.nv-board.lr .lr-chip--right {
+    color: var(--lr-good);
+}
+.nv-board.lr .lr-chip--wrong {
+    color: var(--lr-bad);
+}
+/* A turn the operator did not prompt (turn-context.ts `wake_note`), on RECENT's row and in the reader. Dashed like a
+   prompt that was not theirs (LayaPrompt.vue `.lp--other`): the same mark for "not from you". */
+.nv-board.lr .lr-wake {
+    margin: 6px 0 0;
+    padding: 5px 10px;
+    border: 1px dashed var(--lr-well-line);
+    border-radius: 3px;
+    color: var(--lr-ink-2);
+    font-family: var(--lr-sans);
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+.nv-board.lr .lr-wake__tag {
+    margin-right: 8px;
+    color: var(--lr-ink);
+    font-family: var(--fui-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+}
+/* The closing's last lines: `AgentMessage.vue` tail mode clips and fades them; this only sets the size. */
+.nv-board.lr .lr-turn__preview {
+    --am-font-size: 0.92rem;
+}
+.nv-board.lr .lr-turn__body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+.nv-board.lr .lr-turn__main {
+    min-width: 0;
+}
+
+/* The cursor turn's grades: a row under the turn, a column pinned beside its reader when wide, and the page's bottom
+   bar at phone width (the group is teleported there: `LayaRecentList.vue` `pinned_bar`). */
+.nv-board.lr .lr-grades {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 6px;
+}
+.nv-board.lr .lr-grade {
+    --lr-btn-h: 36px;
+    --lr-btn-pad: 6px 12px;
+    --lr-btn-fs: 0.8rem;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    text-align: left;
+}
+.nv-board.lr .lr-grade__label {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+}
+/* EXPLAIN's caption under a grade: what it records, sentence case. */
+.nv-board.lr .lr-grade__cap {
+    color: var(--lr-ink-3);
+    font-size: 0.74rem;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1.3;
+    text-transform: none;
+    white-space: normal;
+}
+.nv-board.lr .lr-grades > .lr-status {
+    flex-basis: 100%;
+    min-height: 0;
+    font-size: 0.8rem;
+}
+.nv-board.lr .lr-gradebar {
+    display: none;
+}
+.nv-board.lr .lr-gradebar--on {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    display: block;
+    margin: 0 -4px;
+    padding: 8px 4px 10px;
+    border-top: 1px solid var(--lr-well-line);
+    background: var(--lr-bg);
+}
+.nv-board.lr .lr-gradebar .lr-grades {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.nv-board.lr .lr-gradebar .lr-grade {
+    --lr-btn-h: 46px;
+    --lr-btn-pad: 4px 2px;
+    --lr-btn-fs: 0.72rem;
+    align-items: center;
+    text-align: center;
+    white-space: normal;
+}
+.nv-board.lr .lr-gradebar .lr-grade .fui-key {
+    display: none;
+}
+/* Pinned, the bar stays a strip: EXPLAIN's captions go, and each button's tooltip still says it in full. */
+.nv-board.lr .lr-gradebar .lr-grade__cap {
+    display: none;
+}
+.nv-board.lr .lr-gradebar .lr-status {
+    grid-column: 1 / -1;
+    text-align: center;
+}
+
+@container (min-width: 1000px) {
+    .nv-board.lr .lr-turn__body--open {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 15rem;
+        align-items: start;
+        gap: 16px;
+    }
+    .nv-board.lr .lr-turn__body--open .lr-grades {
+        position: sticky;
+        /* Under RECENT's sticky pager bar, whose height LayaRecentList.vue measures into this variable. */
+        top: calc(var(--lr-sticky-top, 0px) + 12px);
+        flex-direction: column;
+        flex-wrap: nowrap;
+    }
+    .nv-board.lr .lr-turn__body--open .lr-grade {
+        width: 100%;
+    }
+}
+@container (max-width: 559px) {
+    .nv-board.lr .lr-turn {
+        padding: 10px;
+    }
+}
+
+/* The page around the deck (past its max width, and under a short one) follows LIGHT: `LayaReviewDeck.vue`
+   writes the attribute; the dark default is the critical CSS in review.html. */
+html[data-lr-theme='light'],
+html[data-lr-theme='light'] body {
+    color-scheme: light;
+    background: #eef2f7;
+}

@@ -1,0 +1,33 @@
+[project]
+name = "tldrack"
+version = "0.1.0"
+description = "An agent rack: coding-agent sessions in tmux, and the local bridge that serves them to one browser page"
+requires-python = ">=3.10.1,<4"
+readme = "README.md"
+dependencies = [
+    "click>=8.1.7,<9",
+    # The public core, from PyPI: guards, plugin host, /snapshot, the built-in local-llm. This
+    # bridge subclasses its handler and adds the terminal, agent and status routes on top. 0.1.4
+    # is the floor: a host passes its own browser origins (`BridgeHandler.ALLOWED_ORIGINS`), which
+    # is how this bridge is loopback-only by default.
+    "voidcraft-world-bridge>=0.1.4,<0.2",
+]
+
+[project.scripts]
+tldrack = "tldrack.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1,<10",
+]
+
+[tool.uv]
+default-groups = "all"
+
+[tool.uv.build-backend]
+# tldrack/ lives at the project root (flat layout), not under src/
+module-root = ""
+
+[build-system]
+requires = ["uv_build>=0.11.26,<0.14.0"]
+build-backend = "uv_build"

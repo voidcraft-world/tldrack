@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is refused everywhere except 127.0.0.1. LAYA talks to the Mac's phone-link
+  listener at http://127.0.0.1:7683, which `adb reverse` tunnels over USB or wireless
+  debugging, so the bytes never cross a network the phone can see; every request is
+  also signed with the pushed token, which itself never crosses. Contract:
+  plugins/phone-link/README.md.
+  Nothing else in this app speaks plain HTTP, and nothing else may.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

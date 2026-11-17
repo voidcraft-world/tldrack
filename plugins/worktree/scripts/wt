@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# wt — the worktree plugin's command line. Thin on purpose: every decision lives
+# in `worktree/cli.py`; this file only finds a Python that can run it.
+#
+#   wt create <branch>        wt remove <branch> [--force]
+#   wt sync <branch>          (merge main in, bootstrap again; one JSON line)
+#   wt path <branch>          wt session <branch>
+#   wt hook-create            wt hook-remove          (Claude Code hooks, JSON on stdin)
+#
+# Callers: Claude Code's WorktreeCreate/WorktreeRemove hooks, a shell
+# function, and the /worktree skill. It acts on the repository it is run in.
+#
+# The plugin is stdlib-only (plugins/README.md), so ANY Python >= 3.10
+# will do — but macOS's /usr/bin/python3 is 3.9, so probe rather than assume.
+# The bridge's own venv is first because it is the interpreter the plugin
+# already runs under.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN="$(cd "$HERE/.." && pwd)"           # plugins/worktree
+REPO="$(cd "$PLUGIN/../.." && pwd)"
+
+candidates=(
+  "$REPO/bridge/.venv/bin/python"
+  python3.13 python3.12 python3.11 python3.10 python3
+)
+for py in "${candidates[@]}"; do
+  command -v "$py" >/dev/null 2>&1 || continue
+  "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null || continue
+  PYTHONPATH="$PLUGIN${PYTHONPATH:+:$PYTHONPATH}" exec "$py" -m worktree.cli "$@"
+done
+
+echo "wt: no python >= 3.10 found (tried: ${candidates[*]})" >&2
+exit 3

@@ -1,0 +1,728 @@
+[
+ {
+  "name": "every block",
+  "valid": true,
+  "doc": {
+   "title": "Every block",
+   "blocks": [
+    {
+     "type": "heading",
+     "text": "Plan",
+     "level": 1
+    },
+    {
+     "type": "text",
+     "text": "Lead with the point.",
+     "muted": true
+    },
+    {
+     "type": "list",
+     "items": [
+      "one",
+      "two"
+     ],
+     "ordered": true
+    },
+    {
+     "type": "stat",
+     "label": "tests",
+     "value": 41,
+     "unit": "pass",
+     "tone": "ok",
+     "hint": "all suites"
+    },
+    {
+     "type": "meter",
+     "label": "context",
+     "value": 62,
+     "max": 100,
+     "tone": "warn"
+    },
+    {
+     "type": "split",
+     "parts": [
+      {
+       "label": "read",
+       "value": 3
+      },
+      {
+       "label": "write",
+       "value": 1
+      }
+     ]
+    },
+    {
+     "type": "kv",
+     "rows": [
+      [
+       "branch",
+       "main"
+      ],
+      [
+       "files",
+       4
+      ]
+     ]
+    },
+    {
+     "type": "table",
+     "columns": [
+      "file",
+      "lines"
+     ],
+     "rows": [
+      [
+       "a.ts",
+       12
+      ],
+      [
+       "b.ts",
+       null
+      ]
+     ]
+    },
+    {
+     "type": "diff",
+     "before": "old",
+     "after": "new"
+    },
+    {
+     "type": "tags",
+     "items": [
+      "draft",
+      {
+       "text": "green",
+       "tone": "ok"
+      }
+     ]
+    },
+    {
+     "type": "callout",
+     "text": "Deploy window closes at 3pm",
+     "title": "Heads up",
+     "tone": "bad"
+    },
+    {
+     "type": "code",
+     "text": "npm test"
+    },
+    {
+     "type": "mermaid",
+     "source": "flowchart LR; a-->b"
+    },
+    {
+     "type": "link",
+     "text": "PR",
+     "url": "https://github.com/x/y/pull/1"
+    },
+    {
+     "type": "card",
+     "title": "Plugin",
+     "blocks": [
+      {
+       "type": "text",
+       "text": "inside"
+      }
+     ]
+    },
+    {
+     "type": "cols",
+     "blocks": [
+      {
+       "type": "text",
+       "text": "left"
+      },
+      {
+       "type": "text",
+       "text": "right"
+      }
+     ]
+    },
+    {
+     "type": "details",
+     "summary": "why",
+     "blocks": [
+      {
+       "type": "text",
+       "text": "because"
+      }
+     ]
+    },
+    {
+     "type": "tabs",
+     "tabs": [
+      {
+       "label": "A",
+       "blocks": [
+        {
+         "type": "text",
+         "text": "a"
+        }
+       ]
+      },
+      {
+       "label": "B",
+       "blocks": [
+        {
+         "type": "choice",
+         "q": "Pick",
+         "options": [
+          "x",
+          "y"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "choice",
+     "id": "ship",
+     "q": "Ship it?",
+     "options": [
+      "yes",
+      {
+       "label": "LATER",
+       "reply": "defer",
+       "hint": "after 3pm"
+      }
+     ],
+     "multi": false,
+     "other": false,
+     "note": "Tests are green."
+    },
+    {
+     "type": "form",
+     "q": "Layout",
+     "note": "pick one",
+     "fields": [
+      {
+       "type": "text",
+       "name": "note",
+       "label": "Note",
+       "placeholder": "…",
+       "multiline": true,
+       "default": ""
+      },
+      {
+       "type": "select",
+       "name": "layout",
+       "label": "Layout",
+       "options": [
+        "A",
+        "B"
+       ],
+       "default": "B"
+      },
+      {
+       "type": "toggle",
+       "name": "dark",
+       "label": "Dark",
+       "default": true
+      },
+      {
+       "type": "rank",
+       "name": "order",
+       "label": "Order",
+       "options": [
+        "x",
+        "y",
+        "z"
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "minimal",
+  "valid": true,
+  "doc": {
+   "blocks": [
+    {
+     "type": "text",
+     "text": "hi"
+    }
+   ]
+  }
+ },
+ {
+  "name": "120 emoji fit a heading (Zod counts code points)",
+  "valid": true,
+  "doc": {
+   "blocks": [
+    {
+     "type": "heading",
+     "text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+    }
+   ]
+  }
+ },
+ {
+  "name": "121 emoji do not",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "heading",
+     "text": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+    }
+   ]
+  }
+ },
+ {
+  "name": "unknown block type",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "chart",
+     "data": []
+    }
+   ]
+  }
+ },
+ {
+  "name": "block with no type",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "text": "hi"
+    }
+   ]
+  }
+ },
+ {
+  "name": "misspelt key",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "table",
+     "colums": [
+      "a"
+     ],
+     "rows": []
+    }
+   ]
+  }
+ },
+ {
+  "name": "missing required key",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "stat",
+     "label": "x"
+    }
+   ]
+  }
+ },
+ {
+  "name": "text too long",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "text",
+     "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   ]
+  }
+ },
+ {
+  "name": "empty text",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "text",
+     "text": ""
+    }
+   ]
+  }
+ },
+ {
+  "name": "negative meter",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "meter",
+     "label": "x",
+     "value": -1
+    }
+   ]
+  }
+ },
+ {
+  "name": "zero max",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "meter",
+     "label": "x",
+     "value": 1,
+     "max": 0
+    }
+   ]
+  }
+ },
+ {
+  "name": "javascript url",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "link",
+     "text": "x",
+     "url": "javascript:alert(1)"
+    }
+   ]
+  }
+ },
+ {
+  "name": "kv row of three",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "kv",
+     "rows": [
+      [
+       "a",
+       "b",
+       "c"
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "kv row of one",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "kv",
+     "rows": [
+      [
+       "a"
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "choice with no options",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "choice",
+     "q": "x",
+     "options": []
+    }
+   ]
+  }
+ },
+ {
+  "name": "one tab",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "tabs",
+     "tabs": [
+      {
+       "label": "A",
+       "blocks": [
+        {
+         "type": "text",
+         "text": "a"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "duplicate explicit ids",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "choice",
+     "id": "a",
+     "q": "x",
+     "options": [
+      "y"
+     ]
+    },
+    {
+     "type": "choice",
+     "id": "a",
+     "q": "z",
+     "options": [
+      "y"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "explicit id colliding with a default",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "choice",
+     "q": "x",
+     "options": [
+      "y"
+     ]
+    },
+    {
+     "type": "choice",
+     "id": "q1",
+     "q": "z",
+     "options": [
+      "y"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "bad id",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "choice",
+     "id": "Has Space",
+     "q": "x",
+     "options": [
+      "y"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "no blocks",
+  "valid": false,
+  "doc": {
+   "blocks": []
+  }
+ },
+ {
+  "name": "unknown root key",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "text",
+     "text": "x"
+    }
+   ],
+   "theme": "dark"
+  }
+ },
+ {
+  "name": "boolean is not a number",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "stat",
+     "label": "x",
+     "value": true
+    }
+   ]
+  }
+ },
+ {
+  "name": "bad block nested in a card",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "card",
+     "blocks": [
+      {
+       "type": "text",
+       "text": "ok"
+      },
+      {
+       "type": "nope"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "unknown field kind",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "form",
+     "q": "x",
+     "fields": [
+      {
+       "type": "date",
+       "name": "d",
+       "label": "D"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "bad tone",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "callout",
+     "text": "x",
+     "tone": "info"
+    }
+   ]
+  }
+ },
+ {
+  "name": "heading level 4",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "heading",
+     "text": "x",
+     "level": 4
+    }
+   ]
+  }
+ },
+ {
+  "name": "not an object",
+  "valid": false,
+  "doc": [
+   "blocks"
+  ]
+ },
+ {
+  "name": "an outward option that says what it runs",
+  "valid": true,
+  "doc": {
+   "blocks": [
+    {
+     "type": "choice",
+     "q": "Ship main?",
+     "options": [
+      {
+       "label": "PUSH",
+       "risk": "outward",
+       "does": "git push origin main"
+      },
+      "LEAVE"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "an outward option with no does",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "choice",
+     "q": "Ship main?",
+     "options": [
+      {
+       "label": "PUSH",
+       "risk": "outward"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a destructive option with targets and undo",
+  "valid": true,
+  "doc": {
+   "blocks": [
+    {
+     "type": "choice",
+     "q": "Ship main?",
+     "options": [
+      {
+       "label": "DELETE 2 BRANCHES",
+       "risk": "destructive",
+       "does": "git branch -D, tips archived first",
+       "targets": [
+        "a",
+        "b"
+       ],
+       "undo": "git branch a refs/archive/a"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a destructive option with no undo",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "choice",
+     "q": "Ship main?",
+     "options": [
+      {
+       "label": "DELETE",
+       "risk": "destructive",
+       "does": "rm",
+       "targets": [
+        "a"
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "an unknown risk",
+  "valid": false,
+  "doc": {
+   "blocks": [
+    {
+     "type": "choice",
+     "q": "Ship main?",
+     "options": [
+      {
+       "label": "X",
+       "risk": "spicy",
+       "does": "x"
+      }
+     ]
+    }
+   ]
+  }
+ }
+]

@@ -1,0 +1,78 @@
+tldrack
+Third-party notices
+
+tldrack is licensed under the MIT License. Its copyright line and terms are in
+the LICENSE file beside this one. Every release tarball (@tldrack/schemas,
+@tldrack/ui) carries both files.
+
+This file lists the third-party works this repository or its release tarballs
+CONTAIN. Each stays under its own licence. What is only downloaded, installed or
+called at run time (Laya's weights, ModernBERT, Python packages, local model
+servers) is listed in lab/NOTICE. Works that shaped the design without any code
+being copied are in docs/INSPIRATIONS.md.
+
+A licence below was read from the work's own LICENSE file on 2026-11-15. A
+copyright line is quoted as that file states it; where it states none, this file
+supplies none.
+
+
+========================================================================
+1. Vendored into this repository
+========================================================================
+
+lot-map
+  Where:      ui/src/agent-rack/lot-map/ (map.ts, text.ts, types.ts)
+  Source:     https://github.com/alexeyw/lot-map at
+              2b48eb0deef33619f1b0efabc838024c44ac9ba5, with local changes
+              named in each file's header
+  Licence:    MIT. ui/src/agent-rack/lot-map/LICENSE
+  Copyright:  Copyright (c) 2026 Aleksei Volodin
+  Ships in:   the @tldrack/ui tarball (src/)
+
+Mermaid 12.2.0
+  Where:      plugins/agent-canvas/agent_canvas/assets/vendor/mermaid/
+              (mermaid.min.js.gz; VENDORED.md says how it was taken)
+  Source:     https://github.com/mermaid-js/mermaid
+  Licence:    MIT. .../vendor/mermaid/LICENSE
+  Copyright:  Copyright (c) 2014 - 2022 Knut Sveidqvist
+  Note:       the notices of the libraries Mermaid bundles are inside the
+              bundle itself
+
+Gradle Wrapper
+  Where:      android/gradlew, android/gradlew.bat,
+              android/gradle/wrapper/gradle-wrapper.jar
+  Source:     https://github.com/gradle/gradle
+  Licence:    Apache-2.0 (https://www.apache.org/licenses/LICENSE-2.0)
+  Copyright:  "Copyright (c) 2015 the original authors." (gradlew's header)
+
+
+========================================================================
+2. Bundled into the @tldrack/ui tarball's build output (dist/)
+========================================================================
+
+The page is built with Vite, which bundles these npm dependencies into dist/.
+Versions are the ones ui/package-lock.json pins at the time of writing; the
+lockfile is the record for any later release.
+
+  vue 3.5            MIT            Copyright (c) 2018-present, Yuxi (Evan) You
+  three 0.187        MIT            Copyright (c) 2010-2026 three.js authors
+  d3 7.9             ISC            Copyright 2010-2026 Mike Bostock
+  dompurify 3.4      MPL-2.0 OR Apache-2.0, at the user's choice; the
+                                    copyright line is in its LICENSE
+  highlight.js 11    BSD-3-Clause   Copyright (c) 2006, Ivan Sagalaev.
+  marked 18          MIT            Copyright (c) 2018+, MarkedJS
+  markmap-lib, markmap-render, markmap-view 0.18
+                     MIT            Copyright (c) 2020 Gerald
+  mermaid 12         MIT            Copyright (c) 2014 - 2022 Knut Sveidqvist
+  @vue-flow/core 1.48
+                     MIT            Copyright (c) 2019-2025 webkid GmbH
+  @xterm/xterm 6     MIT            Copyright (c) 2017-2019, The xterm.js authors
+  @mdi/js 7.4        Apache-2.0 (its package.json); the LICENSE file is the
+                     Pictogrammers Free License. Icon paths only.
+  @fontsource/roboto 5.3
+                     OFL-1.1 for the font files: Copyright 2011 The Roboto
+                     Project Authors (https://github.com/googlefonts/roboto-classic)
+  zod 4.6            MIT            Copyright (c) 2025 Colin McDonnell
+
+Each package's full licence text is in its own LICENSE file in node_modules
+after `npm ci` in ui/, and at the source named on npm.

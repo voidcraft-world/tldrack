@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ic_launcher_foreground.xml in one ink, for themed icons: the launcher tints the alpha, so the lights stay cut out. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M35,35h38a2,2 0,0 1,2 2v6a2,2 0,0 1,-2 2h-38a2,2 0,0 1,-2 -2v-6a2,2 0,0 1,2 -2zM37.5,40a2.5,2.5 0,1 0,5 0a2.5,2.5 0,1 0,-5 0zM35,49h38a2,2 0,0 1,2 2v6a2,2 0,0 1,-2 2h-38a2,2 0,0 1,-2 -2v-6a2,2 0,0 1,2 -2zM37.5,54a2.5,2.5 0,1 0,5 0a2.5,2.5 0,1 0,-5 0zM35,63h38a2,2 0,0 1,2 2v6a2,2 0,0 1,-2 2h-38a2,2 0,0 1,-2 -2v-6a2,2 0,0 1,2 -2zM37.5,68a2.5,2.5 0,1 0,5 0a2.5,2.5 0,1 0,-5 0z" />
+</vector>

@@ -1,0 +1,25 @@
+[project]
+name = "worktree"
+version = "0.1.0"
+description = "tldrack plugin: git-worktree-backed agent sessions with a PR button"
+requires-python = ">=3.10,<4"
+readme = "README.md"
+# Deliberately empty: plugins execute inside the tldrack venv, so they
+# must be stdlib-only (see plugins/README.md).
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1,<10",
+]
+
+[tool.uv]
+default-groups = "all"
+
+[tool.uv.build-backend]
+# worktree/ lives at the project root (flat layout), not under src/
+module-root = ""
+
+[build-system]
+requires = ["uv_build>=0.11.26,<0.12.0"]
+build-backend = "uv_build"

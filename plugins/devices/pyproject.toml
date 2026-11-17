@@ -1,0 +1,14 @@
+[project]
+name = "devices"
+version = "0.1.0"
+description = "CPU and memory of this machine and every compute host, for the agent rack's DEVICES section"
+requires-python = ">=3.10,<4"
+# The public core: hosts.json's reader, the ssh options and the `typed` JSON reader. The range is the
+# plugin contract's (plugins/README.md).
+dependencies = ["voidcraft-world-bridge>=0.1.4,<0.2"]
+
+[dependency-groups]
+dev = ["pytest>=9.1.1,<10"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

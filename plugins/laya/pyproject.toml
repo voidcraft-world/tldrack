@@ -1,0 +1,23 @@
+[project]
+name = "laya-bridge"
+version = "0.1.0"
+description = "tldrack plugin: run Laya (convaiinnovations/laya) on this machine and answer /v1/systemone decisions over loopback"
+requires-python = ">=3.10,<4"
+readme = "README.md"
+dependencies = ["voidcraft-world-bridge>=0.1.4,<0.2"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1,<10",
+]
+
+[tool.uv]
+default-groups = "all"
+
+[tool.uv.build-backend]
+# laya_bridge/ lives at the project root (flat layout), not under src/
+module-root = ""
+
+[build-system]
+requires = ["uv_build>=0.11.26,<0.12.0"]
+build-backend = "uv_build"

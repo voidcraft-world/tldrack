@@ -1,0 +1,191 @@
+tldrack: lab and Laya plugin
+Third-party notices
+
+This file covers lab/ (laya-lab) and plugins/laya/. tldrack itself is under the
+licence in the LICENSE file at the root of the repository.
+
+Nothing listed here is copied into this repository. Each item is downloaded,
+installed, loaded or called on the operator's machine at run time, and stays
+under its own licence. No model weights ship with tldrack, and none that
+laya-lab trains.
+
+Each licence below was read at the source named, on 2026-11-13. A copyright
+line is quoted as that source states it. Where the source states none, this
+file says so and does not supply one.
+
+
+========================================================================
+1. Models
+========================================================================
+
+Laya (model weights)
+  Used for:   The base decision model. The Laya plugin downloads it from
+              Hugging Face on install and serves it on loopback; laya-lab
+              fine-tunes it and scores it.
+  Identifier: convaiinnovations/laya (Hugging Face)
+  Licence:    Apache-2.0
+  Copyright:  The model card states "Apache 2.0 · Convai Innovations". The
+              model repository has no LICENSE file and states no other
+              copyright line.
+  Source:     https://huggingface.co/convaiinnovations/laya
+  Checked:    2026-11-13 (model card metadata `license: apache-2.0`)
+
+ModernBERT-large (model weights)
+  Used for:   The encoder inside Laya's weights (the Laya model card names
+              it as the backbone). tldrack does not download it on its own.
+  Identifier: answerdotai/ModernBERT-large (Hugging Face)
+  Licence:    Apache-2.0
+  Copyright:  The model card states no copyright line. It says: "We release
+              the ModernBERT model architectures, model weights, training
+              codebase under the Apache 2.0 license." The LICENSE of the code
+              repository carries "Copyright 2022 MosaicML Examples authors".
+  Source:     https://huggingface.co/answerdotai/ModernBERT-large
+              https://github.com/AnswerDotAI/ModernBERT/blob/main/LICENSE
+  Checked:    2026-11-13 (model card metadata `license: apache-2.0`)
+
+gpt-oss 20B (model weights)
+  Used for:   laya-lab's optional local teacher (`laya-lab teacher-kappa`,
+              `label-open-work --teacher auto`). The operator pulls it into
+              Ollama; laya-lab calls it over loopback as `gpt-oss:20b`.
+  Identifier: gpt-oss:20b (Ollama library); openai/gpt-oss-20b (Hugging Face)
+  Licence:    Apache-2.0
+  Copyright:  None stated: the LICENSE file is the unmodified Apache-2.0
+              text.
+  Source:     https://huggingface.co/openai/gpt-oss-20b
+  Checked:    2026-11-13 (model card metadata `license: apache-2.0`)
+
+Qwen3.5 4B (model weights)
+  Used for:   Not used by lab/ or plugins/laya/: neither names a Qwen model
+              outside invented test tags. Listed because the rack's bridge
+              (bridge/tldrack/next_step.py) calls `qwen3.5:4b` through a
+              local Ollama when the operator has pulled it.
+  Identifier: qwen3.5:4b (Ollama library); Qwen/Qwen3.5-4B (Hugging Face)
+  Licence:    Apache-2.0
+  Copyright:  "Copyright 2026 Alibaba Cloud" (LICENSE of Qwen/Qwen3.5-4B).
+              The Ollama library page shows the Apache License 2.0 text and
+              no copyright line.
+  Source:     https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/LICENSE
+              https://ollama.com/library/qwen3.5:4b
+  Checked:    2026-11-13. Qwen licences differ from model to model: this
+              entry is for this model id only.
+
+
+========================================================================
+2. Python packages that lab/ and plugins/laya/runtime install
+========================================================================
+
+Both projects pin one direct dependency, `laya[serve]==0.4.19`. The rest
+arrive through it; lab/uv.lock and plugins/laya/runtime/uv.lock hold the full
+set and the exact versions.
+
+laya 0.4.19
+  Used for:   Loading, serving (`laya-serve`) and fine-tuning Laya models.
+  Licence:    Apache-2.0
+  Copyright:  None stated in the package metadata. Author: Convai Innovations.
+  Source:     https://pypi.org/project/laya/0.4.19/
+  Checked:    2026-11-13 (PyPI metadata)
+
+torch (PyTorch)
+  Used for:   Inference and training under laya.
+  Licence:    PyPI licence expression: "Apache-2.0 AND Apache-2.0 WITH
+              LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0
+              AND ISC AND MIT AND Zlib". PyTorch's own LICENSE is a
+              BSD-style licence; the other terms cover code bundled in the
+              wheel.
+  Copyright:  "Copyright (c) 2016- Facebook, Inc (Adam Paszke)", followed by
+              further holders listed in the LICENSE file.
+  Source:     https://pypi.org/project/torch/
+              https://github.com/pytorch/pytorch/blob/main/LICENSE
+  Checked:    2026-11-13
+
+transformers
+  Used for:   The ModernBERT encoder and tokenizer code under laya.
+  Licence:    Apache-2.0
+  Copyright:  "Copyright 2018- The Hugging Face team. All rights reserved."
+  Source:     https://github.com/huggingface/transformers/blob/main/LICENSE
+  Checked:    2026-11-13
+
+numpy
+  Used for:   Arrays under laya, and laya-lab's TF-IDF floor (floor.py).
+  Licence:    PyPI licence expression: "BSD-3-Clause AND 0BSD AND MIT AND
+              Zlib AND CC0-1.0"
+  Copyright:  "Copyright (c) 2005-2026, NumPy Developers."
+  Source:     https://github.com/numpy/numpy/blob/main/LICENSE.txt
+  Checked:    2026-11-13
+
+safetensors, tokenizers, huggingface-hub
+  Used for:   Reading weights, tokenizing, and the download from Hugging
+              Face.
+  Licence:    Apache-2.0 (each)
+  Copyright:  None stated: each LICENSE is the unmodified Apache-2.0 text.
+              huggingface-hub's metadata names its author as Hugging Face,
+              Inc.
+  Source:     https://github.com/huggingface/safetensors
+              https://github.com/huggingface/tokenizers
+              https://github.com/huggingface/huggingface_hub
+  Checked:    2026-11-13
+
+fastapi, uvicorn, python-multipart
+  Used for:   The HTTP server behind `laya-serve` (laya's `serve` extra).
+  Licence:    MIT (fastapi); BSD-3-Clause (uvicorn); Apache-2.0
+              (python-multipart)
+  Copyright:  Not read: only the PyPI licence metadata was checked.
+  Source:     https://pypi.org/project/fastapi/
+              https://pypi.org/project/uvicorn/
+              https://pypi.org/project/python-multipart/
+  Checked:    2026-11-13 (PyPI metadata)
+
+
+========================================================================
+3. Programs called over loopback, never installed by tldrack
+========================================================================
+
+The operator installs and starts these. tldrack imports none of them and
+declares none as a dependency: laya-lab only sends HTTP requests to a server
+on this machine.
+
+Ollama
+  Used for:   Runs the local teacher above. laya-lab calls its HTTP API on
+              loopback and refuses any other address.
+  Licence:    MIT
+  Copyright:  "Copyright (c) Ollama"
+  Source:     https://github.com/ollama/ollama/blob/main/LICENSE
+  Checked:    2026-11-13
+
+mlx-decision
+  Used for:   A local `/v1/systemone` decision-model server. It can be one of
+              the voters of `laya-lab compare` and `laya-lab bench`
+              (`--voter <name>=<loopback url>`).
+  Licence:    MIT. Its PyPI licence expression is "MIT AND Apache-2.0": the
+              README says the package is MIT and that model code ported from
+              other projects stays Apache-2.0.
+  Copyright:  "Copyright (c) 2026 Armin Buescher"
+  Source:     https://github.com/armbues/mlx-decision/blob/main/LICENSE
+              https://pypi.org/project/mlx-decision/
+  Checked:    2026-11-13
+
+mlx-lm
+  Used for:   A runtime a voter's server may run on (`runtime=mlx` in a bench
+              voter spec). laya-lab never calls it directly.
+  Licence:    MIT
+  Copyright:  "Copyright © 2023 Apple Inc."
+  Source:     https://github.com/ml-explore/mlx-lm/blob/main/LICENSE
+  Checked:    2026-11-13
+
+llama.cpp
+  Used for:   A runtime a voter's server may run on (`runtime=llama.cpp` in a
+              bench voter spec). laya-lab never calls it directly.
+  Licence:    MIT
+  Copyright:  "Copyright (c) 2023-2026 The ggml authors"
+  Source:     https://github.com/ggml-org/llama.cpp/blob/master/LICENSE
+  Checked:    2026-11-13
+
+
+========================================================================
+4. Models a voter's server may load
+========================================================================
+
+`laya-lab bench --voter` asks whatever model the operator's own server has
+loaded. Such a model keeps its own licence, and it is the operator's to
+check. A results file under bench/results/ records the licence the operator
+stated for each voter (`licence=` in the voter spec), or none.

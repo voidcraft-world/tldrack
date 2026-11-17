@@ -1,0 +1,56 @@
+# One lint standard for every Python project in this repository. CI runs it (`lint` in
+# .github/workflows/ci.yml) with the version pinned there; run the same locally:
+#
+#     uvx ruff@0.17.5 check .
+#     uvx ruff@0.17.5 format .
+#
+# The formatter owns layout: 130 columns, double quotes. Nothing is wrapped by hand, and a
+# suppression comment goes on the line of the name it excuses, where the formatter keeps it.
+target-version = "py310"
+line-length = 130
+extend-exclude = ["plugins/agent-canvas/agent_canvas/assets/vendor"]
+
+[lint]
+select = [
+    "E4", "E7", "E9", "F",  # pyflakes and the pycodestyle errors: unused, undefined, shadowed
+    "B",                    # bugbear: likely bugs
+    "PLE", "PLW",           # pylint errors and warnings
+    "UP",                   # idioms the oldest supported Python (3.10) already has
+    "C4", "PIE", "SIM", "RET", "FURB", "ISC",  # simpler spellings of the same thing
+    "RUF005", "RUF015", "RUF019", "RUF046", "RUF059",
+]
+ignore = [
+    # A rule the tree does not want: `zip` over two lists built together is the common case here.
+    "B905",
+    # The ladder. Each rule below still has findings (the count on 2026-11-16). Take one, fix its
+    # findings, delete its line: the rule is then on for good.
+    "ISC004",   # 40  implicit string concatenation inside a list or tuple
+    "SIM105",   # 32  try/except/pass that could be contextlib.suppress
+    "RUF059",   # 29  an unpacked name that is never used
+    "PLW1510",  # 17  subprocess.run without an explicit check=
+    "C408",     # 14  dict() / list() calls that could be literals
+    "PLW0108",  # 12  a lambda that only calls another function
+    "PLW2901",  #  9  a loop variable reassigned in its body
+    "RUF005",   #  8  list concatenation that could be unpacking
+    "SIM102",   #  4  nested ifs that could be one
+    "PLW0603",  #  4  global statements
+    "SIM108",   #  4  if/else that could be a conditional expression
+    "UP031",    #  3  percent formatting
+    "C416",     #  3  a comprehension that only copies
+    "RET503",   #  2  a function that returns a value on some paths only
+    "RET504",   #  2  an assignment only to return it
+    "ISC002",   #  2  implicit concatenation across lines
+    "SIM115",   #  2  open() without a context manager
+    "FURB192",  #  2  sorted()[0] that could be min()
+    "RUF046",   #  2  int() around a value that is already an int
+    "RUF015",   #  2  list(x)[0] that could be next(iter(x))
+    "SIM118",   #  1  `key in d.keys()`
+    "PIE810",   #  1  two startswith calls that could be one
+    "FURB188",  #  1  a slice that could be removeprefix / removesuffix
+]
+
+[lint.per-file-ignores]
+# A test imports another module's fixture by name and then takes it as a parameter (F811), and
+# its fakes are written on one line (E701, E702, E731).
+"**/tests/**" = ["F811", "E701", "E702", "E731"]
+"tests/**" = ["F811", "E701", "E702", "E731"]
