@@ -14,6 +14,7 @@ const LEAVES = [
   'bench-results',
   'closed-sessions',
   'decide',
+  'launch-directories',
   'laya-review',
   'lead',
   'missions',

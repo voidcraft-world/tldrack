@@ -598,6 +598,10 @@ def test_a_cwd_ending_in_a_semicolon_cannot_split_the_command(tmp_path):
     assert not any(arg.endswith(";") for arg in directory_args("/odd;", ["/bin/zsh", "-l"]))
 
 
+#: The pane command is zsh's, run for real below. A machine without it skips those tests; CI installs it.
+needs_zsh = pytest.mark.skipif(not os.path.exists("/bin/zsh"), reason="the pane command runs /bin/zsh")
+
+
 def run_pane_cd(target, command, cwd, home):
     """The pane command `directory_args` builds, run for real from `cwd`."""
     argv = directory_args(target, command)[2:]
@@ -605,6 +609,7 @@ def run_pane_cd(target, command, cwd, home):
     return subprocess.run(argv, capture_output=True, text=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL)
 
 
+@needs_zsh
 def test_the_pane_changes_directory_itself_whatever_directory_tmux_left_it_in(tmp_path):
     """A tmux server whose start directory is gone ignores `-c` (`PANE_CD_SCRIPT`),
     so the directory must come from the pane command, not from where it started."""
@@ -616,6 +621,7 @@ def test_the_pane_changes_directory_itself_whatever_directory_tmux_left_it_in(tm
     assert done.stdout.splitlines() == [str(target.resolve()), f"pwd={target}"]
 
 
+@needs_zsh
 def test_a_directory_that_vanished_falls_back_to_home_as_tmux_does(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
@@ -623,6 +629,7 @@ def test_a_directory_that_vanished_falls_back_to_home_as_tmux_does(tmp_path):
     assert done.stdout.strip() == str(home.resolve())
 
 
+@needs_zsh
 def test_no_command_after_the_directory_is_a_login_shell(tmp_path):
     # `$SHELL -l` with stdin closed: the login shell starts in the directory and exits at once.
     shell = tmp_path / "shell"
