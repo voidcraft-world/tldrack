@@ -48,6 +48,7 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 import click
 
 from tldrack import antigravity_hooks
+from tldrack import own_page
 from tldrack.activity import KEEP_ACTIVITY, activity_update_for_event
 from tldrack.tasks import fold_task_event, task_progress
 from tldrack.agent_index import (
@@ -1983,6 +1984,13 @@ def build_status_handler(
             return snapshot_payload()
 
         def do_GET(self) -> None:
+            # A read from this bridge's own page names no Origin: stated here, ahead of every guard
+            # and every plugin's caller policy (own_page.py owns why, and why loopback only).
+            stated = own_page.own_page_origin(
+                self.headers.get("Origin"), self.headers.get("Sec-Fetch-Site"), self.headers.get("Host")
+            )
+            if stated is not None:
+                self.headers["Origin"] = stated
             # A path that is no API route may be a file of the rack page (ui_static.py). The API's
             # own routes are asked first, so a build can never shadow one; the guards run here
             # exactly as the core runs them in front of every route.
