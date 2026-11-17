@@ -95,7 +95,7 @@ test('wide and narrow boards retain all ten categories without importing upstrea
 });
 
 test('session names and tool names are escaped, and context is absent when unavailable', () => {
-    const map = observe_activity(null, { ...row, auto_name: '\"><svg onload="alert(1)">',
+    const map = observe_activity(null, { ...row, auto_name: '"><svg onload="alert(1)">',
         activity: { tool: '<image href="bad"/>', zone: 'computer', detail: 'never render' } }, 0);
     const svg = decodeURIComponent(activity_map_image(map, 0, false).split(',')[1]);
     assert.ok(!svg.includes('<svg onload'));
