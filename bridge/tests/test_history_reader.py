@@ -163,6 +163,11 @@ def test_http_origin_host_and_cache_guards(tmp_path, history, monkeypatch):
         ({"Host": "127.0.0.1:7682"}, 200),
         ({"Host": "evil.example"}, 403),
         ({"Host": "127.0.0.1:7682", "Origin": "https://evil.example"}, 403),
+        # The bridge's own page reads with no Origin and says same-origin (own_page.py); any other
+        # site's no-Origin read is still the no-cors probe, and a foreign Host is refused first.
+        ({"Host": "127.0.0.1:7682", "Sec-Fetch-Site": "same-origin"}, 200),
+        ({"Host": "127.0.0.1:7682", "Sec-Fetch-Site": "cross-site"}, 403),
+        ({"Host": "evil.example", "Sec-Fetch-Site": "same-origin"}, 403),
     ]:
         h, _ = handler(tmp_path, None)
         h.path = "/ledger/search?q=message"
