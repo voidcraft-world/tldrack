@@ -1578,15 +1578,6 @@ onUnmounted(() => {
                 @click="open_office"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiOfficeBuildingOutline" /></svg></button>
             <button type="button" class="fui-btn" title="How the agent rack works — opens a diagram"
                 @click="open_diagram">⌗ HOW</button>
-            <button type="button"
-                :class="['fui-btn', 'row__btn--danger', { 'row__btn--armed': complete_delete_armed }]"
-                :disabled="frozen || !payload?.reachable || !complete_sessions.length"
-                :title="complete_sessions.length
-                    ? `Close all ${complete_sessions.length} reviewed, finished sessions, including hidden rows — press twice. Reopen from CLOSED.`
-                    : 'No reviewed, finished sessions to close. Sessions with unread results, open work, or worktrees stay open.'"
-                :aria-label="`Close all ${complete_sessions.length} finished sessions${complete_delete_armed ? ' — confirm' : ''}`"
-                @click="delete_all_complete"
-            >{{ complete_delete_armed ? `CLOSE ${complete_sessions.length}?` : `CLOSE FINISHED · ${complete_sessions.length}` }}</button>
             <button v-if="closed_view" type="button" class="fui-btn"
                 :aria-pressed="closed_view.open" :aria-expanded="closed_view.open" :disabled="frozen"
                 :title="closed_view.open
@@ -2182,7 +2173,9 @@ onUnmounted(() => {
                     </Teleport>
                 </template>
                 <!-- The COMPLETE band's head folds it. Folded, it still counts what
-                     it holds, so a finished session is never silently gone. -->
+                     it holds, so a finished session is never silently gone. Its
+                     CLOSE ALL sits here, on the band it empties, never in the rack's
+                     head: a control appears with its subject. -->
                 <div
                     v-else-if="row.kind === 'cohort' && row.complete"
                     class="row__complete-head"
@@ -2199,6 +2192,14 @@ onUnmounted(() => {
                         <span>{{ row.text }}</span>
                         <span aria-hidden="true">{{ complete_open ? '▾' : '▸' }}</span>
                     </button>
+                    <button
+                        type="button"
+                        :class="['fui-btn', 'row__btn', 'row__btn--danger', { 'row__btn--armed': complete_delete_armed }]"
+                        :disabled="frozen || !payload?.reachable || !complete_sessions.length"
+                        :title="`Close all ${complete_sessions.length} finished sessions, including rows hidden by search or +N MORE — press twice. Reopen from CLOSED.`"
+                        :aria-label="`Close all ${complete_sessions.length} finished sessions${complete_delete_armed ? ' — confirm' : ''}`"
+                        @click.stop="delete_all_complete"
+                    >{{ complete_delete_armed ? `CLOSE ${complete_sessions.length}?` : 'CLOSE ALL' }}</button>
                 </div>
                 <span v-else class="row__text">{{ row.text }}</span>
                 <TaskGroupBar v-for="group in groups_for_parent(payload.task_groups, row.node_id)" :key="group.id"
@@ -2823,7 +2824,7 @@ onUnmounted(() => {
     text-transform: uppercase;
 }
 .row--cohort:first-child { margin-top: 0; }
-/* The COMPLETE band's head is a button that folds it; it keeps the head's look. */
+/* The COMPLETE band's head: a fold button that keeps the head's look, then CLOSE ALL. */
 .row__complete-head { display: flex; align-items: center; gap: 8px; width: 100%; }
 .row__complete-head .row__fold { flex: 1; min-width: 0; min-height: 28px; }
 .row__complete-head .row__btn { flex: 0 0 auto; min-height: 28px; }
