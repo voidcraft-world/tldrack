@@ -155,6 +155,7 @@ from tldrack.permission_ledger import PermissionLedger
 from tldrack.permission_ledger import resolve_path as resolve_permissions_path
 from tldrack.state_arbiter import StateArbiter, refine_turn_end, settled_state
 from tldrack.launch_pick import pick_launch_profile
+from tldrack.launch_directories import LaunchDirectories
 from tldrack.profiles import (
     AUTO_PROFILE_ID,
     PROFILE_ID_RE,
@@ -1733,6 +1734,8 @@ def build_status_handler(
             return 200, {"ok": True, "killed": False, "detail": "session not found"}
         return 500, {"error": (stderr or "tmux kill-session failed").strip()}
 
+    launch_directories = LaunchDirectories(start_dir)
+
     def spawn_session_now(
         name: str,
         profile_id: str,
@@ -1744,6 +1747,7 @@ def build_status_handler(
         model: object = None,
         subagent_model: object = None,
         permission_mode: object = None,
+        cwd: str | None = None,
     ) -> tuple[int, dict]:
         """Start a NEW tmux session on a resolved profile. POST /spawn and the LEAD launch share it.
         `lineage_for` runs only after the name is known to be free (it may stamp a legacy parent).
@@ -1795,7 +1799,7 @@ def build_status_handler(
             missions.forget(name)
         if records is not None:
             records.forget(name)
-        cwd = start_dir if start_dir and os.path.isdir(start_dir) else str(Path.home())
+        cwd = cwd or (start_dir if start_dir and os.path.isdir(start_dir) else str(Path.home()))
         try:
             result = subprocess.run(
                 profiles.spawn_argv(
@@ -1910,6 +1914,7 @@ def build_status_handler(
         FRAME_POLICY = framing.frame_ancestors(ALLOWED_ORIGINS)
 
         GET_ROUTES = {
+            "/launch-directories": "_handle_get_launch_directories",
             "/ws": "_handle_ws_proxy",
             # /events, /capture and /wait each cost real resources per call (an
             # SSE slot, a tmux shell-out, a held thread), so they additionally
@@ -1941,6 +1946,7 @@ def build_status_handler(
             "/decision-secret": "_handle_decision_secret",
         }
         POST_ROUTES = {
+            "/launch-directories": "_handle_save_launch_directories",
             "/images": "_handle_image",
             "/shutdown": "_handle_shutdown",
             "/kill-session": "_handle_kill_session",
@@ -2210,6 +2216,11 @@ def build_status_handler(
             if profiles.get(profile_id) is None:
                 self._send_json(400, {"ok": False, "error": f"unknown profile '{profile_id}'"})
                 return
+            try:
+                cwd = launch_directories.resolve(payload.get("cwd"))
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+                return
             status, body = spawn_session_now(
                 name,
                 profile_id,
@@ -2217,11 +2228,34 @@ def build_status_handler(
                 lambda: profiles.prepare_lineage(payload.get("parent_session")),
                 f"origin: {self._requesting_origin() or 'none'}",
                 auto=auto,
+                cwd=cwd,
                 model=payload.get("model"),
                 subagent_model=payload.get("subagent_model"),
                 permission_mode=payload.get("permission_mode"),
             )
             self._send_json(status, body)
+
+        def _handle_get_launch_directories(self) -> None:
+            try:
+                self._send_json(200, launch_directories.view())
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+
+        def _handle_save_launch_directories(self) -> None:
+            if not self._origin_allowed():
+                return
+            body = self._read_json_object()
+            if body is None:
+                return
+            try:
+                state = launch_directories.save(body)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            except OSError:
+                self._send_json(500, {"error": "Could not save launch directories to disk"})
+                return
+            self._send_json(200, state)
 
         def _handle_rename_session(self) -> None:
             """POST /rename-session {"session": <old>, "name": <new>} — rename ONE

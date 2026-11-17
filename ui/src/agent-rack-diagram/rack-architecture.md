@@ -103,7 +103,9 @@ flowchart TD
 
 ## Launch
 
-What happens between pressing a LAUNCH chip and a live row.
+What happens between pressing a LAUNCH chip and a live row. Settings reads and writes
+`/launch-directories`; a regular `/spawn` carries the selected saved `cwd`.
+The directory contract: `bridge/tldrack/launch_directories.py`.
 
 ```mermaid
 sequenceDiagram

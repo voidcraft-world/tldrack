@@ -88,7 +88,7 @@ def test_spawn_argv_sheds_inherited_models_then_sets_and_stamps_only_what_it_app
     argv = spawn_argv(
         A, "lead-1", "/repo", ["go"], cli_bin="/bin/claude", permission_mode="auto", model="fable", subagent_model="opus"
     )
-    inner = argv[11]
+    inner = argv[17]
     for name in ("ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"):
         assert name in SHED_ENV and f"-u {name} " in inner
     # `env` reads its -u options before its NAME=VALUE operands, so the operands win.
@@ -113,7 +113,7 @@ def test_spawn_argv_sheds_inherited_models_then_sets_and_stamps_only_what_it_app
     ]
     plain = spawn_argv(A, "vc-1", "/repo", cli_bin="/bin/claude")
     assert MODEL_OPTION not in plain and SUBAGENT_MODEL_OPTION not in plain
-    assert "--model" not in plain[11] and "CLAUDE_CODE_SUBAGENT_MODEL=" not in plain[11]
+    assert "--model" not in plain[17] and "CLAUDE_CODE_SUBAGENT_MODEL=" not in plain[17]
     codex = spawn_argv(
         Profile("codex", "CODEX", "codex", "/h/.codex", False, ("-m", "gpt-5-codex")),
         "wt-c",
@@ -121,7 +121,7 @@ def test_spawn_argv_sheds_inherited_models_then_sets_and_stamps_only_what_it_app
         model="opus",
         subagent_model="haiku",
     )
-    assert MODEL_OPTION not in codex and "opus" not in codex[11], "a Codex took nothing, so nothing is recorded"
+    assert MODEL_OPTION not in codex and "opus" not in codex[17], "a Codex took nothing, so nothing is recorded"
 
 
 def test_the_registry_refuses_what_would_not_hold(tmp_path):
@@ -199,11 +199,11 @@ def test_a_restore_replays_the_models_and_drops_them_when_they_can_no_longer_hol
     lead = plan_restore("lead-1", stored, reg, open_ids={}, now=200.0)
     assert lead.ok and lead.row()["model"] == "fable" and lead.row()["subagent_model"] == "opus"
     argv = restore_argv(lead, reg)
-    assert "CLAUDE_CODE_SUBAGENT_MODEL=opus" in argv[11] and "--model fable" in argv[11]
-    assert f"--resume={SID}" in argv[11] and SUBAGENT_MODEL_OPTION in argv, "restamped for the next restore"
+    assert "CLAUDE_CODE_SUBAGENT_MODEL=opus" in argv[17] and "--model fable" in argv[17]
+    assert f"--resume={SID}" in argv[17] and SUBAGENT_MODEL_OPTION in argv, "restamped for the next restore"
 
     downgraded = plan_restore("lead-1", stored, registry(tmp_path / "old", version="2.1.200"), open_ids={}, now=200.0)
     assert downgraded.model is None and downgraded.subagent_model is None
     plain = plan_restore("vc-1", {k: v for k, v in stored.items() if "model" not in k}, reg, open_ids={}, now=200.0)
-    assert "model" not in plain.row() and "--model" not in restore_argv(plain, reg)[11]
+    assert "model" not in plain.row() and "--model" not in restore_argv(plain, reg)[17]
     assert os.path.isdir(stored["cwd"])

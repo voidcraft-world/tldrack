@@ -42,8 +42,16 @@ If your shell says `tldrack: command not found`, run `uv tool update-shell` and 
 give this one its own ports in that shell, then carry on:
 `export TLDRACK_PORT=7781 TLDRACK_STATUS_PORT=7791`.
 
-In the rack's **LAUNCH** row, press **CLAUDE** (or **CODEX**), then **MAIN**. A terminal opens with the
+In the rack's **LAUNCH** row, press **CLAUDE** (or **CODEX**), then **HERE** (or **MAIN** on an older bridge). A terminal opens with the
 agent in it: give it a task. When its turn ends, the row shows Laya's verdict: ✅ done, or ⚠️ it needs you.
+
+Use **Settings → Directories** to add project names and absolute paths (or `~/…`), choose
+one default, and save. The project buttons above **LAUNCH** choose where the next regular
+agent starts; a fresh page uses the saved default. These settings belong to the bridge, so
+other devices see the same directories. Worktree and LEAD launches remain tied to the bridge's
+startup repository; their buttons explain when the selected project cannot use them.
+Settings also holds the list/graph view, office, diagram and terminal appearance. **Close finished**
+sits with the finished sessions.
 
 `tldrack up` is safe to run again at any time: a rack that is already up is left alone. `tldrack kill` stops
 it, and your agent sessions keep running in tmux.

@@ -75,7 +75,7 @@ export interface SpawnOutcome {
 
 export async function spawn_session(
     base_url: BaseUrl,
-    request: { name: string; profile: string },
+    request: { name: string; profile: string; cwd?: string },
     fetch_impl: FetchImpl = (...args) => local_fetch(...args),
 ): Promise<SpawnOutcome> {
     try {
@@ -174,10 +174,31 @@ function choose_launch(
  * open?" ambiguity this feature removes. `"auto"` goes to the bridge as is —
  * it resolves the freest account at click time (`tldrack/launch_pick.py`).
  */
-export async function launch_new(profile: string | null, hooks: LaunchNewHooks): Promise<void> {
+export async function launch_new(value: string | null, hooks: LaunchNewHooks): Promise<void> {
+    let profile = value;
+    let cwd: string | undefined;
+    if (value?.startsWith('{')) {
+        try {
+            const request: unknown = JSON.parse(value);
+            if (!request || typeof request !== 'object') throw new Error();
+            const candidate = request as Record<string, unknown>;
+            if (candidate.profile !== null && typeof candidate.profile !== 'string') throw new Error();
+            if (typeof candidate.cwd !== 'string' || !candidate.cwd.startsWith('/') || candidate.cwd.length > 4096
+                || /[\x00-\x1f\x7f]/.test(candidate.cwd)) throw new Error();
+            profile = candidate.profile;
+            cwd = candidate.cwd;
+        } catch {
+            hooks.on_failure('Invalid launch directory request');
+            return;
+        }
+    }
+    const legacy = (): void => {
+        if (cwd) hooks.on_failure('Restart the bridge to launch in this directory');
+        else hooks.legacy_new();
+    };
     const profiles = hooks.profiles();
     if (profiles === undefined || profiles.length === 0) {
-        hooks.legacy_new();
+        legacy();
         return;
     }
     const chosen = choose_launch(profile, profiles, hooks.launch_pick?.());
@@ -188,12 +209,12 @@ export async function launch_new(profile: string | null, hooks: LaunchNewHooks):
 
     let name = next_session_name(hooks.known_sessions());
     hooks.set_pending(name, chosen.shown);
-    let outcome = await spawn_session(hooks.base_url, { name, profile: chosen.request }, hooks.fetch_impl);
+    let outcome = await spawn_session(hooks.base_url, { name, profile: chosen.request, ...(cwd ? { cwd } : {}) }, hooks.fetch_impl);
 
     if (outcome.result === 'taken') {
         name = next_session_name([...hooks.known_sessions(), name]);
         hooks.set_pending(name, chosen.shown);
-        outcome = await spawn_session(hooks.base_url, { name, profile: chosen.request }, hooks.fetch_impl);
+        outcome = await spawn_session(hooks.base_url, { name, profile: chosen.request, ...(cwd ? { cwd } : {}) }, hooks.fetch_impl);
     }
 
     if (outcome.result === 'ok') {
@@ -202,7 +223,7 @@ export async function launch_new(profile: string | null, hooks: LaunchNewHooks):
     }
     hooks.set_pending(null, null);
     if (outcome.result === 'unsupported') {
-        hooks.legacy_new();
+        legacy();
         return;
     }
     // AUTO's refusal names no single CLI, so the bridge's own line says it best.

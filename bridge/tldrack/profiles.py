@@ -663,6 +663,38 @@ def build_inner(
     return None
 
 
+#: The pane's own `cd`, run before the user's shell profile. tmux gives a new pane
+#: its `-c` directory from inside the SERVER, and a server whose own start directory
+#: has been deleted leaves every new pane in that dead directory instead (measured,
+#: tmux 3.7b: `-c` is ignored by new-session, new-window and respawn-pane alike, and
+#: recreating the directory does not bring it back). The server is born wherever
+#: its first client stood and outlives the bridge, so a checkout that moves takes
+#: every later session with it: 2026-11-17, `claude` refused to start in each new
+#: pane ("The current directory no longer exists") after the bridge's old checkout
+#: went away. So the pane changes directory itself.
+#:
+#: - `-f`: this hop reads no shell profile; the command after it does.
+#: - A directory that vanished since the caller checked falls back to home, as
+#:   tmux's own `-c` does.
+#: - No command after the directory: the pane's login shell (`$SHELL` is tmux's
+#:   `default-shell` inside a pane), which is what tmux runs when given none.
+PANE_CD_SCRIPT = 'cd -- "$1" 2>/dev/null || cd; shift; [[ -n "$1" ]] && exec "$@"; exec "${SHELL:-/bin/zsh}" -l'
+
+
+def directory_args(cwd: str | os.PathLike[str], command: Iterable[str] = ()) -> list[str]:
+    """The tail of a `tmux new-session` that opens its pane in `cwd`: `-c CWD` plus
+    the pane command that changes into it (`PANE_CD_SCRIPT` owns why both). Pure.
+
+    `command` is the argv the pane runs once it is there; none means a login shell.
+    tmux splits a command sequence on any argv element ENDING in `;`, so a cwd
+    ending in one gets a trailing separator; no element of the wrapper ends in one.
+    """
+    cwd_arg = str(cwd)
+    if cwd_arg.endswith(";"):
+        cwd_arg += os.sep
+    return ["-c", cwd_arg, "/bin/zsh", "-f", "-c", PANE_CD_SCRIPT, "zsh", cwd_arg, *command]
+
+
 def spawn_argv(
     profile: Profile,
     session: str,
@@ -677,7 +709,7 @@ def spawn_argv(
 ) -> list[str]:
     """THE spawn shape, for every door that starts an agent. Pure.
 
-    `tmux new-session -d -s S -c CWD /bin/zsh -l -i -c '<inner>; …' ";"
+    `tmux new-session -d -s S -c CWD <cd CWD> /bin/zsh -l -i -c '<inner>; …' ";"
     set-option -t =S: @vc_profile ID` — ONE invocation, so the session is
     stamped before any poll can list it. A `permission_mode` that gave the CLI
     args is stamped the same way (`PERMISSION_MODE_OPTION`); one that gave none
@@ -692,19 +724,20 @@ def spawn_argv(
     - `=S:` with the colon: `set-option -t` parses a target PANE, which
       accepts the exact-match `=` only in `=session:` form (measured, tmux
       3.7b — bare `=S` answers "no such session").
-    - tmux splits a command sequence on any argv element ENDING in `;`, so a
-      cwd ending in one gets a trailing separator; `inner` never ends in one.
+    - `<cd CWD>`: the pane changes into CWD itself, and a plain shell (no
+      `inner`) is the login shell that hop ends in: owned by `PANE_CD_SCRIPT` —
+      see the note there. `inner` never ends in `;` (`directory_args`).
     """
-    cwd_arg = str(cwd)
-    if cwd_arg.endswith(";"):
-        cwd_arg += os.sep
-    argv = ["tmux", "new-session", "-d", "-s", session, "-c", cwd_arg]
     applied = permission_args(profile.kind, permission_mode)
     model_applied = model_args(profile.kind, model)
     env = subagent_env(profile.kind, subagent_model)
     inner = build_inner(profile, [*model_applied, *applied, *extra_args], cli_bin, codex_no_daemon=codex_no_daemon, env=env)
-    if inner is not None:
-        argv += ["/bin/zsh", "-l", "-i", "-c", f'{inner}; echo; echo "[{profile.id} exited $?]"; exec /bin/zsh -l']
+    command = (
+        ["/bin/zsh", "-l", "-i", "-c", f'{inner}; echo; echo "[{profile.id} exited $?]"; exec /bin/zsh -l']
+        if inner is not None
+        else []
+    )
+    argv = ["tmux", "new-session", "-d", "-s", session, *directory_args(cwd, command)]
     argv += [";", "set-option", "-t", f"={session}:", PROFILE_OPTION, profile.id]
     if applied:
         argv += [";", "set-option", "-t", f"={session}:", PERMISSION_MODE_OPTION, permission_mode]

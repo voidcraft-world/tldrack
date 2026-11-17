@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from collections.abc import Mapping
 
 from tldrack.agent_index import IndexEntry
-from tldrack.profiles import clean_launch_model, clean_permission_mode
+from tldrack.profiles import clean_launch_model, clean_permission_mode, directory_args
 
 
 @dataclass(frozen=True)
@@ -188,4 +188,4 @@ def restore_argv(plan: RestorePlan, profiles) -> list[str]:
         mode = {"permission_mode": plan.permission_mode} if plan.permission_mode else {}
         models = {key: value for key, value in (("model", plan.model), ("subagent_model", plan.subagent_model)) if value}
         return profiles.spawn_argv(plan.spawn_profile, plan.session, plan.cwd, extra_args=plan.resume or [], **mode, **models)
-    return ["tmux", "new-session", "-d", "-s", plan.session, "-c", plan.cwd]
+    return ["tmux", "new-session", "-d", "-s", plan.session, *directory_args(plan.cwd)]

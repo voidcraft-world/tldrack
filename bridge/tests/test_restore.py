@@ -53,7 +53,7 @@ def test_a_claude_record_with_its_transcript_resumes(tmp_path):
     }
     argv = restore_argv(p, profiles)
     assert argv[:7] == ["tmux", "new-session", "-d", "-s", "wt-nav", "-c", str(tmp_path)]
-    assert f"--resume={SID}" in argv[11]
+    assert f"--resume={SID}" in argv[17]
 
 
 def test_a_missing_transcript_restores_fresh(tmp_path):
@@ -94,7 +94,7 @@ def test_an_unstamped_shell_comes_back_as_the_shell_profile(tmp_path):
     profiles = registry(tmp_path)
     p = plan(tmp_path, record(str(tmp_path), profile=None, kind=None, agent=None), profiles=profiles)
     assert (p.ok, p.spawn_profile, p.kind) == (True, "shell", "shell")
-    assert restore_argv(p, profiles)[7:13] == [";", "set-option", "-t", "=wt-nav:", "@vc_profile", "shell"]
+    assert restore_argv(p, profiles)[13:19] == [";", "set-option", "-t", "=wt-nav:", "@vc_profile", "shell"]
 
 
 def test_codex_does_not_resume_yet():
@@ -156,11 +156,11 @@ def test_a_restore_comes_back_in_auto_and_says_so_on_the_offer(tmp_path):
     crew = plan(tmp_path, {**record(str(tmp_path)), "launch_permission_mode": "auto"}, profiles=profiles)
     assert crew.permission_mode == "auto" and crew.row()["permission_mode"] == "auto"
     argv = restore_argv(crew, profiles)
-    assert "--permission-mode auto" in argv[11] and f"--resume={SID}" in argv[11]
+    assert "--permission-mode auto" in argv[17] and f"--resume={SID}" in argv[17]
     assert "@vc_permission_mode" in argv, "restamped, so a second restore keeps it too"
     plain = plan(tmp_path, record(str(tmp_path)), profiles=profiles)
     assert "permission_mode" not in plain.row()
-    assert "--permission-mode" not in restore_argv(plain, profiles)[11]
+    assert "--permission-mode" not in restore_argv(plain, profiles)[17]
 
 
 def test_a_switched_out_crew_restores_in_the_default_launch(tmp_path):
@@ -168,14 +168,14 @@ def test_a_switched_out_crew_restores_in_the_default_launch(tmp_path):
     p = plan(
         tmp_path, {**record(str(tmp_path)), "launch_permission_mode": "auto", "live_permission_mode": "manual"}, profiles=profiles
     )
-    assert p.permission_mode is None and "--permission-mode" not in restore_argv(p, profiles)[11]
+    assert p.permission_mode is None and "--permission-mode" not in restore_argv(p, profiles)[17]
 
 
 def test_a_cli_that_can_no_longer_start_auto_restores_in_the_default_launch(tmp_path):
     profiles = mode_registry(tmp_path, claude_help='Options:\n  --permission-mode <mode>  (choices: "plan")\n')
     p = plan(tmp_path, {**record(str(tmp_path)), "launch_permission_mode": "auto"}, profiles=profiles)
     assert p.ok and p.permission_mode is None
-    assert "--permission-mode" not in restore_argv(p, profiles)[11]
+    assert "--permission-mode" not in restore_argv(p, profiles)[17]
     counted = plan(
         tmp_path, {**record(str(tmp_path)), "launch_permission_mode": "auto"}, profiles=profiles, check_transcript=False
     )
@@ -188,4 +188,4 @@ def test_a_codex_crew_restores_fresh_and_still_in_auto_review(tmp_path):
         tmp_path, {**record(str(tmp_path), profile="codex", kind="codex"), "launch_permission_mode": "auto"}, profiles=profiles
     )
     assert p.ok and p.resume is None
-    assert "--approve-for-me" in restore_argv(p, profiles)[11]
+    assert "--approve-for-me" in restore_argv(p, profiles)[17]

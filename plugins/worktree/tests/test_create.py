@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from worktree.create import (
+    PANE_CD_SCRIPT,
     build_checkout_command,
     build_send_keys_commands,
     build_sparse_checkout_command,
@@ -52,6 +53,12 @@ class TestSpawnArgv:
         # builder is pinned by a test.
         argv = build_spawn_command("/bin/claude", "wt-x", Path("/tmp/a b/c"))
         assert "-c" in argv and str(Path("/tmp/a b/c")) in argv
+
+    def test_the_pane_changes_into_the_worktree_itself(self):
+        # A tmux server whose own directory is gone ignores `-c`, so the pane does its own cd.
+        argv = build_spawn_command("/bin/claude", "wt-x", Path("/tmp/a b/c"))
+        assert argv[5:13] == ["-c", "/tmp/a b/c", "/bin/zsh", "-f", "-c", PANE_CD_SCRIPT, "zsh", "/tmp/a b/c"]
+        assert argv[13:17] == ["/bin/zsh", "-l", "-i", "-c"]
 
     def test_claude_bin_is_quoted_in_the_inner_shell_string(self):
         argv = build_spawn_command("/opt/my claude/bin", "wt-x", Path("/tmp/x"))

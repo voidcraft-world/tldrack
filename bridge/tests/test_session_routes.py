@@ -199,8 +199,8 @@ def test_spawn_answers_201_and_runs_the_profiles_stamped_argv(spawner, monkeypat
     assert spawner.recorded.body == {"ok": True, "session": "vc-2", "profile": "claude-a"}
     (argv,) = calls
     assert argv[:7] == ["tmux", "new-session", "-d", "-s", "vc-2", "-c", str(spawner.tmp)]
-    assert argv[12:18] == [";", "set-option", "-t", "=vc-2:", "@vc_profile", "claude-a"]
-    assert f"CLAUDE_CONFIG_DIR={spawner.tmp}/.claude-a" in argv[11]
+    assert argv[18:24] == [";", "set-option", "-t", "=vc-2:", "@vc_profile", "claude-a"]
+    assert f"CLAUDE_CONFIG_DIR={spawner.tmp}/.claude-a" in argv[17]
 
 
 def test_spawn_hands_a_prompt_to_the_cli_as_its_first_message(spawner, monkeypatch):
@@ -212,7 +212,7 @@ def test_spawn_hands_a_prompt_to_the_cli_as_its_first_message(spawner, monkeypat
     assert spawner.recorded.status == 201, spawner.recorded.body
     assert spawner.recorded.body["prompt"] is True
     (argv,) = calls
-    inner = argv[11]
+    inner = argv[17]
     assert """'Read /tmp/01.txt and follow it; it'"'"'s your task.'; echo;""" in inner
 
 
@@ -224,7 +224,7 @@ def test_spawn_takes_a_launch_model_and_refuses_a_pair_that_would_not_hold(spawn
     assert spawner.recorded.status == 201, spawner.recorded.body
     assert spawner.recorded.body["model"] == "opus"
     (argv,) = calls
-    assert " --model opus;" in argv[11] and argv[argv.index("@vc_model") + 1] == "opus"
+    assert " --model opus;" in argv[17] and argv[argv.index("@vc_model") + 1] == "opus"
 
     for body, why in (
         ({"model": "opus", "subagent_model": "opus"}, "not weaker"),
@@ -403,7 +403,7 @@ def test_spawn_auto_launches_the_picked_profile_and_stamps_the_real_id(spawner, 
     assert spawner.recorded.status == 201, spawner.recorded.body
     assert spawner.recorded.body == {"ok": True, "session": "vc-2", "profile": "claude-a", "auto": True}
     (argv,) = calls
-    assert argv[12:18] == [";", "set-option", "-t", "=vc-2:", "@vc_profile", "claude-a"]
+    assert argv[18:24] == [";", "set-option", "-t", "=vc-2:", "@vc_profile", "claude-a"]
 
 
 def test_spawn_auto_with_nothing_launchable_is_503_and_runs_nothing(spawner, monkeypatch):
@@ -807,7 +807,7 @@ def test_restore_all_resumes_the_conversation_under_the_old_name(restorer, monke
     assert restorer.recorded.body["results"] == [{"session": "wt-nav", "restored": True, "resumed": True}]
     (argv,) = calls
     assert argv[:7] == ["tmux", "new-session", "-d", "-s", "wt-nav", "-c", str(restorer.tmp)]
-    assert f"--resume={SID}" in argv[11]
+    assert f"--resume={SID}" in argv[17]
 
 
 def test_restore_replays_saved_family_identity(restorer, monkeypatch):
@@ -919,7 +919,7 @@ def test_reopen_resumes_the_conversation_under_the_old_name(restorer, monkeypatc
     assert recorded.body == {"ok": True, "session": "vc-2", "profile": "claude-a", "resumed": True}
     (argv,) = calls
     assert argv[:7] == ["tmux", "new-session", "-d", "-s", "vc-2", "-c", str(restorer.tmp)]
-    assert f"--resume={SID}" in argv[11]
+    assert f"--resume={SID}" in argv[17]
     # Taken, and the rack row gets its name back.
     assert restorer.closed.entries() == []
     assert restorer.names.get_all()["vc-2"] == "fix the nav sidebar"

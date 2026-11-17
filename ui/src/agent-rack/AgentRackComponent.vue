@@ -117,6 +117,7 @@ import { mission_row_title, type MissionRequest } from './missions-client.ts';
 import { closed_rows_view, type ClosedRowView } from './closed-client.ts';
 import { groups_for_parent } from './task-groups.ts';
 import IslandGlyph from './IslandGlyph.vue';
+import LaunchDirectorySettings from './LaunchDirectorySettings.vue';
 import IslandMark from './IslandMark.vue';
 import { auto_branch } from './auto-branch.ts';
 import { chat_query, focus_snippet, highlight_terms, search_rack_rows, starred_rack_rows } from './rack-search.ts';
@@ -567,28 +568,25 @@ function report_shown(rows: readonly RackRow[]): void {
 
 // ── launch ──────────────────────────────────────────────────────────────
 //
-// The LAUNCH row is the rack's one way to start an agent: a chip per profile
-// (`claude-a`, `codex-a`, a bare shell — the bridge owns the list,
-// `payload.profiles`). Pressing a chip FORKS under it into MAIN (a session in
-// the main checkout, `POST /spawn`) and 🏝 (its own worktree, launched at once —
-// `launch_island`). Account and place are one press, so there is no remembered pick for
-// a launch to use by surprise, and "where will its edits land?" is asked every
-// time.
-//
-// AUTO, where the bridge can pick (`payload.launch_pick`), is the first chip and
-// forks the same way: it sends `"auto"`, and the bridge resolves it to the
-// freest account when the launch lands — the `→ A` it reads is where it
-// would go now (`bridge/tldrack/launch_pick.py` owns the pick).
-//
-// LEAD is the fork's third option, under AUTO and the Claude chips only: a lead
-// is always a Claude subscription, and under AUTO the bridge picks the Claude
-// account (`chip_offers_lead`). What a lead is: owned by
-// `bridge/tldrack/lead/__init__.py` — see the note there.
-//
-// Fewer than two profiles — one account, or an older bridge with no `/spawn`
-// (ABSENT `profiles`: `+ NEW` keeps its legacy bare-shell behaviour) — is one
-// `+ NEW` chip with the same fork. Nothing but MAIN to offer (no worktree
-// plugin, no LEAD), no fork: the chip launches MAIN directly.
+// The project row pins regular launches to a saved directory. Worktrees and LEAD use the
+// bridge's repository configuration, so their forks stay fenced to its startup directory.
+// Directory persistence and validation: bridge/tldrack/launch_directories.py.
+const directory_state = computed(() => payload.value?.launch_directories?.state);
+const chosen_directory = ref<string | null>(null);
+const launch_directory = computed(() => directory_state.value?.directories.find(
+    (entry) => entry.path === (chosen_directory.value ?? directory_state.value?.default_path),
+));
+watch(directory_state, (state) => {
+    if (state && chosen_directory.value && !state.directories.some((entry) => entry.path === chosen_directory.value)) {
+        chosen_directory.value = null;
+    }
+});
+const repository_launch = computed(() => !launch_directory.value || launch_directory.value.path === directory_state.value?.bridge_path);
+const repository_hint = computed(() => `Worktrees and LEAD use ${directory_state.value?.bridge_path ?? 'the bridge repository'}. Select that project to use them.`);
+function choose_directory(path: string): void {
+    chosen_directory.value = path;
+    close_fork();
+}
 
 /** One LAUNCH chip. `profile` is null on AUTO and on the lone `+ NEW` chip. */
 interface LaunchChip {
@@ -631,6 +629,7 @@ const fork_key = ref<string | null>(null);
 /** `+ NEW` follows the bridge's own default, which is launchable by definition;
  *  AUTO is launchable while the bridge has somewhere to put it. */
 function chip_launchable(chip: LaunchChip): boolean {
+    if (launch_directory.value && !payload.value?.launch_cwd) return false;
     if (chip.kind === 'auto') return Boolean(auto_pick.value?.id);
     return chip.profile === null || chip.profile.cli_found;
 }
@@ -686,7 +685,9 @@ function on_fork_esc(event: KeyboardEvent): void {
 
 function launch_main(chip: LaunchChip): void {
     close_fork();
-    send('new', undefined, chip.id ?? undefined);
+    send('new', undefined, launch_directory.value
+        ? JSON.stringify({ profile: chip.id, cwd: launch_directory.value.path })
+        : chip.id ?? undefined);
 }
 
 /**
@@ -699,7 +700,7 @@ function launch_main(chip: LaunchChip): void {
  */
 function launch_island(chip: LaunchChip): void {
     close_fork();
-    if (frozen.value) return;
+    if (frozen.value || !repository_launch.value) return;
     const branch = auto_branch('', chip.label ?? '', new Date(), known_branches.value);
     // One JSON string, because `RackAction`'s argument is one optional string by
     // design — it crosses a postMessage boundary AND a BroadcastChannel, and
@@ -713,7 +714,7 @@ function launch_island(chip: LaunchChip): void {
  *  (`lead-client.ts::launch_lead`). AUTO sends `"auto"`, resolved among the Claude accounts. */
 function launch_lead(chip: LaunchChip): void {
     close_fork();
-    if (frozen.value || !chip_offers_lead(chip)) return;
+    if (frozen.value || !repository_launch.value || !chip_offers_lead(chip)) return;
     send('lead', undefined, JSON.stringify({ profile: chip.id ?? AUTO_PROFILE_ID }));
 }
 
@@ -765,10 +766,11 @@ function chip_what(chip: LaunchChip): string {
 }
 
 function chip_title(chip: LaunchChip): string {
+    if (launch_directory.value && !payload.value?.launch_cwd) return 'Reload the parent app to launch in a selected directory';
     const profile = chip.profile;
     if (chip.kind === 'auto' && !auto_pick.value?.id) return 'AUTO: no agent profile can launch on this machine';
     if (profile && !profile.cli_found) return `${profile.label}: CLI not found on this machine`;
-    const places = ['MAIN (the main checkout)'];
+    const places = [launch_directory.value?.label ?? 'MAIN (the main checkout)'];
     if (worktrees_available.value) places.push('🏝 (its own worktree)');
     if (chip_offers_lead(chip)) places.push('LEAD (it runs workers)');
     const parts = [places.length > 1
@@ -788,14 +790,16 @@ function chip_title(chip: LaunchChip): string {
 }
 
 function main_title(chip: LaunchChip): string {
-    return `Start ${chip_what(chip)} in the main checkout and focus it`;
+    return `Start ${chip_what(chip)} in ${launch_directory.value?.path ?? 'the main checkout'} and focus it`;
 }
 
 function island_title(chip: LaunchChip): string {
+    if (!repository_launch.value) return repository_hint.value;
     return `Start ${chip_what(chip)} in its own worktree, on a new branch — its edits land there, not in main`;
 }
 
 function lead_title(chip: LaunchChip): string {
+    if (!repository_launch.value) return repository_hint.value;
     const who = chip.kind === 'auto' ? 'the freest Claude account, picked when it lands' : (chip.label ?? 'this account');
     return `Start a LEAD on ${who}: it splits a plan into steps, runs each in a worker session of its own worktree, and brings you only the decisions`;
 }
@@ -1563,21 +1567,13 @@ onUnmounted(() => {
 
         <header class="rack__head">
             <span class="fui-techtext rack__title">{{ payload?.summary || 'agents' }}</span>
-            <button v-for="view in (['list', 'graph'] as const)" :key="view" type="button"
-                class="fui-btn" :aria-pressed="session_view === view"
-                @click="session_view = view">{{ view.toUpperCase() }}</button>
-            <button v-if="render_options" type="button" class="fui-btn rack__icon"
+            <button type="button" class="fui-btn rack__icon"
                 :aria-pressed="settings_open" :aria-expanded="settings_open" aria-controls="rack-settings"
                 aria-label="Rack settings"
                 :title="settings_open
                     ? 'Hide rack settings'
-                    : `Rack settings: font ${render_opts.font_size}px, renderer, typeface, theme (⌘/Ctrl ± resizes)`"
+                    : 'Rack settings: directories, view, terminal appearance and help'"
                 @click="settings_open = !settings_open"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiCog" /></svg></button>
-            <button type="button" class="fui-btn rack__icon" aria-label="Agent office"
-                title="Agent office — every agent at its desk, in 3D (opens a window; click a robot to open it here)"
-                @click="open_office"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiOfficeBuildingOutline" /></svg></button>
-            <button type="button" class="fui-btn" title="How the agent rack works — opens a diagram"
-                @click="open_diagram">⌗ HOW</button>
             <button v-if="closed_view" type="button" class="fui-btn"
                 :aria-pressed="closed_view.open" :aria-expanded="closed_view.open" :disabled="frozen"
                 :title="closed_view.open
@@ -1590,74 +1586,89 @@ onUnmounted(() => {
              2026-11-02: set once, rarely touched). ⌘/Ctrl ± stays
              the accelerator, hinted in the ⚙ and button titles. Never disabled
              by `frozen` — see the note on `patch_render`. -->
-        <div v-if="render_options" v-show="settings_open" id="rack-settings" class="rack__render">
-            <span class="fui-techtext rack__render-label">FONT</span>
-            <button
-                class="rack__render-btn"
-                type="button"
-                title="Smaller (⌘/Ctrl −)"
-                @click="step_font(-1)"
-            >
-                A−
-            </button>
-            <input
-                class="rack__render-slider"
-                type="range"
-                :min="font_min"
-                :max="font_max"
-                step="1"
-                :value="render_opts.font_size"
-                title="Terminal font size"
-                aria-label="Terminal font size"
-                @input="set_font(($event.target as HTMLInputElement).value)"
-            />
-            <button
-                class="rack__render-btn"
-                type="button"
-                title="Larger (⌘/Ctrl +)"
-                @click="step_font(1)"
-            >
-                A+
-            </button>
-            <span class="rack__render-readout">{{ render_opts.font_size }}px</span>
+        <section v-show="settings_open" id="rack-settings" class="rack__settings">
+            <LaunchDirectorySettings :view="payload?.launch_directories" :disabled="frozen || !payload?.reachable"
+                @save="(value) => send('directories', undefined, value)" />
+            <div class="rack__render">
+                <label class="fui-techtext rack__render-label" for="rack-view">VIEW</label>
+                <select id="rack-view" v-model="session_view" class="rack__render-select">
+                    <option value="list">LIST</option><option value="graph">GRAPH</option>
+                </select>
+                <button type="button" class="fui-btn rack__icon" aria-label="Agent office"
+                    title="Agent office — every agent at its desk, in 3D (opens a window; click a robot to open it here)"
+                    @click="open_office"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiOfficeBuildingOutline" /></svg></button>
+                <button type="button" class="fui-btn" title="How the agent rack works — opens a diagram"
+                    @click="open_diagram">⌗ HOW</button>
+            </div>
+            <div v-if="render_options" class="rack__render">
+                <span class="fui-techtext rack__render-label">FONT</span>
+                <button
+                    class="rack__render-btn"
+                    type="button"
+                    title="Smaller (⌘/Ctrl −)"
+                    @click="step_font(-1)"
+                >
+                    A−
+                </button>
+                <input
+                    class="rack__render-slider"
+                    type="range"
+                    :min="font_min"
+                    :max="font_max"
+                    step="1"
+                    :value="render_opts.font_size"
+                    title="Terminal font size"
+                    aria-label="Terminal font size"
+                    @input="set_font(($event.target as HTMLInputElement).value)"
+                />
+                <button
+                    class="rack__render-btn"
+                    type="button"
+                    title="Larger (⌘/Ctrl +)"
+                    @click="step_font(1)"
+                >
+                    A+
+                </button>
+                <span class="rack__render-readout">{{ render_opts.font_size }}px</span>
 
-            <span class="fui-techtext rack__render-label rack__render-label--gap">RENDER</span>
-            <select
-                class="rack__render-select"
-                :value="render_opts.renderer"
-                title="xterm renderer. Switching RELOADS the pane — it reattaches to the same tmux session, so nothing is lost. dom uses the browser's own text rendering; webgl is GPU-drawn and the fastest under heavy output. No WebGPU option: ttyd's bundled xterm has no such renderer."
-                aria-label="Terminal renderer"
-                @change="set_renderer(($event.target as HTMLSelectElement).value)"
-            >
-                <option v-for="name in renderers" :key="name" :value="name">{{ renderer_label(name) }}</option>
-            </select>
+                <span class="fui-techtext rack__render-label rack__render-label--gap">RENDER</span>
+                <select
+                    class="rack__render-select"
+                    :value="render_opts.renderer"
+                    title="xterm renderer. Switching RELOADS the pane — it reattaches to the same tmux session, so nothing is lost. dom uses the browser's own text rendering; webgl is GPU-drawn and the fastest under heavy output. No WebGPU option: ttyd's bundled xterm has no such renderer."
+                    aria-label="Terminal renderer"
+                    @change="set_renderer(($event.target as HTMLSelectElement).value)"
+                >
+                    <option v-for="name in renderers" :key="name" :value="name">{{ renderer_label(name) }}</option>
+                </select>
 
-            <span class="fui-techtext rack__render-label rack__render-label--gap">FAMILY</span>
-            <select
-                class="rack__render-select"
-                :value="family_stack"
-                title="Terminal typeface. SF Mono is the default. Switching RELOADS the pane — it reattaches to the same tmux session, so scrollback and any running agent survive."
-                aria-label="Terminal font family"
-                @change="set_family(($event.target as HTMLSelectElement).value)"
-            >
-                <option v-for="font in families" :key="font.stack" :value="font.stack">
-                    {{ font.label }}
-                </option>
-            </select>
+                <span class="fui-techtext rack__render-label rack__render-label--gap">FAMILY</span>
+                <select
+                    class="rack__render-select"
+                    :value="family_stack"
+                    title="Terminal typeface. SF Mono is the default. Switching RELOADS the pane — it reattaches to the same tmux session, so scrollback and any running agent survive."
+                    aria-label="Terminal font family"
+                    @change="set_family(($event.target as HTMLSelectElement).value)"
+                >
+                    <option v-for="font in families" :key="font.stack" :value="font.stack">
+                        {{ font.label }}
+                    </option>
+                </select>
 
-            <span class="fui-techtext rack__render-label rack__render-label--gap">THEME</span>
-            <select
-                class="rack__render-select"
-                :value="render_opts.theme"
-                title="Terminal colours. Switching RELOADS the pane: it reattaches to the same tmux session, so scrollback and any running agent survive."
-                aria-label="Terminal colour theme"
-                @change="set_theme(($event.target as HTMLSelectElement).value)"
-            >
-                <option v-for="name in themes" :key="name" :value="name">{{ name.toUpperCase() }}</option>
-            </select>
-            <!-- The host's own controls (`mount.ts`). Rendered while the tray is closed too, so a host control that keeps a timer stays mounted. -->
+                <span class="fui-techtext rack__render-label rack__render-label--gap">THEME</span>
+                <select
+                    class="rack__render-select"
+                    :value="render_opts.theme"
+                    title="Terminal colours. Switching RELOADS the pane: it reattaches to the same tmux session, so scrollback and any running agent survive."
+                    aria-label="Terminal colour theme"
+                    @change="set_theme(($event.target as HTMLSelectElement).value)"
+                >
+                    <option v-for="name in themes" :key="name" :value="name">{{ name.toUpperCase() }}</option>
+                </select>
+            </div>
+            <!-- Keep host controls mounted while Settings is closed. -->
             <slot name="settings" :open="settings_open" />
-        </div>
+        </section>
 
         <!-- ↺ CLOSED: one press per row reopens it (`POST /reopen`) and focuses it.
              Rows the bridge cannot reopen stay, disabled, their reason in the title. -->
@@ -1691,6 +1702,13 @@ onUnmounted(() => {
              account is struck through. AUTO, first where the bridge can pick,
              reads where it would land (`→ A`); while its fork is open that
              chip is outlined dashed. -->
+        <div v-if="directory_state" class="rack__projects" role="group" aria-label="Directory for new agents">
+            <button v-for="directory in directory_state.directories" :key="directory.path" type="button"
+                class="fui-btn rack__project" :aria-pressed="launch_directory?.path === directory.path"
+                :title="`${directory.path}${directory.path === directory_state.default_path ? ' · default' : ''}`"
+                :disabled="frozen" @click="choose_directory(directory.path)">{{ directory.label }}</button>
+        </div>
+        <p v-if="directory_state && !payload?.launch_cwd" class="rack__project-note">Reload the parent app to launch in a selected directory.</p>
         <div class="rack__launch" role="group" aria-label="Launch an agent">
             <span v-if="show_launch_label" class="fui-techtext rack__render-label">LAUNCH</span>
             <span
@@ -1752,12 +1770,12 @@ onUnmounted(() => {
                         :disabled="frozen"
                         :title="main_title(chip)"
                         @click="launch_main(chip)"
-                    >MAIN</button>
+                    >{{ launch_directory ? 'HERE' : 'MAIN' }}</button>
                     <button
                         v-if="worktrees_available"
                         type="button"
                         class="rack__fork-btn rack__fork-island"
-                        :disabled="frozen"
+                        :disabled="frozen || !repository_launch"
                         :title="island_title(chip)"
                         :aria-label="island_title(chip)"
                         @click="launch_island(chip)"
@@ -1766,13 +1784,15 @@ onUnmounted(() => {
                         v-if="chip_offers_lead(chip)"
                         type="button"
                         class="rack__fork-btn"
-                        :disabled="frozen"
+                        :disabled="frozen || !repository_launch"
                         :title="lead_title(chip)"
                         @click="launch_lead(chip)"
                     >LEAD</button>
                 </span>
             </span>
         </div>
+
+        <p v-if="!repository_launch && fork_key !== null" class="rack__project-note">{{ repository_hint }}</p>
 
         <!-- A launch that did not go as asked. Expires on its own; the rack
              keeps working around it. -->
@@ -2360,7 +2380,7 @@ onUnmounted(() => {
 }
 
 .rack__title {
-    margin-right: auto; /* LIST / GRAPH sit together at the right */
+    margin-right: auto;
     font-size: 15px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -2389,6 +2409,12 @@ onUnmounted(() => {
    per profile. The meter sits under the label inside the chip so the column
    never reflows as usage moves. Its own stacking context, raised, so a fork
    draws over the rows below it. */
+.rack__settings { flex: 0 1 auto; overflow-y: auto; max-height: 65vh; display: grid; gap: 10px; padding: 8px 10px; border-bottom: 1px solid rgba(180, 190, 200, 0.3); }
+.rack__projects { display: flex; gap: 5px; overflow-x: auto; padding: 2px 0; flex-shrink: 0; }
+.rack__project { flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; min-height: 30px; }
+.rack__project[aria-pressed="true"] { color: var(--rack-text); border-color: currentColor; background: var(--rack-raised); }
+.rack__project-note { margin: 4px 10px; font-size: 0.8rem; }
+@media (pointer: coarse) { .rack__project { min-height: 44px; } }
 .rack__launch {
     position: relative;
     z-index: 4;

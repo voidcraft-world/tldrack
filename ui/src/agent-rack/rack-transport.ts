@@ -34,9 +34,12 @@ export type { RackPayload };
  *  `render` is session-less, like `new`. */
 export type RackAction =
     | 'metric'
+    /** Save Settings' launch directories; handled by launch-directories-client.ts. */
+    | 'directories'
     | 'select' | 'kill' | 'rename' | 'render'
-    /** Start a session. `value` is the LAUNCH profile id — `POST /spawn` on a
-     *  bridge that reports `profiles`, the legacy attach-or-create otherwise.
+    /** Start a session. `value` is a profile id or JSON `{profile, cwd}` when the
+     *  payload advertises `launch_cwd`. `POST /spawn` on a bridge with `profiles`,
+     *  legacy attach-or-create otherwise (never for an explicit directory).
      *  Session-less: the host picks the name (`spawn-client.ts::launch_new`). */
     | 'new'
     /** Create a git-worktree-backed session. `value` is a JSON

@@ -152,6 +152,11 @@ def build_worktree_remove_command(repo_root: Path, path: Path, *, force: bool = 
     return command
 
 
+#: The pane's own `cd`, a port of the host's: owned by tldrack `profiles.py`
+#: (`PANE_CD_SCRIPT`) — see the note there.
+PANE_CD_SCRIPT = 'cd -- "$1" 2>/dev/null || cd; shift; [[ -n "$1" ]] && exec "$@"; exec "${SHELL:-/bin/zsh}" -l'
+
+
 def build_spawn_command(claude_bin: str, session: str, cwd: Path, env: dict[str, str] | None = None) -> list[str]:
     """The exact tmux argv (pure — unit-tested against quoting regressions).
 
@@ -177,6 +182,7 @@ def build_spawn_command(claude_bin: str, session: str, cwd: Path, env: dict[str,
         session,
         "-c",
         str(cwd),
+        *("/bin/zsh", "-f", "-c", PANE_CD_SCRIPT, "zsh", str(cwd)),
         "/bin/zsh",
         "-l",
         "-i",
