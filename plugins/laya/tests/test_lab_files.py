@@ -100,6 +100,17 @@ def test_golden_view_reads_the_new_shape():
     assert lab_files.golden_view(paths.Path("x-20261027-010203.json"), report)["kappa"] == 0.2
 
 
+@pytest.mark.parametrize("voters", [None, [], "invalid", 7])
+def test_a_compare_report_whose_voter_scores_are_not_an_object_is_inconclusive(voters):
+    report = {
+        "voters": [{"name": "laya:served", "kind": "laya"}],
+        "sets": {"heldout": {"rows": 12, "voters": voters}},
+    }
+    assert lab_files._compare_verdict(report) == {"verdict": "INCONCLUSIVE", "headline": {}}
+    report["sets"]["heldout"]["voters"] = {"laya:served": {"auc": 0.8}}
+    assert lab_files._compare_verdict(report)["verdict"] == "PASS"
+
+
 def test_golden_view_refuses_a_broken_report():
     assert lab_files.golden_view(paths.Path("x.json"), {"cases": 1}) is None
     assert lab_files.golden_view(paths.Path("a-english-20260102-010101.json"), {**todays_golden(), "brier": True}) is None

@@ -518,7 +518,9 @@ def _compare_verdict(report: dict) -> dict:
         ),
         None,
     )
-    scores = (block or {}).get("voters", {}).get(lead["name"]) if lead is not None and block is not None else None
+    # A report is read off disk: a `voters` block that is not an object is a broken report, never a crash.
+    by_voter = block.get("voters") if block is not None else None
+    scores = by_voter.get(lead["name"]) if lead is not None and isinstance(by_voter, dict) else None
     if not isinstance(scores, dict):
         return {"verdict": "INCONCLUSIVE", "headline": {}}
     live = scores.get("at_live") if isinstance(scores.get("at_live"), dict) else {}
