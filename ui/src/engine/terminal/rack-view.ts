@@ -366,6 +366,9 @@ export interface RackPayload {
      * `worktrees`; never default it to `[]`, which would read as "a bridge that
      * can spawn, with nothing to spawn".
      */
+    /** This payload owner understands a `new` argument containing {profile, cwd}. */
+    launch_cwd?: true;
+    launch_directories?: import('../../agent-rack/launch-directories-client.ts').LaunchDirectoriesView;
     profiles?: ProfileInfo[];
     /**
      * Where AUTO would launch right now — the AUTO chip's target and title.
@@ -835,6 +838,7 @@ export function build_rack_payload(input: RackViewInput): RackPayload {
     const sessions = input.rows.map((row) =>
         with_island(to_rack_session(row, input.profiles, input.services), input.islands));
     const payload: RackPayload = {
+        launch_cwd: true,
         sessions,
         focused: input.focused,
         max_sessions: input.max_sessions,

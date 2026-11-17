@@ -119,6 +119,11 @@ def inline_env(environ: dict | None = None) -> dict[str, str]:
     return {"CLAUDE_CONFIG_DIR": value} if isinstance(value, str) and value else {}
 
 
+#: The pane's own `cd`, a port of the host's: owned by tldrack `profiles.py`
+#: (`PANE_CD_SCRIPT`) — see the note there.
+PANE_CD_SCRIPT = 'cd -- "$1" 2>/dev/null || cd; shift; [[ -n "$1" ]] && exec "$@"; exec "${SHELL:-/bin/zsh}" -l'
+
+
 def build_resume_command(
     claude_bin: str, session_id: str, session: str, cwd: Path, env: dict[str, str] | None = None
 ) -> list[str]:
@@ -155,6 +160,7 @@ def build_resume_command(
         session,
         "-c",
         str(cwd),
+        *("/bin/zsh", "-f", "-c", PANE_CD_SCRIPT, "zsh", str(cwd)),
         "/bin/zsh",
         "-l",
         "-i",

@@ -25,6 +25,8 @@ import { createApp, h, ref, type App, type VNodeChild } from 'vue';
 import AgentRackComponent from './AgentRackComponent.vue';
 import AgentRackWindow from './AgentRackWindow.vue';
 import { create_iframe_transport } from './rack-transport.ts';
+import { with_launch_directories } from './launch-directories-client.ts';
+import { bridge_origin } from '../config/bridge-origin.ts';
 import { useWindowBus } from '../composables/useWindowBus.ts';
 import {
     RENDER_OPTIONS_STORAGE_KEY,
@@ -55,7 +57,7 @@ export function mount_rack_window(target: string | Element, options: RackWindowO
 }
 
 export function mount_rack_frame(target: string | Element, options: { settings?: RackSettingsSlot } = {}): App {
-    const transport = create_iframe_transport();
+    const transport = with_launch_directories(create_iframe_transport(), (path) => `${bridge_origin()}${path}`);
     // A render-function ROOT, not `createApp(AgentRackComponent, props)`: root props are a plain
     // static object, which Vue neither tracks nor unwraps, so the FONT and RENDER controls would
     // freeze at their first value. This wrapper owns the state and re-renders on change.

@@ -23,6 +23,7 @@ from coordinator import plugin as plugin_module
 from coordinator import sources
 from coordinator.plugin import CoordinatorPlugin
 from coordinator.resume import (
+    PANE_CD_SCRIPT,
     PROBE_TIMEOUT_SECONDS,
     SESSION_ID_CHARS,
     SLUG_MAX,
@@ -70,6 +71,8 @@ def test_build_resume_command_exact_argv():
         "resume-agent-rack-1f2e3d4c",
         "-c",
         "/repo",
+        # The pane changes into /repo itself: a tmux server whose own directory is gone ignores `-c`.
+        *("/bin/zsh", "-f", "-c", PANE_CD_SCRIPT, "zsh", "/repo"),
         "/bin/zsh",
         "-l",
         "-i",

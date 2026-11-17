@@ -90,7 +90,7 @@ def test_the_registry_spawns_agy_never_a_bare_shell(tmp_path):
         which=lambda n: f"/opt/{n}",
     )
     argv = registry.spawn_argv("gemini", "vc-9", tmp_path)
-    inner = argv[argv.index("-c", argv.index("/bin/zsh")) + 1]
+    inner = argv[argv.index("-i") + 2]  # past the pane's own cd hop, which is `/bin/zsh -f -c` too
     assert inner.startswith("/opt/agy;")
 
 

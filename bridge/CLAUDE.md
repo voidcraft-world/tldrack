@@ -70,7 +70,7 @@ Also off by default, each with its own owner: phone pushes (`notify.json`, off u
 
 **Server flags**: `--port`, `--status-port`, `--session`, `--start-dir`, `--cmd` (full command override), `--pinned`, `--font-size`, `--read-only`, `--no-status`, `--no-index-patch`, `--print-hooks`, `--print-statusline`.
 
-**Start directory**: new sessions start in the directory the bridge was started from (`DEFAULT_START_DIR` is the working directory, or `TLDRACK_START_DIR`), never the package's location.
+**Start directory**: the startup directory (`DEFAULT_START_DIR`, or `TLDRACK_START_DIR`) seeds the saved launch default. `GET/POST /launch-directories` and `/spawn`’s optional `cwd`: owned by `tldrack/launch_directories.py`. Worktree and LEAD keep their own repository configuration.
 
 **Test-only file overrides**: most stores also take one `TLDRACK_<NAME>_PATH` or `_DIR` variable (`TLDRACK_ICONS_PATH`, `TLDRACK_RACK_DB`, `TLDRACK_LEDGER_DIR`, …), read next to that store's path resolver. Prefer the three role variables.
 

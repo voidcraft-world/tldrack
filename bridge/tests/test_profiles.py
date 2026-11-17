@@ -19,6 +19,7 @@ import pytest
 
 from tldrack.profiles import (
     CLAUDE_SETTINGS_ENV,
+    PANE_CD_SCRIPT,
     PERMISSION_MODE_OPTION,
     PERMISSION_MODES,
     PROFILE_OPTION,
@@ -32,6 +33,7 @@ from tldrack.profiles import (
     cli_offers_permission,
     codex_has_no_daemon,
     detect_profiles,
+    directory_args,
     hooks_missing,
     hooks_status,
     install_hooks,
@@ -390,7 +392,7 @@ def test_a_profile_that_decides_its_own_approvals_pins_them(kind, args, pinned):
 def test_spawn_argv_puts_the_mode_before_the_prompt_and_stamps_only_what_it_applied():
     claude = Profile("b", "B", "claude", "/h/.claude", False, ("--model", "opus"))
     argv = spawn_argv(claude, "wt-a", "/repo", ["fix the nav"], cli_bin="/bin/claude", permission_mode="auto")
-    assert "/bin/claude --model opus --permission-mode auto 'fix the nav';" in argv[11]
+    assert "/bin/claude --model opus --permission-mode auto 'fix the nav';" in argv[17]
     assert argv[-6:] == [";", "set-option", "-t", "=wt-a:", PERMISSION_MODE_OPTION, "auto"]
     codex = spawn_argv(
         Profile("codex", "CODEX", "codex", "/h/.codex", False, ("-m", "gpt-5-codex")),
@@ -400,9 +402,9 @@ def test_spawn_argv_puts_the_mode_before_the_prompt_and_stamps_only_what_it_appl
         codex_no_daemon=True,
         permission_mode="auto",
     )
-    assert codex[11].startswith("codex --no-daemon -m gpt-5-codex --approve-for-me 'fix the nav'; ")
+    assert codex[17].startswith("codex --no-daemon -m gpt-5-codex --approve-for-me 'fix the nav'; ")
     plain = spawn_argv(claude, "wt-b", "/repo", cli_bin="/bin/claude")
-    assert PERMISSION_MODE_OPTION not in plain and "--permission-mode" not in plain[11]
+    assert PERMISSION_MODE_OPTION not in plain and "--permission-mode" not in plain[17]
     shell = spawn_argv(Profile("shell", "SH", "shell", None, False), "vc-3", "/repo", permission_mode="auto")
     assert PERMISSION_MODE_OPTION not in shell, "a shell took no args, so nothing is recorded"
 
@@ -442,10 +444,10 @@ def test_the_registry_starts_claude_and_codex_in_auto_once_their_clis_offer_it(t
     assert registry.permission_refusal("a", "auto") is None
     assert registry.permission_refusal("codex", "auto") is None
     codex = registry.spawn_argv("codex", "wt-c", "/repo", permission_mode="auto")
-    assert codex[11].startswith("codex --no-daemon -m gpt-5-codex --approve-for-me; ")
+    assert codex[17].startswith("codex --no-daemon -m gpt-5-codex --approve-for-me; ")
     assert PERMISSION_MODE_OPTION in codex
     claude = registry.spawn_argv("a", "wt-d", "/repo", cli_bin=str(bins["claude"]), permission_mode="auto")
-    assert f"{bins['claude']} --permission-mode auto;" in claude[11]
+    assert f"{bins['claude']} --permission-mode auto;" in claude[17]
     assert sorted(set(calls)) == sorted(str(path) for path in bins.values()), "one --help per binary, shared"
     assert len(calls) == 2
 
@@ -503,9 +505,9 @@ def _codex_registry(tmp_path, help_text, calls):
 def test_a_codex_spawn_leaves_the_daemon_when_its_cli_offers_to(tmp_path):
     calls = []
     registry, _ = _codex_registry(tmp_path, CODEX_HELP, calls)
-    assert registry.spawn_argv("codex", "vc-1", "/repo")[11].startswith("codex --no-daemon -m gpt-5-codex; ")
-    assert "--no-daemon" not in registry.spawn_argv("a", "vc-2", "/repo")[11]
-    assert registry.spawn_argv("shell", "vc-3", "/repo")[7] == ";"
+    assert registry.spawn_argv("codex", "vc-1", "/repo")[17].startswith("codex --no-daemon -m gpt-5-codex; ")
+    assert "--no-daemon" not in registry.spawn_argv("a", "vc-2", "/repo")[17]
+    assert registry.spawn_argv("shell", "vc-3", "/repo")[13] == ";"
     registry.spawn_argv("codex", "vc-4", "/repo", ["a prompt"])
     assert len(calls) == 1  # one probe per binary, then cached
 
@@ -514,7 +516,7 @@ def test_an_older_or_unreadable_codex_spawns_exactly_as_before(tmp_path):
     for case, help_text in enumerate((OLD_CODEX_HELP, None)):
         calls = []
         registry, _ = _codex_registry(tmp_path / str(case), help_text, calls)
-        assert registry.spawn_argv("codex", "vc-1", "/repo")[11].startswith("codex -m gpt-5-codex; ")
+        assert registry.spawn_argv("codex", "vc-1", "/repo")[17].startswith("codex -m gpt-5-codex; ")
         assert len(calls) == 1
 
 
@@ -556,12 +558,14 @@ def test_spawn_stamps_the_session_in_the_same_invocation():
     assert argv[:7] == ["tmux", "new-session", "-d", "-s", "vc-2", "-c", "/repo"]
     # `=S:` — set-option targets a PANE, which takes exact-match only as `=session:`.
     assert argv[-6:] == [";", "set-option", "-t", "=vc-2:", PROFILE_OPTION, "codex"]
-    assert argv[7:11] == ["/bin/zsh", "-l", "-i", "-c"]
-    assert argv[11].startswith("codex; echo; ")
-    assert argv[11].endswith("exec /bin/zsh -l")
+    assert argv[7:13] == ["/bin/zsh", "-f", "-c", PANE_CD_SCRIPT, "zsh", "/repo"], "the pane changes directory itself"
+    assert argv[13:17] == ["/bin/zsh", "-l", "-i", "-c"]
+    assert argv[17].startswith("codex; echo; ")
+    assert argv[17].endswith("exec /bin/zsh -l")
 
 
-def test_a_shell_spawn_runs_tmuxs_own_default_shell():
+def test_a_shell_spawn_ends_in_the_panes_login_shell():
+    # No command after the directory: `PANE_CD_SCRIPT` execs `$SHELL -l`, tmux's own default shell.
     argv = spawn_argv(Profile("shell", "SH", "shell", None, False), "vc-1", "/repo")
     assert argv == [
         "tmux",
@@ -570,6 +574,12 @@ def test_a_shell_spawn_runs_tmuxs_own_default_shell():
         "-s",
         "vc-1",
         "-c",
+        "/repo",
+        "/bin/zsh",
+        "-f",
+        "-c",
+        PANE_CD_SCRIPT,
+        "zsh",
         "/repo",
         ";",
         "set-option",
@@ -584,6 +594,43 @@ def test_a_cwd_ending_in_a_semicolon_cannot_split_the_command(tmp_path):
     # tmux splits a sequence on any argv element ENDING in `;`.
     argv = spawn_argv(Profile("shell", "SH", "shell", None, False), "vc-1", "/odd;")
     assert argv[6] == "/odd;" + os.sep
+    assert argv[12] == "/odd;" + os.sep, "the directory the pane changes into is fenced the same way"
+    assert not any(arg.endswith(";") for arg in directory_args("/odd;", ["/bin/zsh", "-l"]))
+
+
+def run_pane_cd(target, command, cwd, home):
+    """The pane command `directory_args` builds, run for real from `cwd`."""
+    argv = directory_args(target, command)[2:]
+    env = {**os.environ, "HOME": str(home), "SHELL": "/bin/sh"}
+    return subprocess.run(argv, capture_output=True, text=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL)
+
+
+def test_the_pane_changes_directory_itself_whatever_directory_tmux_left_it_in(tmp_path):
+    """A tmux server whose start directory is gone ignores `-c` (`PANE_CD_SCRIPT`),
+    so the directory must come from the pane command, not from where it started."""
+    target = tmp_path / "re po;"
+    target.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    done = run_pane_cd(target, ["/bin/sh", "-c", 'pwd -P; echo "pwd=$PWD"'], elsewhere, tmp_path)
+    assert done.stdout.splitlines() == [str(target.resolve()), f"pwd={target}"]
+
+
+def test_a_directory_that_vanished_falls_back_to_home_as_tmux_does(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    done = run_pane_cd(tmp_path / "gone", ["/bin/sh", "-c", "pwd -P"], tmp_path, home)
+    assert done.stdout.strip() == str(home.resolve())
+
+
+def test_no_command_after_the_directory_is_a_login_shell(tmp_path):
+    # `$SHELL -l` with stdin closed: the login shell starts in the directory and exits at once.
+    shell = tmp_path / "shell"
+    shell.write_text('#!/bin/sh\necho "args=$* in=$(pwd -P)"\n')
+    shell.chmod(shell.stat().st_mode | stat.S_IEXEC)
+    argv = directory_args(tmp_path)[2:]
+    done = subprocess.run(argv, capture_output=True, text=True, cwd="/", env={**os.environ, "SHELL": str(shell)})
+    assert done.stdout.strip() == f"args=-l in={tmp_path.resolve()}"
 
 
 def test_the_claude_inner_really_sheds_and_pins(tmp_path):

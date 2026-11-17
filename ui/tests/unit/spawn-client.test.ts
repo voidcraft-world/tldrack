@@ -191,3 +191,33 @@ test('the launch notice expires on its own and re-emits each time', () => {
         globalThis.setTimeout = real;
     }
 });
+
+test('directory launches pin the cwd across the session-name retry', async () => {
+    const { fetch_impl, bodies } = scripted([409, 201]);
+    const { hooks } = recording({ fetch_impl });
+    await launch_new(JSON.stringify({ profile: 'codex-a', cwd: '/tmp/second project' }), hooks);
+    assert.deepEqual(bodies, [
+        { name: 'vc-2', profile: 'codex-a', cwd: '/tmp/second project' },
+        { name: 'vc-3', profile: 'codex-a', cwd: '/tmp/second project' },
+    ]);
+});
+
+test('directory launch cannot fall back to a shell in a different project', async () => {
+    for (const profiles of [PROFILES, undefined]) {
+        const { fetch_impl } = scripted([404]);
+        const { hooks, events } = recording({ fetch_impl, profiles: () => profiles });
+        await launch_new(JSON.stringify({ profile: null, cwd: '/tmp/project' }), hooks);
+        assert.ok(!events.includes('legacy'));
+        assert.match(events.at(-1)!, /Restart the bridge/);
+    }
+});
+
+test('malformed directory requests do not launch a default by accident', async () => {
+    for (const value of ['{broken', '{"profile":null}', '{"profile":123,"cwd":"/tmp/project"}', '{"profile":null,"cwd":"relative"}']) {
+        const { fetch_impl, bodies } = scripted([201]);
+        const { hooks, events } = recording({ fetch_impl });
+        await launch_new(value, hooks);
+        assert.equal(bodies.length, 0);
+        assert.deepEqual(events, ['failure:Invalid launch directory request']);
+    }
+});
