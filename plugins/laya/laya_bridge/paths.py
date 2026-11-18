@@ -114,8 +114,9 @@ PUBLIC_GOLDEN_DIR = LAB_DIR / "golden"
 #: Sonnet labels and exported texts; operator: the REVIEW deck's log (`review_log.py`); laya-p: the
 #: served model's scores (`lab_files.scores_row`); teacher: a local teacher's labels beside Sonnet's
 #: (laya-lab `teacher_local.py`); requests: the request that opened each text's turn, keyed like the
-#: texts (laya-lab `open_work_data.py` `export`).
-DATA_PARTS = ("labels", "unlabelled", "operator", "laya-p", "teacher", "requests")
+#: texts (laya-lab `open_work_data.py` `export`); votes: a Claude model's p per state, asked once on the
+#: subscription (laya-lab `claude_voter.py`).
+DATA_PARTS = ("labels", "unlabelled", "operator", "laya-p", "teacher", "requests", "votes")
 MODELS_CAP_BYTES = 1024 * 1024
 
 SURFACE_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")

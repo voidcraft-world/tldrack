@@ -13,6 +13,8 @@ Voters, each under a public name:
 - `tfidf-floor`: the TF-IDF floor (`floor.py`), trained on the served checkpoint's own training rows.
 - each `--voter <name>=<loopback url>[,key=value…]`: a `/v1/systemone` server (`infer.EndpointRouter`). The keys say
   what the lab cannot know about it: `kind` (zero_shot | fine_tune), `runtime`, `licence`, `params_m`, `labels`, `label`.
+  `<name>=votes:<model>[/<arm>]` in the URL's place is a Claude model's recorded votes, read from a file and never
+  asked here: owned by `claude_voter.py` — see the note there.
 - `mean.<laya voter>+<name>`: the mean p of each Laya voter with each endpoint voter.
 - each `--challenger <checkpoint>`: `laya-fine-tune-q<version>`, an unregistered fine-tune asked the question version
   its training record was built at (`question.py`), of the same rows: every row keeps its raw state (`Rows.raws`) for
@@ -140,6 +142,8 @@ class BenchVoter:
     question_version: int | None = None
     #: A challenger trained on its own rows and split (`train`), not a rebuild of the served model's.
     retrain: bool = False
+    #: An endpoint voter's router, which times its own calls (`compare.Timed`): a votes file's are the recorded ones.
+    timed: Any = None
 
 
 @dataclass
@@ -160,12 +164,15 @@ class Answers:
 
 
 def parse_voter(spec: str) -> dict[str, Any]:
-    """`<name>=<loopback url>[,key=value…]` → `{name, url, kind, runtime, licence, params_m, labels, label}`.
+    """`<name>=<loopback url | votes:<model>[/<arm>]>[,key=value…]` → `{name, url, kind, runtime, licence, params_m,
+    labels, label}`.
     The name and the URL are `compare.parse_spec`'s to refuse; a Laya or floor spec is refused, because the bench
     names those voters itself and a checkpoint folder never names one in a public file."""
     head, *rest = spec.split(",")
     if head == compare.FLOOR or head.startswith(compare.LAYA):
-        raise compare.Refused(f"{spec!r}: the bench adds its own Laya and floor voters; --voter is <name>=<loopback url>")
+        raise compare.Refused(
+            f"{spec!r}: the bench adds its own Laya and floor voters; --voter is <name>=<loopback url | votes:<model>>"
+        )
     name, url = compare.parse_spec(head)
     if name == FLOOR or name.startswith(ENSEMBLE_PREFIX):
         raise compare.Refused(f"{name!r} is a name the bench writes itself")
@@ -378,7 +385,7 @@ def plan_voters(
     laya = [voter.name for voter in plan.voters if voter.kind in ("base", "fine_tune")]
     plan.voters.extend(measured)
     for extra in extras:
-        endpoint = infer.EndpointRouter(extra["url"])
+        endpoint = compare.Timed(compare.endpoint_router(base, suite, extra["url"]))
         plan.voters.append(
             BenchVoter(
                 extra["name"],
@@ -386,6 +393,7 @@ def plan_voters(
                 extra["kind"],
                 extra["runtime"],
                 asks(lambda endpoint=endpoint: endpoint, extra["name"], suite),
+                timed=endpoint,
                 labels=extra["labels"],
                 params_m=extra["params_m"],
                 licence=extra["licence"],
@@ -486,7 +494,7 @@ def ask(voter: BenchVoter, sets: Mapping[str, Sequence[Row]]) -> dict[str, Answe
         for state in states:
             start = time.perf_counter()
             p = predict(state)
-            answers.ms.append((time.perf_counter() - start) * 1000)
+            answers.ms.append(voter.timed.ms[-1] if voter.timed is not None else (time.perf_counter() - start) * 1000)
             if isinstance(p, bool) or not isinstance(p, (int, float)) or not math.isfinite(p) or not 0 <= p <= 1:
                 raise ValueError(f"{voter.name} answered something that is not a probability")
             answers.probabilities.append(float(p))

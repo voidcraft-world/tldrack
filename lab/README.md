@@ -145,6 +145,21 @@ and never once the selection is covered.
 `--check` and `--verdict-json` are a scheduler's probes. Every rule: owned by
 `laya_lab/teacher_local.py` — see the note there.
 
+## A Claude model as a voter (`claude-vote`)
+
+```bash
+uv run laya-lab claude-vote --dry-run     # how many states it would ask; calls nothing
+uv run laya-lab claude-vote               # ask claude-opus-5-5 p(open) of every state the bench scores, both arms
+uv run laya-lab bench --voter opus=votes:claude-opus-5-5/rubric --voter opus-q=votes:claude-opus-5-5/question
+```
+
+`compare` and `bench` refuse a voter that is not on this machine, and they still do. `claude-vote` is the
+one command that sends: each state, exactly as Laya is asked it, to a Claude model on the subscription login,
+once. The answers land in `data/agent-open-work-votes.jsonl`, and a `votes:<model>[/<arm>]` voter reads that
+file. Two arms: `question` asks Laya's own one-line question, `rubric` the teacher's rubric. The model
+labels are Sonnet's and were made on that rubric, so score a rubric vote against the operator's labels
+(`--labels operator`). Why a file and what a row holds: owned by `laya_lab/claude_voter.py` — see the note there.
+
 ## The resource lease (optional)
 
 With nothing configured the lab just runs: no lease, no night window, no queue. On a machine that runs other

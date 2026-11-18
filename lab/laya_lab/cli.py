@@ -27,6 +27,7 @@
     laya-lab registry migrate          # a v1 models.json → v2, nothing served changes (every write runs it too)
     laya-lab registry register agent_open_work <checkpoint folder> --as challenger   # never touches what is served
     laya-lab teacher-kappa             # gpt-oss:20b labels the Sonnet + operator keys; κ vs both (teacher_local.py)
+    laya-lab claude-vote               # a Claude model's p per bench state, on the subscription (claude_voter.py)
 
 AGENT RACK › LAYA's lab buttons start `sweep`, `review-open-work`, `promote`, `golden` and `compare`
 (`plugins/laya/laya_bridge/lab_jobs.py` owns how, and why `train` is never one); their names and exit
@@ -105,6 +106,17 @@ def build_parser() -> argparse.ArgumentParser:
     lab.add_argument("--profile", default=None, help="launch profile id (default: the bridge default)")
     lab.add_argument("--teacher", choices=("sonnet", "auto"), default="sonnet")
     lab.add_argument("--weekly", action="store_true", help="hold the run to the week's subscription-label cap")
+    vote = commands.add_parser(
+        "claude-vote", help="ask a Claude model p(open) of every state the bench scores (subscription only); bench reads the file"
+    )
+    vote.add_argument("suite", nargs="?", default="agent-open-work", choices=sorted(GOLDEN_SUITES))
+    vote.add_argument("--model", default="claude-opus-5-5")
+    vote.add_argument("--arm", action="append", default=[], choices=("rubric", "question"), help="repeatable (default: both)")
+    vote.add_argument("--batch", type=int, default=25)
+    vote.add_argument("--max-calls", type=int, default=60)
+    vote.add_argument("--profile", default=None, help="launch profile id (default: the bridge default)")
+    vote.add_argument("--dry-run", action="store_true", help="count what would be asked and score what is voted; call nothing")
+    vote.add_argument("--ask-stdin", action="store_true", help=argparse.SUPPRESS)  # claude_voter.py § the ask
     retrain = commands.add_parser("retrain", help="resume the durable retrain into a shadow challenger")
     retrain.add_argument("suite", choices=("agent-open-work",))
     retrain.add_argument("--device", default="mps", help=DEVICE_HELP)
@@ -138,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--voter",
         action="append",
         default=[],
-        help="<name>=<loopback url>[,kind=,runtime=,licence=,params_m=,labels=,label=]; repeatable",
+        help="<name>=<loopback url | votes:<model>[/<arm>]>[,kind=,runtime=,licence=,params_m=,labels=,label=]; repeatable",
     )
     bench.add_argument("--labels", choices=LABEL_SOURCES, default="auto", help="the held-out set's labels (as sweep)")
     bench.add_argument("--dry-run", action="store_true", help="print the plan (voters, sets, n); load and write nothing")
@@ -204,7 +216,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--voter",
         action="append",
         default=[],
-        help="laya:<served|english|checkpoint> or <name>=<loopback url>; repeatable (default: laya:served, laya:english)",
+        help="laya:<served|english|checkpoint>, <name>=<loopback url> or <name>=votes:<model>[/<arm>]; repeatable "
+        "(default: laya:served, laya:english)",
     )
     compare.add_argument("--labels", choices=LABEL_SOURCES, default="auto", help="the held-out set's labels (as sweep)")
     compare.add_argument("--golden-only", dest="heldout", action="store_false", help="skip the held-out set")
@@ -523,6 +536,20 @@ def cmd_label_open_work(args: argparse.Namespace, base: Path) -> int:
     )
 
 
+def cmd_claude_vote(args: argparse.Namespace, base: Path) -> int:
+    from laya_lab.claude_voter import ARMS, ask, vote
+
+    arms = tuple(dict.fromkeys(args.arm)) or ARMS
+    if not args.ask_stdin:
+        return vote(base, args.suite, model=args.model, arms=arms, dry_run=args.dry_run, argv=args.raw_argv)
+    from laya_lab.infer import hold_slot
+
+    # One unattended Claude job at a time on the subscription, as for label-open-work.
+    hold_slot("subscription_claude", "claude", 1, [args.model])
+    todo = json.load(sys.stdin)
+    return ask(base, args.suite, todo, model=args.model, batch_size=args.batch, max_calls=args.max_calls, profile=args.profile)
+
+
 def cmd_review_open_work(args: argparse.Namespace, base: Path) -> int:
     from laya_lab.score import run
 
@@ -639,6 +666,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Any], int]] = {
     "export-open-work": cmd_export_open_work,
     "question-challenger": cmd_question_challenger,
     "label-open-work": cmd_label_open_work,
+    "claude-vote": cmd_claude_vote,
     "review-open-work": cmd_review_open_work,
     "sweep": cmd_sweep,
     "promote": cmd_promote,

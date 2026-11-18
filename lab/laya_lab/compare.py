@@ -35,6 +35,7 @@ from typing import Any
 from collections.abc import Mapping
 
 from laya_lab import siblings  # noqa: F401  (puts laya_bridge on sys.path)
+from laya_lab import claude_voter
 from laya_lab import floor as floor_voter
 from laya_lab import infer
 from laya_lab.data import atomic_write_text
@@ -77,7 +78,9 @@ class Timed:
         try:
             return self.inner.predict(state, questions, model=model)
         finally:
-            self.ms.append((time.perf_counter() - start) * 1000)
+            # A votes file answers with what its vote cost when it was asked (claude_voter.py § The file).
+            recorded = getattr(self.inner, "last_ms", None)
+            self.ms.append((time.perf_counter() - start) * 1000 if recorded is None else recorded)
 
 
 @dataclass
@@ -96,7 +99,8 @@ class Voter:
 
 
 def parse_spec(spec: str) -> tuple[str, str]:
-    """`("laya", model)`, `("floor", "floor")` or `(name, url)`. Refuses a malformed spec and a URL off this machine."""
+    """`("laya", model)`, `("floor", "floor")` or `(name, target)`: a loopback URL, or `votes:<model>[/<arm>]` (a
+    Claude model's recorded votes: claude_voter.py). Refuses a malformed spec and a URL off this machine."""
     if spec == FLOOR:
         return FLOOR, FLOOR
     if spec.startswith(LAYA):
@@ -107,9 +111,22 @@ def parse_spec(spec: str) -> tuple[str, str]:
     name, sep, url = spec.partition("=")
     if not sep or not NAME.fullmatch(name) or name in (MEAN, FLOOR) or name.startswith("laya"):
         raise Refused(f"{spec!r}: <name>=<url>, name in [a-z0-9_.-], not 'mean', 'floor' or 'laya…'")
+    if url.startswith(claude_voter.VOTES):
+        try:
+            claude_voter.parse_votes(url)
+        except ValueError as error:
+            raise Refused(str(error)) from None
+        return name, url
     if not infer.is_loopback_url(url):
         raise Refused(f"{url} is not a loopback URL: an endpoint voter never sends a text off this machine")
     return name, url
+
+
+def endpoint_router(base: Path, suite: Suite, target: str) -> Any:
+    """The router of a `(name, target)` spec: the votes file's reader, or the loopback server's client."""
+    if target.startswith(claude_voter.VOTES):
+        return claude_voter.VotesRouter(base, suite, *claude_voter.parse_votes(target))
+    return infer.EndpointRouter(target)
 
 
 def floor_of(base: Path, suite: Suite) -> tuple[Voter | None, str | None]:
@@ -154,7 +171,7 @@ def build_voters(
             cut, source = served_threshold(base, suite.surface, target, code=suite.threshold)
             voter = Voter(name, "laya", target, Timed(shared), cut, source, digest=infer.checkpoint_digest(target, path))
         else:
-            voter = Voter(kind, "endpoint", kind, Timed(infer.EndpointRouter(value)), suite.threshold, "code", url=value)
+            voter = Voter(kind, "endpoint", kind, Timed(endpoint_router(base, suite, value)), suite.threshold, "code", url=value)
         if voter.name in seen:
             continue  # `laya:served` is `laya:english` until a fine-tune is registered
         seen.add(voter.name)
