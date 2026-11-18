@@ -33,6 +33,7 @@ import {
 import { SESSION_NAME_WARNING, is_valid_session_name } from '../engine/terminal/session-name.ts';
 import { SERVICE_SESSION_EMOJI, shows_service_mark } from '../engine/terminal/service-sessions.ts';
 import {
+    ANSWER_TO_READ_EMOJI,
     DEAD_SESSION_EMOJI,
     FRESH_SESSION_EMOJI,
     OPEN_WORK_BADGE,
@@ -43,6 +44,8 @@ import {
     STUCK_BADGE,
     TERMINAL_STATUS_FLAGS,
     WORK_DONE_EMOJI,
+    answer_to_read_shown,
+    answer_to_read_title,
     display_state_color_css,
     display_state_emoji,
     fresh_session_shown,
@@ -261,9 +264,6 @@ const rows = computed<RackRow[]>(() => {
  * that ever needs to work; until then the defaults are what both sides agree on.
  */
 const use_state_emoji = TERMINAL_STATUS_FLAGS.state_emoji;
-/** The answer-to-read mark: an unread dot, its word in the tooltip and the accessible name. */
-const ANSWER_TO_READ_GLYPH = '●';
-const ANSWER_TO_READ_TITLE = 'Answer to read';
 
 function dot_class(row: RackRow): string {
     const base = use_state_emoji ? 'glyph' : 'dot';
@@ -341,20 +341,9 @@ function dot_glyph(row: RackRow): string {
     if (stopped) return STOP_FAILURE_EMOJI[stop_failure_phase(stopped, now_s.value)];
     if (is_fresh(row)) return FRESH_SESSION_EMOJI;
     if (row.exited || shows_service_mark(row.session, row.state)) return SERVICE_SESSION_EMOJI;
+    if (answer_to_read_shown(row.state, row.work_done, row.dim)) return ANSWER_TO_READ_EMOJI;
     if (work_done_shown(row.state, row.work_done ? true : null, row.dim)) return WORK_DONE_EMOJI[row.state];
     return display_state_emoji(row.state ?? 'unknown');
-}
-
-/** Does this row's mark draw ✅/☑️? `dot_glyph`'s order: every mark it puts first wins over it. */
-function shows_work_done(row: RackRow): boolean {
-    return !row.dim && !cut_off(row) && !is_fresh(row) && !row.exited && !shows_service_mark(row.session, row.state)
-        && work_done_shown(row.state, row.work_done ? true : null, row.dim);
-}
-
-/** The answer-to-read glyph beside a ✅ whose turn asked a question (bridge/tldrack/open_work.py
- *  § An answer to read). The ✅ stays: the work is done; this says the answer is not read yet. */
-function shows_answer_to_read(row: RackRow): boolean {
-    return use_state_emoji && row.work_done?.answer === true && shows_work_done(row);
 }
 
 /** What Laya's verdict draws on this row — the rule is `open_work_mark_kind`'s. */
@@ -393,6 +382,7 @@ function dot_title(row: RackRow): string {
     }
     if (row.exited) return row.exited.code === 0 ? 'finished job' : 'failed job';
     if (shows_service_mark(row.session, row.state)) return 'service';
+    if (answer_to_read_shown(row.state, row.work_done, row.dim)) return answer_to_read_title(row.work_done?.p);
     if (work_done_shown(row.state, row.work_done ? true : null, row.dim)) return work_done_title(row.state, row.work_done?.p);
     const label = state_label(row.state ?? 'unknown');
     return (label === '—' ? 'no status' : label.toLowerCase()) + seen;
@@ -1976,14 +1966,6 @@ onUnmounted(() => {
                             :title="open_work_children_title(row.open_work?.children ?? 0)"
                             :aria-label="open_work_children_title(row.open_work?.children ?? 0)"
                         >{{ OPEN_WORK_WAITING_BADGE }}</span>
-                        <!-- A ✅ on a question: the answer is not read yet. Opening the pane reads it. -->
-                        <span
-                            v-else-if="row.session && shows_answer_to_read(row)"
-                            class="mark__answer-to-read"
-                            role="img"
-                            :title="ANSWER_TO_READ_TITLE"
-                            :aria-label="ANSWER_TO_READ_TITLE"
-                        >{{ ANSWER_TO_READ_GLYPH }}</span>
                         <span
                             v-if="row.stuck && shows_stuck(row)"
                             class="mark__stuck"
@@ -3131,18 +3113,6 @@ onUnmounted(() => {
 }
 .mark__open-work:disabled { cursor: default; }
 span.mark__open-work { cursor: default; }
-/* The answer to read takes the ⚠️'s corner: it rides only a ✅, which never carries a ⚠️ or ⏳.
-   Its violet is its own: nothing else on the row uses it. */
-.mark__answer-to-read {
-    position: absolute;
-    right: -3px;
-    bottom: -4px;
-    font-size: 9px;
-    line-height: 1;
-    color: #c4a1ff;
-    text-shadow: 0 0 3px rgba(196, 161, 255, 0.7);
-    cursor: default;
-}
 /* stuck.py's 🧱 rides the upper-right corner, opposite the ⚠️, so a row can carry both. */
 .mark__stuck {
     position: absolute;

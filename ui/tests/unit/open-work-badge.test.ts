@@ -5,9 +5,15 @@ import { to_rack_session } from '../../src/engine/terminal/rack-view.ts';
 import { build_rack_rows } from '../../src/engine/terminal/multi-terminal-layout.ts';
 import { has_unread_answer } from '../../src/agent-rack/open-work-client.ts';
 import {
+    ANSWER_TO_READ_EMOJI,
+    OPEN_WORK_BADGE,
+    OPEN_WORK_WAITING_BADGE,
+    STUCK_BADGE,
     TERMINAL_STATUS_FLAGS,
     WORK_DONE_EMOJI,
     OPEN_WORK_WAITING_TITLE,
+    answer_to_read_shown,
+    answer_to_read_title,
     open_work_badge_shown,
     open_work_children_title,
     open_work_mark_kind,
@@ -155,6 +161,21 @@ test('✅ replaces only a reply-ready or idle live row, behind its flag', () => 
     assert.deepEqual(WORK_DONE_EMOJI, { done: '✅', free: '☑️' });
     assert.equal(work_done_title('done', 0.123), 'reply ready · work looks done (12% open)');
     assert.equal(work_done_title('free', null), 'idle · work looks done');
+});
+
+test('📖 takes the ✅ place while its answer is unread, wherever the ✅ would draw', () => {
+    assert.equal(answer_to_read_shown('done', { answer: true }, false), true);
+    assert.equal(answer_to_read_shown('free', { answer: true }, false), true, 'a host that marks it seen without reading it');
+    assert.equal(answer_to_read_shown('done', {}, false), false, 'read, or never a question: the plain ✅');
+    assert.equal(answer_to_read_shown('done', null, false), false);
+    assert.equal(answer_to_read_shown('done', { answer: true }, true), false, 'a gone row draws 💀');
+    for (const state of ['busy', 'attention', 'background', 'unknown'] as const) {
+        assert.equal(answer_to_read_shown(state, { answer: true }, false), false, state);
+    }
+    const marks = [ANSWER_TO_READ_EMOJI, ...Object.values(WORK_DONE_EMOJI), OPEN_WORK_BADGE, OPEN_WORK_WAITING_BADGE, STUCK_BADGE];
+    assert.equal(new Set(marks).size, marks.length, 'one mark, one meaning');
+    assert.equal(answer_to_read_title(0.05), 'answer to read · work looks done (5% open)');
+    assert.equal(answer_to_read_title(null), 'answer to read · work looks done');
 });
 
 // tldrack/attention.py: ⏳ while children run, nothing once parked; stuck.py's 🧱.

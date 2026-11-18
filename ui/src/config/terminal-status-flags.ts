@@ -284,6 +284,29 @@ export function work_done_shown(
         && (state === 'done' || state === 'free');
 }
 
+/**
+ * An answer to read: Laya judged the turn DONE and a question opened it, so the agent owes nothing
+ * and the operator still owes the answer a read. 📖 takes the ✅'s place, because ✅ alone says
+ * "nothing to look at"; opening the pane reads it, and the row is then an ordinary ☑️. When it is
+ * set and what clears it: owned by `bridge/tldrack/open_work.py` — see § An answer to read there.
+ */
+export const ANSWER_TO_READ_EMOJI = '📖';
+
+/** Does 📖 replace this row's ✅/☑️? Wherever that mark would draw, while its answer is unread. */
+export function answer_to_read_shown(
+    state: TerminalDisplayState | undefined,
+    work_done: { answer?: true } | null | undefined,
+    dead: boolean,
+): state is 'done' | 'free' {
+    return work_done?.answer === true && work_done_shown(state, true, dead);
+}
+
+/** The 📖's words: the title and the accessible name. */
+export function answer_to_read_title(p: number | null | undefined): string {
+    const pct = typeof p === 'number' ? ` (${Math.round(p * 100)}% open)` : '';
+    return `answer to read · work looks done${pct}`;
+}
+
 /** The ✅ mark's words: the title and the accessible name. */
 export function work_done_title(state: 'done' | 'free', p: number | null | undefined): string {
     const pct = typeof p === 'number' ? ` (${Math.round(p * 100)}% open)` : '';

@@ -27,6 +27,7 @@ and those answers feed both cuts' sweeps.
 A turn that ANSWERS a question is done by the question above: the agent owes nothing, so the row
 draws ✅. But the operator still owes the answer a read, and ✅ alone says "nothing to look at".
 So a ✅ whose turn was opened by a question carries a second, separate signal: `answer_to_read`.
+The rack draws it as 📖 in the ✅'s place (`ui/src/config/terminal-status-flags.ts`).
 It is not a label and not a band; Laya's question, cuts, golden set and labels do not move.
   · The rule (`asks_question`): the prompt that opened the turn (`turn_request`) is a question,
     its last non-empty line ending in `?` (the `ends_on_question` rule the landing trace already

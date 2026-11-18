@@ -76,6 +76,39 @@ that needed you. Your grades are what fix that. 40 of them, at least 10 of each 
 fine-tune, and `tldrack laya status` counts them. The fine-tune is yours: it trains on your turns and never
 leaves your machine.
 
+## Reading the rack
+
+Every row carries one mark. Hover it for the sentence.
+
+| Mark | The row | Set by |
+|:---:|---|---|
+| 🙋 | **Needs you.** The agent asked a question, or wants a permission or a plan approved | the agent's hooks |
+| 📖 | **Answer to read.** You asked a question and the turn looks done. Open the row to read it | Laya, and your prompt ending in `?` |
+| ✅ | **Work looks done**, reply not opened yet | Laya |
+| ☑️ | **Work looks done**, reply seen. The row moves to COMPLETE | Laya, once you open it |
+| 💬 | **Reply ready**, not opened yet. Laya is not sure the work is done, or no review model runs | the agent's hooks |
+| ○ | **Idle.** You have seen the reply | the agent's hooks |
+| 🆕 | **New session**, no prompt yet | the agent's hooks |
+| ⏳ | **Background jobs still run** after the turn ended. Closing the session stops them | the bridge |
+| 🤔 | **Working** | the agent's hooks |
+| ◌ | **No status**: a plain shell, or an agent without hooks | — |
+| 🖥️ | **Service**: a server you started from the rack, or a job that has ended | the rack |
+| 🪫 | **Cut off by a usage limit** that still holds | the agent's hooks |
+| 🔋 | **Cut off by a usage limit** that has reset: resume it | the agent's hooks |
+| 🛑 | **Cut off by another API error** | the agent's hooks |
+| 💀 | **Session gone**: tmux no longer has it | the bridge |
+
+A row can carry one badge beside its mark:
+
+| Marks | The row |
+|:---:|---|
+| 💬⚠️ &nbsp; ○⚠️ | **Work may remain.** Laya read the closing message as unfinished. Press ⚠️ to grade it: ⏸ not now, ✗ not open, ✓ still open |
+| 💬⏳ &nbsp; ○⏳ | **Work is open, and it waits on this row's own child sessions**, not on you |
+| 🤔🧱 &nbsp; ◌🧱 | **Stuck?** The same command failed 4 times this turn, or 20 minutes passed with no progress |
+
+✅, ☑️ and 📖 never carry ⚠️: one closing message is either done or open. 🙋 and 💀 never carry a badge. A ⚠️ you
+parked with ⏸ draws nothing until you next prompt that session.
+
 ## Measured, not promised
 
 The same held-out turns, one curve per voter. Up and to the left is better.

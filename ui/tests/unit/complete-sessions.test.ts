@@ -38,6 +38,10 @@ describe('is_complete_session', () => {
         assert.equal(is_complete_session(done({ session: 'on-main', state: 'done' })), false);
     });
 
+    test('an unread answer is never complete, even on a row a host already marked seen', () => {
+        assert.equal(is_complete_session(done({ session: 'on-main', work_done: { p: 0.1, answer: true } })), false);
+    });
+
     test('finished but standing in a worktree is not complete', () => {
         assert.equal(is_complete_session(done({ session: 'wt-feat-x', island: ISLAND })), false);
     });
