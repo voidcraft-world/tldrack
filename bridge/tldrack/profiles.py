@@ -401,14 +401,21 @@ def resume_args(kind: object, agent_session_id: object) -> list[str] | None:
     value, so `--` would end the options and the id would land as the prompt.)
     The uuid check is the second, independent layer.
 
-    Codex answers None for now: `codex resume <id>` is a subcommand, not a
-    flag, and its argument order has not been measured.
+    **Codex: `resume -- <id>`, LAST.** `codex resume` is a subcommand, and
+    `build_inner` puts every other arg (the profile's `-m`, `--no-daemon`, a
+    launch mode's `--approve-for-me`) before `extra_args`, so they ride as the
+    ROOT command's flags, which codex merges into the resumed session (measured,
+    codex-cli 0.170: `codex --no-daemon -m M --approve-for-me resume --help`
+    parses). Codex is clap, where `--` does end the options and the id lands as
+    the `SESSION_ID` positional, so the fence is `--` here, not `=`.
     """
-    if kind != "claude" or not isinstance(agent_session_id, str):
+    if not isinstance(agent_session_id, str) or not AGENT_SESSION_ID_RE.fullmatch(agent_session_id):
         return None
-    if not AGENT_SESSION_ID_RE.fullmatch(agent_session_id):
-        return None
-    return [f"--resume={agent_session_id}"]
+    if kind == "claude":
+        return [f"--resume={agent_session_id}"]
+    if kind == "codex":
+        return ["resume", "--", agent_session_id]
+    return None
 
 
 def resolve_profiles_path() -> Path:

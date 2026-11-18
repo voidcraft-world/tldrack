@@ -855,6 +855,9 @@ export interface PortSnapshot {
     /** Recent closes the rack's ↺ CLOSED list can reopen. ABSENT at 0 and on a
      *  bridge without `POST /reopen` — `agent-rack/closed-client.ts`. */
     closed?: number;
+    /** Sessions from before a reboot the same list can restore. ABSENT at 0 and on a bridge
+     *  without session records — `agent-rack/closed-client.ts`. */
+    restorable?: number;
     /** The suggester's mode, ABSENT while it is off or on a bridge without one — the rack's cue to
      *  report its control presses (`RackPayload.next_step_mode`). */
     next_step_mode?: NextStepMode;

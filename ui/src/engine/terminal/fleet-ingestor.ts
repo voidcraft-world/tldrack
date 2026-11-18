@@ -63,6 +63,7 @@ interface SnapshotBody {
     profiles?: unknown;
     launch_pick?: unknown;
     closed?: unknown;
+    restorable?: unknown;
     next_step?: unknown;
 }
 
@@ -75,13 +76,20 @@ interface SnapshotExtras {
     launch_pick: LaunchPick | null;
     /** How many recent closes `POST /reopen` can bring back (`agent-rack/closed-client.ts`). */
     closed: number | null;
+    /** How many sessions from before a reboot `POST /restore` can bring back (`agent-rack/closed-client.ts`). */
+    restorable: number | null;
     /** The suggester's mode while it is on (`tldrack/next_step.py`). */
     next_step_mode: NextStepMode | null;
 }
 
 const NO_EXTRAS: SnapshotExtras = {
-    bridge: null, usage: null, profiles: null, launch_pick: null, closed: null, next_step_mode: null,
+    bridge: null, usage: null, profiles: null, launch_pick: null, closed: null, restorable: null, next_step_mode: null,
 };
+
+/** An additive count key: a positive integer, else null (absent at 0 on the bridge). */
+function positive_count(value: unknown): number | null {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+}
 
 function parse_snapshot_extras(body: SnapshotBody): SnapshotExtras {
     const next_step = next_step_mode_schema.safeParse(body.next_step);
@@ -90,7 +98,8 @@ function parse_snapshot_extras(body: SnapshotBody): SnapshotExtras {
         usage: parse_usage_limits(body.usage_limits),
         profiles: parse_profiles(body.profiles),
         launch_pick: parse_launch_pick(body.launch_pick),
-        closed: typeof body.closed === 'number' && Number.isInteger(body.closed) && body.closed > 0 ? body.closed : null,
+        closed: positive_count(body.closed),
+        restorable: positive_count(body.restorable),
         next_step_mode: next_step.success ? next_step.data.mode : null,
     };
 }
@@ -461,7 +470,7 @@ export function create_fleet_ingestor(deps: FleetIngestorDeps): FleetIngestor {
      * `raw_sessions` keeps the unfiltered list that `known_sessions()` needs.
      */
     function process(incoming: SessionStatus[], reachable: boolean, extras: SnapshotExtras): void {
-        const { bridge, usage, profiles, launch_pick, closed, next_step_mode } = extras;
+        const { bridge, usage, profiles, launch_pick, closed, restorable, next_step_mode } = extras;
         const flags = deps.flags();
         raw_sessions = deps.augment_sessions ? deps.augment_sessions(incoming) : incoming;
         const visible = flags.hide_dead_sessions ? raw_sessions.filter(is_live) : raw_sessions;
@@ -578,6 +587,7 @@ export function create_fleet_ingestor(deps: FleetIngestorDeps): FleetIngestor {
         if (profiles !== null) last_snapshot.profiles = profiles;
         if (launch_pick !== null) last_snapshot.launch_pick = launch_pick;
         if (closed !== null) last_snapshot.closed = closed;
+        if (restorable !== null) last_snapshot.restorable = restorable;
         if (next_step_mode !== null) last_snapshot.next_step_mode = next_step_mode;
         deps.on_snapshot(last_snapshot);
     }

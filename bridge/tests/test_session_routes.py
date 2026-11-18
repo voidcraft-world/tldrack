@@ -788,6 +788,16 @@ def test_snapshot_advertises_how_many_sessions_can_come_back(restorer, monkeypat
     assert restorer.snapshot_payload()["restorable"] == 1
 
 
+def test_a_restorable_row_carries_the_name_the_rack_showed(restorer, monkeypatch):
+    _record_live(restorer, monkeypatch, "vc-2", str(restorer.tmp))
+    _hook(restorer, "UserPromptSubmit", {"session_id": SID, "prompt": "fix the nav sidebar"}, session="vc-2")
+    _record_tmux(monkeypatch)  # the reboot
+    restorer.path = "/restorable"
+    restorer._handle_restorable()
+    (row,) = restorer.recorded.body["sessions"]
+    assert row["session"] == "vc-2" and row["label"] == "fix the nav sidebar"
+
+
 def test_restorable_lists_rows_without_the_conversation_id(restorer, monkeypatch):
     _rebooted(restorer, monkeypatch)
     restorer.path = "/restorable"
