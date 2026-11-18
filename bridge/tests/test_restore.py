@@ -97,8 +97,10 @@ def test_an_unstamped_shell_comes_back_as_the_shell_profile(tmp_path):
     assert restore_argv(p, profiles)[13:19] == [";", "set-option", "-t", "=wt-nav:", "@vc_profile", "shell"]
 
 
-def test_codex_does_not_resume_yet():
-    assert resume_args("codex", SID) is None
+def test_codex_resumes_by_subcommand_with_the_id_fenced_last():
+    assert resume_args("codex", SID) == ["resume", "--", SID]
+    assert resume_args("codex", "--dangerously-bypass-approvals-and-sandbox") is None
+    assert resume_args("shell", SID) is None
 
 
 def test_resume_args_refuses_a_flag_shaped_id():
@@ -189,3 +191,18 @@ def test_a_codex_crew_restores_fresh_and_still_in_auto_review(tmp_path):
     )
     assert p.ok and p.resume is None
     assert "--approve-for-me" in restore_argv(p, profiles)[17]
+
+
+def test_a_codex_crew_with_its_rollout_resumes_in_auto_review(tmp_path):
+    profiles = mode_registry(tmp_path)
+    day = tmp_path / ".codex" / "sessions" / "2026" / "11" / "18"
+    day.mkdir(parents=True)
+    (day / f"rollout-2026-11-18T15-34-46-{SID}.jsonl").write_text("{}\n")
+    p = plan(
+        tmp_path, {**record(str(tmp_path), profile="codex", kind="codex"), "launch_permission_mode": "auto"}, profiles=profiles
+    )
+    assert p.ok and p.resume == ["resume", "--", SID] and p.row()["resumable"] is True
+    inner = restore_argv(p, profiles)[17]
+    # Every root flag before the subcommand, the fenced id after it.
+    assert inner.index("--approve-for-me") < inner.index(f"resume -- {SID}")
+    assert inner.rstrip().split(";")[0].endswith(f"resume -- {SID}")

@@ -2378,13 +2378,16 @@ def build_status_handler(
                 self._send_json(503, {"error": "this bridge keeps no session records"})
                 return
             plans = restore_plans(set(list_tmux_sessions()), check_transcript=True)
-            self._send_json(
-                200,
-                {
-                    "max_age_days": RECORD_MAX_AGE_DAYS,
-                    "sessions": [plan.row() for plan in plans],
-                },
-            )
+            # The first-prompt name the rack showed, so a `vc-N` row says what the agent was doing
+            # (the same join a close makes: `file_close`).
+            labels = auto_names.get_all() if auto_names is not None else {}
+            rows = []
+            for plan in plans:
+                row = plan.row()
+                if labels.get(plan.session):
+                    row["label"] = labels[plan.session]
+                rows.append(row)
+            self._send_json(200, {"max_age_days": RECORD_MAX_AGE_DAYS, "sessions": rows})
 
         def _handle_restore(self) -> None:
             """POST /restore {"sessions"?: [<name>, …]} — respawn recorded

@@ -172,7 +172,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
     });
     /** The search box's chat half: asked here, debounced, carried back on the payload (`chat-search.ts`). */
     const chat_search = create_chat_search({ base_url: url, on_change: () => emit() });
-    /** The ↺ CLOSED list. Read only when opened or when the snapshot's count moves (`closed-client.ts`). */
+    /** The ↺ list: closes and reboot restores. Read only when opened or when a snapshot count moves (`closed-client.ts`). */
     const closed_list = create_closed_list({
         base_url: url,
         on_change: () => emit(),
@@ -188,6 +188,8 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
             void ingestor.tick();
         },
         on_failure: (message) => launch_notice.show(message),
+        // RESTORE ALL: no one session to focus; the next poll lists them all.
+        on_restored: () => void ingestor.tick(),
     });
     /** Each takes its own session-less actions and declines the rest (`handle_action` → false). */
     const session_less_owners = [closed_list, chat_search];
@@ -278,7 +280,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
         },
         on_snapshot: (snapshot) => {
             if (disposed) return;
-            closed_list.observe_count(snapshot.closed);
+            closed_list.observe_count(snapshot.closed, snapshot.restorable);
             chat_search.observe_sessions(live_sessions(snapshot.sessions));
             // Adopt a focus on first data, and re-adopt if the focused session
             // died. Must run against the LIVE set: focusing a dead name would

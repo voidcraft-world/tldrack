@@ -84,6 +84,12 @@ export type RackAction =
     /** Bring one closed session back. `value` is the close's id from `GET /closed`; the session
      *  name is the BRIDGE's pick (`POST /reopen`), so it rides no `session`. */
     | 'reopen'
+    /** Bring back sessions a reboot took down (`POST /restore`). `value` is one session name, or
+     *  absent for every row that can come back. Session-less: the name rides `value`, because the
+     *  session does not exist yet. */
+    | 'restore'
+    /** Stop offering every remaining restore (`POST /restore/forget`). Session-less. */
+    | 'restore_forget'
     /** LAUNCH › LEAD: start a lead session. `value` is a JSON `{profile, resume?}` (`"auto"` or a
      *  Claude profile id). Session-less; the bridge names the session and the owner focuses it once
      *  the snapshot lists it (`lead-client.ts::launch_lead`). */

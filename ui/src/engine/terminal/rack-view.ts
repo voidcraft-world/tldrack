@@ -1,6 +1,6 @@
 import type { Mission } from '@tldrack/schemas/missions.ts';
 import type { TaskGroup } from '@tldrack/schemas/task-groups.ts';
-import type { ClosedSession } from '@tldrack/schemas/closed-sessions.ts';
+import type { ClosedSession, RestorableSession } from '@tldrack/schemas/closed-sessions.ts';
 import type { RackSearchHit } from '@tldrack/schemas/agent-history.ts';
 import type { NextStepMode } from '@tldrack/schemas/next-step.ts';
 import type { LeadState } from '@tldrack/schemas/lead.ts';
@@ -414,9 +414,10 @@ export interface RackPayload {
     /** Is the DEVICES section open? Sent with `devices`; the host owns it (`'devices'` action). */
     devices_open?: boolean;
     /**
-     * The ↺ CLOSED list — recent closes, one press to reopen. Absent while the bridge offers
-     * none (or predates `POST /reopen`), and absent grows no button. The host owns it
-     * (`agent-rack/closed-client.ts`; the `'closed'` and `'reopen'` actions).
+     * The ↺ list — recent closes, one press to reopen, and the sessions a reboot took down,
+     * one press (or RESTORE ALL) to restore. Absent while the bridge offers neither, and absent
+     * grows no button. The host owns it (`agent-rack/closed-client.ts`; the `'closed'`,
+     * `'reopen'`, `'restore'` and `'restore_forget'` actions).
      */
     closed?: ClosedView;
     /**
@@ -457,6 +458,18 @@ export interface ClosedView {
     rows: ClosedSession[] | null;
     /** The close a `POST /reopen` is still bringing back. */
     reopening?: string;
+    /** Sessions that were running when the machine went down (`GET /restorable`); absent at 0. */
+    restorable?: RestorableView;
+}
+
+/** `ClosedView.restorable`. A reboot is never a close, so these are their own band. */
+export interface RestorableView {
+    /** What the bridge can offer — the button's number while it is not 0. */
+    count: number;
+    /** The rows, longest-running first as the bridge lists them; null until the first read answers. */
+    rows: RestorableSession[] | null;
+    /** The session a `POST /restore` is bringing back, or `'*'` for RESTORE ALL. */
+    restoring?: string;
 }
 
 /** Empty rack → the bare noun, so the header never reads as missing data. */

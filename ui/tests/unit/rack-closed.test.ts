@@ -7,8 +7,12 @@ import {
     closed_rows_view,
     create_closed_list,
     parse_closed,
+    parse_restorable,
     reopen_closed,
+    restorable_rows_view,
+    restore_notice,
     type ClosedSession,
+    type RestorableSession,
 } from '../../src/agent-rack/closed-client.ts';
 import { build_rack_payload } from '../../src/engine/terminal/rack-view.ts';
 
@@ -194,5 +198,145 @@ describe('the payload', () => {
         assert.equal('closed' in build_rack_payload(base), false);
         const view = { count: 1, open: false, rows: null };
         assert.deepEqual(build_rack_payload({ ...base, closed: view }).closed, view);
+    });
+});
+
+// ── after a reboot ──────────────────────────────────────────────────────
+
+function restorable(overrides: Partial<RestorableSession> = {}): RestorableSession {
+    return {
+        session: 'vc-22',
+        label: 'bench laya vs opus',
+        cwd: '/Users/u/code/my-app',
+        profile: 'claude-a',
+        kind: 'claude',
+        resumable: true,
+        age_seconds: 975,
+        ok: true,
+        ...overrides,
+    };
+}
+
+describe('the restore band', () => {
+    function harness(answers: { restorable?: RestorableSession[]; restore?: Response; forget?: Response } = {}) {
+        const calls: string[] = [];
+        const bodies: unknown[] = [];
+        const events: string[] = [];
+        const list = create_closed_list({
+            base_url: url,
+            fetch_impl: async (input, init) => {
+                const path = String(input).replace(url(''), '');
+                calls.push(path);
+                if (init?.body) bodies.push(JSON.parse(String(init.body)));
+                if (path === '/closed') return response(200, { max_age_days: 7, sessions: [row()] });
+                if (path === '/restorable') return response(200, { max_age_days: 7, sessions: answers.restorable ?? [restorable()] });
+                if (path === '/restore/forget') return answers.forget ?? response(200, { ok: true, forgotten: ['vc-22'] });
+                return answers.restore ?? response(200, { ok: true, results: [{ session: 'vc-22', restored: true, resumed: true }] });
+            },
+            on_change: () => events.push('change'),
+            on_reopened: (session, profile) => events.push(`reopened ${session} ${profile}`),
+            on_failure: (message) => events.push(`failure ${message}`),
+            on_restored: (sessions) => events.push(`restored ${sessions.join(',')}`),
+        });
+        return { list, calls, bodies, events };
+    }
+
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    test('a reboot alone draws the button, and opening reads only the band that has rows', async () => {
+        const { list, calls } = harness();
+        list.observe_count(undefined, 3);
+        assert.deepEqual(list.view(), { count: 0, open: false, rows: null, restorable: { count: 3, rows: null } });
+        list.toggle();
+        await settle();
+        assert.deepEqual(calls, ['/restorable']);
+        assert.deepEqual(list.view()?.rows, [], 'no closes: an empty band, never a read');
+        assert.deepEqual(list.view()?.restorable?.rows, [restorable()]);
+    });
+
+    test('one restore names its session, focuses it on its own account and takes its row', async () => {
+        const { list, bodies, events } = harness();
+        list.observe_count(0, 1);
+        list.toggle();
+        await settle();
+        await list.restore('vc-22');
+        assert.deepEqual(bodies, [{ sessions: ['vc-22'] }]);
+        assert.ok(events.includes('reopened vc-22 claude-a'));
+        assert.ok(!events.some((e) => e.startsWith('restored')));
+    });
+
+    test('RESTORE ALL asks for every row and hands back what came up; a refusal is a notice', async () => {
+        const { list, bodies, events } = harness({
+            restore: response(200, {
+                ok: true,
+                results: [
+                    { session: 'vc-22', restored: true, resumed: true },
+                    { session: 'vc-11', restored: false, reason: 'cwd gone: /gone' },
+                ],
+            }),
+        });
+        list.observe_count(0, 2);
+        assert.equal(list.handle_action('restore', null), true);
+        assert.equal(list.view()?.restorable?.restoring, '*');
+        await settle();
+        await settle();
+        assert.deepEqual(bodies, [{}]);
+        assert.ok(events.includes('restored vc-22'));
+        assert.ok(events.includes('failure Restored 1; vc-11 not: cwd gone: /gone'));
+    });
+
+    test('a restore the bridge refuses whole is one notice', async () => {
+        const { list, events } = harness({ restore: response(503, { ok: false, error: 'this bridge keeps no session records' }) });
+        list.observe_count(0, 1);
+        await list.restore(null);
+        assert.ok(events.includes('failure Restore refused: this bridge keeps no session records'));
+    });
+
+    test('dismiss forgets every row and leaves the band empty', async () => {
+        const { list, calls, bodies } = harness({ restorable: [restorable(), restorable({ session: 'vc-11', label: undefined })] });
+        list.observe_count(0, 2);
+        list.toggle();
+        await settle();
+        assert.equal(list.handle_action('restore_forget'), true);
+        await settle();
+        assert.deepEqual(calls, ['/restorable', '/restore/forget']);
+        assert.deepEqual(bodies, [{ sessions: ['vc-22', 'vc-11'] }]);
+        assert.deepEqual(list.view()?.restorable?.rows, []);
+        list.observe_count(0, 0);
+        assert.equal(list.view(), undefined, 'the list folds away once nothing is left');
+    });
+
+    test('a restore in flight holds a reopen, and the other way round', async () => {
+        const { list, calls } = harness();
+        list.observe_count(1, 1);
+        const first = list.restore('vc-22');
+        await list.reopen('a1b2c3d4e5f6');
+        await first;
+        assert.deepEqual(calls.filter((c) => c !== '/restorable'), ['/restore']);
+    });
+});
+
+describe('the restore rows', () => {
+    test('a refused row sinks below the ones that can come back and says why', () => {
+        const views = restorable_rows_view(
+            [restorable({ session: 'vc-11', ok: false, reason: 'cwd gone', label: undefined }), restorable()],
+            NOW_S * 1000,
+        );
+        assert.deepEqual(views.map((v) => [v.name, v.ok, v.ago]), [['bench laya vs opus', true, '16m'], ['vc-11', false, '16m']]);
+        assert.match(views[1].title, /^Cannot restore vc-11: cwd gone/);
+        assert.match(views[0].title, /resumes the conversation · claude-a/);
+    });
+
+    test('parse_restorable drops a bad row alone', () => {
+        assert.equal(parse_restorable({}), null);
+        assert.deepEqual(parse_restorable({ sessions: [restorable(), { session: '' }] }), [restorable()]);
+    });
+
+    test('the notice is silent when every row came back', () => {
+        assert.equal(restore_notice({ ok: true, restored: ['vc-1'], failed: [] }), null);
+        assert.equal(
+            restore_notice({ ok: true, restored: [], failed: [{ session: 'a', reason: 'x' }, { session: 'b', reason: 'y' }] }),
+            'Restored 0; a not: x (+1 more)',
+        );
     });
 });

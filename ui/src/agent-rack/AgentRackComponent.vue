@@ -114,7 +114,7 @@ import { create_office_relay } from '../engine/terminal/agent-office-link.ts';
 import TaskGroupBar from './TaskGroupBar.vue';
 import MissionBar from './MissionBar.vue';
 import { mission_row_title, type MissionRequest } from './missions-client.ts';
-import { closed_rows_view, type ClosedRowView } from './closed-client.ts';
+import { closed_rows_view, restorable_rows_view, type ClosedRowView, type RestorableRowView } from './closed-client.ts';
 import { groups_for_parent } from './task-groups.ts';
 import IslandGlyph from './IslandGlyph.vue';
 import LaunchDirectorySettings from './LaunchDirectorySettings.vue';
@@ -1040,7 +1040,35 @@ function toggle_job(key: string): void {
 const closed_view = computed(() => payload.value?.closed ?? null);
 /** Ages are taken when the payload lands, which is often enough for `12m`. */
 const closed_rows = computed<ClosedRowView[]>(() => closed_rows_view(closed_view.value?.rows ?? [], Date.now()));
-const closed_busy = computed<boolean>(() => closed_view.value?.reopening !== undefined);
+const restorable_view = computed(() => closed_view.value?.restorable ?? null);
+const restorable_rows = computed<RestorableRowView[]>(() => restorable_rows_view(restorable_view.value?.rows ?? [], Date.now()));
+const restorable_ok = computed<number>(() => restorable_rows.value.filter((row) => row.ok).length);
+const closed_busy = computed<boolean>(() =>
+    closed_view.value?.reopening !== undefined || restorable_view.value?.restoring !== undefined);
+/** The header button leads with what a reboot took down: that is the one the operator came for. */
+const closed_button_label = computed<string>(() => {
+    const view = closed_view.value;
+    if (!view) return '';
+    const r = view.restorable?.count ?? 0;
+    return r > 0 ? `↺ RESTORE ${r}` : `↺ CLOSED ${view.count}`;
+});
+const closed_button_title = computed<string>(() => {
+    const view = closed_view.value;
+    if (!view) return '';
+    if (view.open) return 'Hide the sessions that can come back';
+    const r = view.restorable?.count ?? 0;
+    const restore = r > 0 ? `${r} were running when the machine went down — restore them where they were, conversation and all` : '';
+    const closed = view.count > 0 ? `${view.count} recently closed — reopen one where it was` : '';
+    return [restore, closed].filter(Boolean).join(' · ');
+});
+// RESTORE ALL starts every agent at once: armed, like CLOSE ALL, and on the same timer.
+const restore_all = useArmedAction(KILL_ARM_MS);
+const restore_all_armed = restore_all.armed;
+const restorable_all_armed_now = computed<boolean>(() => restore_all_armed.value === `restore:${restorable_ok.value}`);
+function press_restore_all(): void {
+    if (frozen.value || closed_busy.value || restorable_ok.value === 0) return;
+    restore_all.press(`restore:${restorable_ok.value}`, () => send('restore'));
+}
 
 const worktree_by_session = computed<Map<string, WorktreeRow>>(() => {
     const map = new Map<string, WorktreeRow>();
@@ -1574,12 +1602,11 @@ onUnmounted(() => {
                     ? 'Hide rack settings'
                     : 'Rack settings: directories, view, terminal appearance and help'"
                 @click="settings_open = !settings_open"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiCog" /></svg></button>
-            <button v-if="closed_view" type="button" class="fui-btn"
+            <button v-if="closed_view" type="button"
+                :class="['fui-btn', { 'rack__restore-btn': (closed_view.restorable?.count ?? 0) > 0 }]"
                 :aria-pressed="closed_view.open" :aria-expanded="closed_view.open" :disabled="frozen"
-                :title="closed_view.open
-                    ? 'Hide the recently closed sessions'
-                    : `${closed_view.count} recently closed — reopen one where it was, conversation and all`"
-                @click="send('closed')">↺ CLOSED {{ closed_view.count }}</button>
+                :title="closed_button_title"
+                @click="send('closed')">{{ closed_button_label }}</button>
         </header>
 
         <!-- Terminal render controls, behind the head's ⚙ (closed by default since
@@ -1672,7 +1699,45 @@ onUnmounted(() => {
 
         <!-- ↺ CLOSED: one press per row reopens it (`POST /reopen`) and focuses it.
              Rows the bridge cannot reopen stay, disabled, their reason in the title. -->
-        <section v-if="closed_view?.open" class="rack__closed" aria-label="Recently closed sessions">
+        <section v-if="closed_view?.open" class="rack__closed" aria-label="Sessions that can come back">
+            <!-- AFTER REBOOT: what was running when the machine went down. A reboot is never a close,
+                 so these are their own band, first, with RESTORE ALL (armed: it starts every agent). -->
+            <template v-if="restorable_view && (restorable_view.rows === null || restorable_rows.length > 0 || restorable_view.restoring)">
+                <div class="rack__closed-head">
+                    <span class="fui-techtext">AFTER REBOOT</span>
+                    <button type="button"
+                        :class="['fui-btn', 'rack__restore-all', { 'row__btn--armed': restorable_all_armed_now }]"
+                        :disabled="frozen || closed_busy || restorable_ok === 0"
+                        :title="`Restore all ${restorable_ok} — each resumes its conversation where it can, on its own account`"
+                        :aria-label="`Restore all ${restorable_ok} sessions${restorable_all_armed_now ? ' — confirm' : ''}`"
+                        @click="press_restore_all">{{ restorable_view.restoring === '*' ? 'RESTORING…' : restorable_all_armed_now ? `RESTORE ${restorable_ok}?` : 'RESTORE ALL' }}</button>
+                    <button type="button" class="fui-btn rack__icon"
+                        :disabled="frozen || closed_busy || restorable_rows.length === 0"
+                        title="Stop offering these — the records are dropped, nothing is started"
+                        aria-label="Dismiss every restore"
+                        @click="send('restore_forget')">✕</button>
+                </div>
+                <p v-if="restorable_view.rows === null" class="rack__closed-note fui-techtext">reading…</p>
+                <ul v-else class="rack__closed-list">
+                    <li v-for="row in restorable_rows" :key="row.session">
+                        <button
+                            type="button"
+                            :class="['closed', { 'closed--busy': restorable_view.restoring === row.session }]"
+                            :disabled="frozen || !row.ok || closed_busy"
+                            :title="row.title"
+                            :aria-label="row.title"
+                            @click="send('restore', undefined, row.session)"
+                        >
+                            <span class="closed__glyph" aria-hidden="true">{{ restorable_view.restoring === row.session ? '…' : row.resumable ? '↺' : '+' }}</span>
+                            <span class="closed__name">{{ row.name }}</span>
+                            <span v-if="row.place" class="closed__place">{{ row.place }}</span>
+                            <span class="closed__ago">{{ row.ago }}</span>
+                        </button>
+                    </li>
+                </ul>
+                <div v-if="closed_view.count > 0" class="rack__closed-head"><span class="fui-techtext">CLOSED</span></div>
+            </template>
+            <template v-if="closed_view.count > 0 || !restorable_view">
             <p v-if="closed_view.rows === null" class="rack__closed-note fui-techtext">reading…</p>
             <p v-else-if="closed_rows.length === 0" class="rack__closed-note fui-techtext">nothing to reopen</p>
             <ul v-else class="rack__closed-list">
@@ -1692,6 +1757,7 @@ onUnmounted(() => {
                     </button>
                 </li>
             </ul>
+            </template>
         </section>
 
         <!-- LAUNCH: the rack's one way to start an agent. A chip forks into
@@ -2649,6 +2715,16 @@ onUnmounted(() => {
    first. Capped so a long list scrolls instead of pushing the fleet off. */
 .rack__closed { flex: 0 0 auto; max-height: 30%; overflow-y: auto; padding: 0 6px; }
 .rack__closed-note { margin: 0; font-size: 12px; opacity: 0.6; }
+.rack__closed-head { display: flex; align-items: center; gap: 8px; padding: 6px 6px 2px; font-weight: 700; font-size: 12px; }
+.rack__closed-head .fui-techtext { flex: 1 1 auto; }
+/* A reboot's offer is the one the operator came for, so it is the bright one: the ↺ glyph's own
+   green (`.closed__glyph`), until it is taken or dismissed. Armed turns it amber (`.row__btn--armed`, later). */
+.rack__restore-btn,
+.rack__restore-all {
+    color: var(--color-accent-green, #93ffd4);
+    border-color: rgba(147, 255, 212, 0.55);
+    background: rgba(147, 255, 212, 0.1);
+}
 .rack__closed-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .closed {
     display: grid;

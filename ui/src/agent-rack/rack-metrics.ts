@@ -1,7 +1,7 @@
 import { rack_metric_event_schema, type RackMetricEvent } from '@tldrack/schemas/rack-metrics.ts';
 
 type MetricContext = Pick<RackMetricEvent, 'session' | 'state' | 'mark' | 'fleet_size' | 'context_left' | 'model' | 'profile'>;
-const ACTIONS = new Set(['select', 'kill', 'rename', 'new', 'worktree', 'pr', 'cleanup', 'dismiss_open_work', 'snooze_open_work', 'confirm_open_work', 'reopen', 'group_control', 'lead']);
+const ACTIONS = new Set(['select', 'kill', 'rename', 'new', 'worktree', 'pr', 'cleanup', 'dismiss_open_work', 'snooze_open_work', 'confirm_open_work', 'reopen', 'restore', 'group_control', 'lead']);
 
 function metric_id(): string {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();

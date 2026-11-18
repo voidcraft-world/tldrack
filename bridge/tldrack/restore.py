@@ -19,8 +19,8 @@ so the refusal table is unit-testable without tmux.
   full why).
 - **already running** — only at POST time: a session of that name is live.
 
-A record with no conversation, a Codex record, or a conversation whose
-transcript is no longer on disk restores as a FRESH session in the same place
+A record with no conversation, a kind that cannot resume (`profiles.resume_args`),
+or a conversation whose transcript is no longer on disk restores as a FRESH session in the same place
 on the same profile (`resumable: false`) — still worth the click. Either way it
 comes back in the launch permission mode it was spawned in (a LEAD worker's
 `auto`) unless the operator switched it out since (`restore_mode`).
@@ -87,19 +87,26 @@ def open_conversations(index: Mapping[str, IndexEntry]) -> dict[str, str]:
     return {entry.agent_session_id: session for session, entry in index.items() if entry.agent_session_id}
 
 
-def find_transcript(config_dir: str | None, agent_session_id: str) -> str | None:
-    """`<config dir>/projects/*/<id>.jsonl` when it is on disk, else None: where a conversation's
-    transcript lives with no hook to name it. The id must already be a validated UUID; the caller
-    still checks the path against the transcript allowlist before reading it."""
-    root = os.path.expanduser(config_dir or "~/.claude")
-    found = glob.glob(os.path.join(glob.escape(root), "projects", "*", f"{glob.escape(agent_session_id)}.jsonl"))
+def find_transcript(config_dir: str | None, agent_session_id: str, kind: str = "claude") -> str | None:
+    """Where a conversation's transcript lives with no hook to name it, when it is on disk, else
+    None. Claude: `<config dir>/projects/*/<id>.jsonl`. Codex: its rollout,
+    `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<stamp>-<id>.jsonl` (`codex_rollout.py` reads the
+    same layout). The id must already be a validated UUID; the caller still checks the path
+    against the transcript allowlist before reading it."""
+    if kind == "codex":
+        root = os.path.expanduser(config_dir or "~/.codex")
+        pattern = os.path.join(glob.escape(root), "sessions", "*", "*", "*", f"rollout-*-{glob.escape(agent_session_id)}.jsonl")
+    else:
+        root = os.path.expanduser(config_dir or "~/.claude")
+        pattern = os.path.join(glob.escape(root), "projects", "*", f"{glob.escape(agent_session_id)}.jsonl")
+    found = glob.glob(pattern)
     return found[0] if found else None
 
 
-def transcript_exists(config_dir: str | None, agent_session_id: str) -> bool:
-    """Is the conversation's transcript on disk? `--resume=` on a missing one opens an error
-    screen instead of a conversation."""
-    return find_transcript(config_dir, agent_session_id) is not None
+def transcript_exists(config_dir: str | None, agent_session_id: str, kind: str = "claude") -> bool:
+    """Is the conversation's transcript on disk? A resume of a missing one opens an error
+    screen (claude) or a picker (codex) instead of the conversation."""
+    return find_transcript(config_dir, agent_session_id, kind) is not None
 
 
 def restore_mode(record: Mapping) -> str | None:
@@ -162,7 +169,7 @@ def plan_restore(
         model, subagent_model = None, None
     if resume is not None and check_transcript:
         described = profiles.describe(spawn_profile) or {}
-        if not transcript_exists(described.get("config_dir"), agent_id):
+        if not transcript_exists(described.get("config_dir"), agent_id, kind):
             resume = None
     return RestorePlan(
         session=session,
