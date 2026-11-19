@@ -2817,8 +2817,9 @@ onUnmounted(() => {
    in the space a short rack leaves empty and is on screen however long the list is.
    Capped, with its own scroll: an open JOBS or memory breakdown is taller than the rack on a
    small window, and uncapped it took the list's whole height (the list shrinks to nothing
-   before a `flex: 0 0 auto` neighbour gives up a pixel). The head stays put while it scrolls. */
-.rack__devices { flex: 0 1 auto; min-height: 22px; max-height: 45%; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+   before a `flex: 0 0 auto` neighbour gives up a pixel). Never `flex-shrink`: against a long
+   list the section would give up its own rows first. The head stays put while it scrolls. */
+.rack__devices { flex: 0 0 auto; max-height: 45%; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
 .rack__devices-wait { margin: 0; padding: 0 6px; font-size: 11.5px; opacity: 0.55; }
 /* The cohort header's look (`.row--cohort`), as a button: it opens and closes. MISSIONS wears it
    too, so the two sections under the list read as one band. */
