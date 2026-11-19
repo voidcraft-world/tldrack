@@ -1,11 +1,12 @@
 <h1><a href="docs/images/tldrack-lockup.webp"><img src="docs/images/tldrack-lockup.webp" width="200" alt="TLDRack"></a></h1>
 
-tldrack runs your coding agents side by side in tmux and shows every one of them on one local page. When
-a turn ends, Laya, a small model on your own machine, reads it for you and marks it ✅ done or ⚠️ needs you.
+tldrack runs your coding agents side by side in tmux and shows every one of them on one local page.
+Sessions name themselves from your prompt, so you can find the right task at a glance. A local model
+reads finished turns for you and marks them ✅ done or ⚠️ needs you.
 
 | Overview | Live rack | Annotated tour |
 |:---:|:---:|:---:|
-| <a href="docs/images/tldrack-infographic.png"><img src="docs/images/tldrack-infographic.png" width="280" alt="Run more agents. Read fewer answers. Laya reviews finished turns and flags those that need you."></a> | <a href="docs/img/rack.png"><img src="docs/img/rack.png" width="280" alt="TLDRack with the agent list, selected terminal, 3D office, activity board and artifact files."></a> | <a href="docs/img/rack-annotated.png"><img src="docs/img/rack-annotated.png" width="280" alt="Annotated TLDRack tour: launch agents, choose a coding mode, use common tools, jump between sessions, manage services, close finished sessions with Laya, connect compute, review code diffs in a resizable terminal, follow agent activity and open generated files and canvas drawings."></a> |
+| <a href="docs/images/tldrack-infographic-v2.png"><img src="docs/images/tldrack-infographic-v2.png" width="280" alt="Run more agents. Read fewer answers. Auto-named tmux sessions. A local model reviews finished turns and flags those that need you."></a> | <a href="docs/img/rack.png"><img src="docs/img/rack.png" width="280" alt="TLDRack with the agent list, selected terminal, 3D office, activity board and artifact files."></a> | <a href="docs/img/rack-annotated-v2.png"><img src="docs/img/rack-annotated-v2.png" width="280" alt="Annotated TLDRack tour: launch agents or a LEAD/coordinator for big tasks, parallel agents and mixed models; find automatically named sessions, choose a coding mode, use common tools, jump between sessions, manage services, close sessions flagged as finished by a local model, connect compute, review code diffs in a resizable terminal, follow agent activity and open generated files and canvas drawings."></a> |
 
 Click an image to open it at full size.
 
@@ -43,7 +44,8 @@ give this one its own ports in that shell, then carry on:
 `export TLDRACK_PORT=7781 TLDRACK_STATUS_PORT=7791`.
 
 In the rack's **LAUNCH** row, press **CLAUDE** (or **CODEX**), then **HERE** (or **MAIN** on an older bridge). A terminal opens with the
-agent in it: give it a task. When its turn ends, the row shows Laya's verdict: ✅ done, or ⚠️ it needs you.
+agent in it: give it a task. Its row picks up a readable name from your prompt. When its turn ends,
+the row shows the local model's verdict: ✅ done, or ⚠️ it needs you.
 
 Use **Settings → Directories** to add project names and absolute paths (or `~/…`), choose
 one default, and save. The project buttons above **LAUNCH** choose where the next regular
@@ -59,17 +61,20 @@ it, and your agent sessions keep running in tmux.
 ## The loop
 
 <p align="center">
-  <img src="docs/architecture.svg" width="832" alt="The loop: your agents report through hooks to the bridge, the bridge hands each finished turn to Laya, a done turn stays quiet, a turn that needs you reaches you, and your label of that verdict fine-tunes Laya on your machine">
+  <img src="docs/architecture.svg" width="832" alt="The loop: automatically named agent sessions report through hooks to the bridge, a local model reviews finished turns, a done turn stays quiet, a turn that needs you reaches you, and your grades fine-tune the review model on your machine">
 </p>
 
 - **Your agents work.** Each one is a tmux session running Claude Code or Codex. Its own hooks tell the
   bridge what it is doing: working, waiting on you, or done. Watching the rack costs no tokens.
-- **Laya reads.** Laya is a 421M-parameter encoder, not a chatbot. It reads the closing message of a turn
-  and answers one question: is work still open? No cloud call, no API key.
+- **Sessions name themselves.** New sessions get readable labels from your first prompt, so you can
+  find the right task without opening every terminal. You can rename a session at any time.
+- **A local model reads.** It reads the closing message of a turn and answers one question: is work
+  still open? No cloud call, no API key for this review. The current review model is Laya, a
+  421M-parameter encoder.
 - **You answer the ⚠️.** The rack marks the rows that need you. The rest stay quiet until you want them.
-- **You grade, and Laya learns.** Grade a verdict with one tap, in the rack, in the review deck or on your
-  phone. Your grades fine-tune Laya on your machine, and a new checkpoint serves only after it beats the
-  one before it.
+- **Your grades tune the model.** Grade a verdict with one tap, in the rack, in the review deck or on
+  your phone. Your grades fine-tune the review model on your machine, and a new checkpoint serves only
+  after it beats the one before it.
 
 You start on the public base model. Out of the box it is cautious: it marks most turns ✅ and misses some
 that needed you. Your grades are what fix that. 40 of them, at least 10 of each kind, are enough for a first
