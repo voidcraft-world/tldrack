@@ -261,6 +261,29 @@ describe('the payload', () => {
         assert.equal('devices_open' in payload, false);
     });
 
+    test('a mounted plugin nobody has read yet draws the head alone', () => {
+        const base = { rows: [], focused: null, reachable: true, max_sessions: 8 };
+        // The page loaded with the section closed, so its poll never ran: the head must still be
+        // there to open it.
+        const closed = build_rack_payload({ ...base, devices_mounted: true, devices_open: false });
+        assert.deepEqual(closed.devices, []);
+        assert.equal(closed.devices_open, false);
+        assert.equal('office_resources' in closed, false, 'nothing sampled, nothing to draw in the office');
+        const waiting = build_rack_payload({ ...base, devices_mounted: true });
+        assert.deepEqual(waiting.devices, []);
+        assert.equal(waiting.devices_open, true);
+        assert.equal('devices' in build_rack_payload({ ...base, devices_mounted: false, devices_open: false }), false,
+            'a bridge that says it has no such plugin grows no section, whatever this device stored');
+    });
+
+    test('an owner that cannot say what is mounted keeps the head of a section this device closed', () => {
+        const base = { rows: [], focused: null, reachable: true, max_sessions: 8 };
+        const closed = build_rack_payload({ ...base, devices_open: false });
+        assert.deepEqual(closed.devices, []);
+        assert.equal(closed.devices_open, false);
+        assert.equal('devices' in build_rack_payload({ ...base, devices_open: true }), false);
+    });
+
     test('present devices ride as rows, open unless the owner says closed', () => {
         const base = { rows: [], focused: null, reachable: true, max_sessions: 8, devices: state(device()) };
         const open = build_rack_payload(base);

@@ -1251,7 +1251,49 @@ def test_stop_failure_ends_the_turn_and_the_row_says_why(limited, monkeypatch):
         "limit": "five_hour",
         "resets_at": 1700003600,
         "message": "You've hit your session limit · resets 3:00pm",
+        "at": None,
     }
+
+
+def _profile_summary(h, monkeypatch, profile="claude-a"):
+    _row(h, monkeypatch)  # the snapshot is what reads the rows' cut-offs
+    return next(entry for entry in h.snapshot_payload()["profiles"] if entry["id"] == profile)
+
+
+def test_a_lapsed_account_marks_its_profile_out_until_a_turn_finishes(limited, monkeypatch):
+    path = limited.transcript_file
+    assert _profile_summary(limited, monkeypatch)["standing"] is None
+    lapsed = {
+        **LIMIT_ENTRY,
+        "error": "billing_error",
+        "apiErrorParams": None,
+        "timestamp": "2026-11-19T20:00:00.000Z",
+        "message": {"id": "e2", "model": "<synthetic>", "content": [{"type": "text", "text": "Your plan has ended"}]},
+    }
+    _append(path, lapsed)
+    _hook(limited, "StopFailure", {"transcript_path": str(path), "error": "billing_error"})
+    summary = _profile_summary(limited, monkeypatch)
+    assert summary["standing"] == {
+        "state": "out",
+        "error": "billing_error",
+        "message": "Your plan has ended",
+        "since": pytest.approx(1795118400.0),
+    }
+    pick = limited.snapshot_payload()["launch_pick"]
+    assert next(entry for entry in pick["ranking"] if entry["id"] == "claude-a")["out"] is True
+    # The operator renews, prompts again, and the turn finishes: the next real reply ends the
+    # cut-off, and the Stop hook is the account's proof of life.
+    _hook(limited, "UserPromptSubmit", {"transcript_path": str(path)})
+    _append(path, {"type": "assistant", "isSidechain": False, "message": {"id": "m9", "content": []}})
+    _hook(limited, "Stop", {"transcript_path": str(path)})
+    assert _profile_summary(limited, monkeypatch)["standing"] is None
+
+
+def test_a_rate_limit_is_not_the_accounts_standing(limited, monkeypatch):
+    path = limited.transcript_file
+    _append(path, LIMIT_ENTRY)
+    _hook(limited, "StopFailure", {"transcript_path": str(path), "error": "rate_limit"})
+    assert _profile_summary(limited, monkeypatch)["standing"] is None
 
 
 def test_the_arbiter_tick_finds_a_cut_off_turn_with_no_hook(limited, monkeypatch):

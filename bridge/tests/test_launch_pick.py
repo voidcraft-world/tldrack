@@ -172,8 +172,32 @@ def test_when_every_account_is_spent_the_soonest_reset_wins_and_says_so():
 def test_the_wire_block_is_plain_and_rounded():
     wire = pick_launch_profile(RACK, [_row("a")], NOW, CAPACITY).as_wire()
     assert set(wire) == {"id", "label", "reason", "spent", "ranking"}
-    assert set(wire["ranking"][0]) == {"id", "score", "left", "rate", "headroom", "load", "spent"}
+    assert set(wire["ranking"][0]) == {"id", "score", "left", "rate", "headroom", "load", "spent", "out"}
     assert all(isinstance(entry["score"], float) for entry in wire["ranking"])
+
+
+# ── an account that cannot run a turn at all ───────────────────────────────
+
+OUT = {"state": "out", "error": "billing_error", "message": None, "since": NOW - HOUR}
+
+
+def test_an_out_account_is_never_picked_over_one_that_can_launch():
+    # c has by far the most left (its last reading, from before the plan ended) and no load.
+    rack = [_profile("a", week=90), {**_profile("c", week=10), "standing": OUT}]
+    pick = pick_launch_profile(rack, [_row("a"), _row("a")], NOW)
+    assert (pick.id, pick.spent) == ("a", False)
+    assert [(c.id, c.out, c.spent) for c in pick.ranking if c.id == "c"] == [("c", True, True)]
+
+
+def test_an_out_account_loses_to_a_spent_one_that_will_reset():
+    rack = [{**_profile("c", week=10), "standing": OUT}, _profile("a", week=99, week_reset=NOW + 3 * DAY)]
+    pick = pick_launch_profile(rack, [], NOW)
+    assert (pick.id, pick.spent, pick.reason) == ("a", True, "A · all spent · resets first")
+
+
+def test_every_account_out_says_so():
+    pick = pick_launch_profile([{**_profile("c", week=10), "standing": OUT}], [], NOW)
+    assert (pick.id, pick.spent, pick.reason) == ("c", True, "C · every account is out")
 
 
 # ── pacing against the reset ───────────────────────────────────────────────

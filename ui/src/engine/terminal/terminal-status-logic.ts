@@ -396,6 +396,44 @@ export interface ProfileInfo {
     /** This profile's OWN account usage — two Claude accounts no longer share
      *  one last-writer-wins slot. Null for antigravity/shell, or before a report. */
     usage: UsageLimits | null;
+    /** Set while the account cannot run a turn at all; `usage` may still hold its last windows,
+     *  and they are then history. Null on a healthy account and on a bridge that does not say. */
+    standing: ProfileStanding | null;
+}
+
+/**
+ * An account that is OUT: its plan lapsed or its login died, so no turn runs there until the
+ * operator fixes it. The bridge decides (`tldrack/account_standing.py` owns the evidence and
+ * what clears it); a surface only draws it, in place of the usage reading.
+ */
+export interface ProfileStanding {
+    state: 'out';
+    /** Claude Code's error token: `billing_error` | `authentication_failed`. */
+    error: string;
+    /** The CLI's own notice, for a tooltip. */
+    message: string | null;
+    /** Epoch seconds of the turn that failed. */
+    since: number | null;
+}
+
+/** A profile's `standing` off the wire, or null: anything but a well-formed OUT is "fine". */
+export function parse_profile_standing(value: unknown): ProfileStanding | null {
+    if (typeof value !== 'object' || value === null) return null;
+    const raw = value as Record<string, unknown>;
+    if (raw.state !== 'out') return null;
+    return {
+        state: 'out',
+        error: typeof raw.error === 'string' && /^[a-z0-9_]{1,40}$/.test(raw.error) ? raw.error : 'unknown',
+        message: typeof raw.message === 'string' && raw.message.trim() !== '' ? raw.message.trim().slice(0, 300) : null,
+        since: typeof raw.since === 'number' && Number.isFinite(raw.since) && raw.since > 0 ? raw.since : null,
+    };
+}
+
+/** What an OUT account is, in two words: the one phrase every surface prints for it. */
+export function standing_reason(standing: ProfileStanding): string {
+    if (standing.error === 'billing_error') return 'plan ended';
+    if (standing.error === 'authentication_failed') return 'signed out';
+    return 'account out';
 }
 
 const PROFILE_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -449,9 +487,26 @@ export function parse_profiles(value: unknown): ProfileInfo[] | null {
                     ? raw.model_label.trim().slice(0, 40)
                     : null,
             usage: parse_usage_limits(raw.usage),
+            standing: parse_profile_standing(raw.standing),
         });
     }
     return out;
+}
+
+/** A plugin's name: a lowercase kebab token (`plugins/README.md` § The contract). */
+const PLUGIN_NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/**
+ * The names under `/snapshot`'s `plugins` key, or null when the key is absent or not an object.
+ *
+ * A mounted plugin advertises its routes there, and a plugin that is off advertises none
+ * (`plugins/README.md`), so a name here is the capability signal for a section that must not
+ * poll to find out whether it exists (`RackPayload.devices`). Names only: the routes are the
+ * plugin's own business. A name that is not a plugin token is dropped.
+ */
+export function parse_plugin_names(value: unknown): string[] | null {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+    return Object.keys(value).filter((name) => PLUGIN_NAME_RE.test(name)).sort();
 }
 
 /** The `profile` a client sends for "the freest account". Never a profile of
@@ -864,6 +919,9 @@ export interface PortSnapshot {
     /** The suggester's mode, ABSENT while it is off or on a bridge without one — the rack's cue to
      *  report its control presses (`RackPayload.next_step_mode`). */
     next_step_mode?: NextStepMode;
+    /** The names of the plugins this bridge mounted (`parse_plugin_names`). ABSENT on a bridge
+     *  that sent no `plugins` key: unknown, never "none". */
+    plugins?: string[];
 }
 
 /** Minute-granularity uptime ('up 2h 14m'), coarse on purpose: a surface that

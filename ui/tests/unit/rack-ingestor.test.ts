@@ -531,6 +531,24 @@ test('profiles ride the snapshot through, parsed', async () => {
     assert.equal(h.last().sessions[0].profile, 'codex-a');
 });
 
+test('the mounted plugins ride the snapshot through as names, absent on a bridge that sends none', async () => {
+    const h = harness({
+        routes: {
+            '/snapshot': {
+                body: {
+                    sessions: [status({ session: 'vc-1' })],
+                    plugins: { worktree: { routes: ['/plugin/worktree/state'] }, devices: { routes: [] }, 'Not A Name': {} },
+                },
+            },
+        },
+    });
+    await h.ingestor.tick();
+    assert.deepEqual(h.last().plugins, ['devices', 'worktree']);
+    const older = harness({ routes: snapshot_route([status({ session: 'vc-1' })]) });
+    await older.ingestor.tick();
+    assert.equal('plugins' in older.last(), false);
+});
+
 test('a bridge that sends no profiles leaves the key ABSENT — the /spawn capability signal', async () => {
     const h = harness({ routes: snapshot_route([status({ session: 'vc-1' })]) });
     await h.ingestor.tick();

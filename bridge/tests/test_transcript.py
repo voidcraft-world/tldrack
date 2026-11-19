@@ -539,6 +539,7 @@ def test_a_session_limit_entry_reads_as_its_window_and_exact_reset():
         "limit": "five_hour",
         "resets_at": RESETS,
         "message": LIMIT_TEXT,
+        "at": None,
     }
 
 
@@ -559,14 +560,29 @@ def test_other_api_errors_keep_their_word_and_carry_no_window():
         "limit": None,
         "resets_at": None,
         "message": "API Error: overloaded",
+        "at": None,
     }
 
 
 def test_malformed_fields_degrade_rather_than_reach_the_wire():
     entry = _limit_entry(text="", error="Rate Limit!", apiErrorParams={"rate_limit_info": {"rateLimitType": 7, "resetsAt": True}})
-    assert fold_stop_failure(None, [entry]) == {"error": "unknown", "limit": None, "resets_at": None, "message": None}
+    assert fold_stop_failure(None, [entry]) == {
+        "error": "unknown",
+        "limit": None,
+        "resets_at": None,
+        "message": None,
+        "at": None,
+    }
     # Not an API error at all: an ordinary reply, whatever else it carries.
     assert fold_stop_failure(None, [_limit_entry(isApiErrorMessage="yes")]) is None
+
+
+def test_a_cut_off_carries_its_entrys_own_time():
+    # What orders it against the account's later turns (account_standing.py).
+    stamped = _limit_entry(timestamp="2026-11-16T23:09:56.816Z")
+    assert fold_stop_failure(None, [stamped])["at"] == pytest.approx(1794870596.816)
+    for unreadable in ("yesterday", 1794870596, None, "2026-11-16T23:09:56"):
+        assert fold_stop_failure(None, [_limit_entry(timestamp=unreadable)])["at"] is None
 
 
 def test_refresh_finds_a_cut_off_turn_no_hook_announced(tmp_path):

@@ -80,6 +80,7 @@ import {
     AUTO_PROFILE_ID,
     background_jobs_label,
     resolve_launch_profile,
+    standing_reason,
     type LaunchPick,
     type ProfileInfo,
     type StopFailure,
@@ -231,13 +232,18 @@ function on_storage(event: StorageEvent): void {
  *  the HTTP feed leave `attached` undefined or true. */
 const frozen = computed<boolean>(() => payload.value?.attached === false);
 
+/**
+ * Every session's row. No `+N MORE` budget here: this list scrolls (`.rack__list`), so a cap
+ * only hides agents the operator could have scrolled to. `payload.max_sessions` is for a
+ * surface that cannot scroll.
+ */
 const rows = computed<RackRow[]>(() => {
     const data = payload.value;
     if (!data) return [];
     return build_rack_rows({
         sessions: data.sessions,
         focused: data.focused,
-        max_sessions: data.max_sessions,
+        max_sessions: data.sessions.length,
     });
 });
 
@@ -733,7 +739,23 @@ const USAGE_WARN_PCT = 80;
 /** Either window at its cap: a launch there stalls at once. The chip stays
  *  launchable — the reset may be minutes away and the operator can see when. */
 function is_spent(profile: ProfileInfo): boolean {
-    return (weekly(profile) ?? 0) >= 100 || (five_hour(profile) ?? 0) >= 100;
+    return is_out(profile) || (weekly(profile) ?? 0) >= 100 || (five_hour(profile) ?? 0) >= 100;
+}
+
+/** The account cannot run a turn at all (`ProfileStanding`). Its last usage windows are then
+ *  history, so the chip prints OUT where the percentage was. Still launchable: the operator
+ *  who just renewed the plan starts an agent there, and its first finished turn clears this. */
+function is_out(profile: ProfileInfo): boolean {
+    return profile.standing?.state === 'out';
+}
+
+function out_title(profile: ProfileInfo): string {
+    const standing = profile.standing!;
+    const since = typeof standing.since === 'number'
+        ? ` since ${new Date(standing.since * 1000).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+        : '';
+    const said = standing.message ? ` · it said: ${standing.message}` : '';
+    return `${profile.label} is OUT: ${standing_reason(standing)}${since}${said} · AUTO skips it · a finished turn on it clears this`;
 }
 
 function resets_label(epoch: number | null | undefined): string {
@@ -766,6 +788,7 @@ function chip_title(chip: LaunchChip): string {
         : `Start ${chip_what(chip)} and focus it`];
     if (chip.kind === 'auto' && auto_pick.value) parts.push(`now ${auto_pick.value.reason}`);
     if (!profile) return parts.join(' · ');
+    if (is_out(profile)) return [out_title(profile), ...parts].join(' · ');
     const week = weekly(profile);
     if (week !== null) parts.push(`week ${Math.round(week)}%${resets_label(profile.usage?.seven_day?.resets_at)}`);
     const used = five_hour(profile);
@@ -839,14 +862,9 @@ function row_profile_label(row: RackRow): string | null {
 const KILL_ARM_MS = 4000;
 const complete_delete = useArmedAction(KILL_ARM_MS);
 const complete_delete_armed = complete_delete.armed;
-/** Every session's row, past the `+N MORE` budget: what CLOSE ALL and the fold's pruning read. */
-const all_rows = computed<RackRow[]>(() => {
-    const data = payload.value;
-    return data ? build_rack_rows({ ...data, max_sessions: data.sessions.length }) : [];
-});
 // Use the band's family classification before search, folds, and the row budget.
 const complete_sessions = computed(() => {
-    return all_rows.value
+    return rows.value
         .flatMap((row) => row.kind === 'session' && row.complete && row.session ? [row.session] : [])
         .sort();
 });
@@ -1359,7 +1377,7 @@ const fold_readouts = computed<Map<string, FamilyFoldReadout>>(() => new Map(row
 // Forget a family's choice once it has been gone a while, read against every session (not the row budget) and
 // only from a bridge that answered: an unreachable one lists nothing, which is not every family closing.
 const fold_absent = new Map<string, number>();
-watch(all_rows, (list) => {
+watch(rows, (list) => {
     if (!payload.value?.reachable || !fold_choices.value.size) return;
     const kept = prune_fold_choices(fold_choices.value, list, Date.now(), fold_absent);
     if (kept) save_fold_choices(kept);
@@ -1830,13 +1848,18 @@ onUnmounted(() => {
                         <span class="rack__chip-head">
                             <span class="rack__chip-label">{{ chip.profile.label }}<span v-if="chip.profile.hooks_ok === false" class="rack__chip-warn" aria-hidden="true">!</span></span>
                             <span
-                                v-if="weekly(chip.profile) !== null"
+                                v-if="is_out(chip.profile)"
+                                class="rack__chip-week rack__chip-week--out"
+                                :aria-label="`${chip.profile.label} is out: ${standing_reason(chip.profile.standing!)}`"
+                            >OUT</span>
+                            <span
+                                v-else-if="weekly(chip.profile) !== null"
                                 :class="['rack__chip-week', { 'rack__chip-week--warn': weekly(chip.profile)! >= USAGE_WARN_PCT }]"
                                 :aria-label="`${chip.profile.label} weekly usage ${Math.round(weekly(chip.profile)!)}%`"
                             >{{ Math.round(weekly(chip.profile)!) }}%</span>
                         </span>
                         <span
-                            v-if="five_hour(chip.profile) !== null"
+                            v-if="!is_out(chip.profile) && five_hour(chip.profile) !== null"
                             :class="['fui-meter', 'rack__chip-meter', { 'fui-meter--warn': five_hour(chip.profile)! >= USAGE_WARN_PCT }]"
                             role="meter"
                             :aria-label="`${chip.profile.label} 5-hour usage`"
@@ -2341,10 +2364,12 @@ onUnmounted(() => {
                 :title="devices_open ? 'Hide CPU and memory per machine (stops sampling them)' : 'Show CPU and memory per machine'"
                 @click="send('devices')"
             >
-                <span>DEVICES · {{ device_rows.length }}</span>
+                <span>DEVICES<template v-if="device_rows.length"> · {{ device_rows.length }}</template></span>
                 <span aria-hidden="true">{{ devices_open ? '▾' : '▸' }}</span>
             </button>
-            <ul v-if="devices_open" class="rack__devices-list">
+            <!-- Open with nothing read yet: owned by `rack-view.ts` `RackPayload.devices` — see the note there. -->
+            <p v-if="devices_open && !device_rows.length" class="rack__devices-wait">waiting for the first sample…</p>
+            <ul v-if="devices_open && device_rows.length" class="rack__devices-list">
                 <li
                     v-for="device in device_rows"
                     :key="device.key"
@@ -2553,6 +2578,8 @@ onUnmounted(() => {
 .rack__chip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
 .rack__chip-week { font-size: 0.68rem; font-variant-numeric: tabular-nums; color: var(--rack-text); }
 .rack__chip-week--warn { color: #f8c146; opacity: 1; }
+/* The offline red (`.device--bad`): not a level of usage, an account that runs nothing. */
+.rack__chip-week--out { color: #ff7b72; letter-spacing: 0.06em; }
 .rack__chip--spent .rack__chip-label { text-decoration: line-through; opacity: 0.55; }
 /* AUTO: its second line is WHERE it lands, not a usage reading. Amber only
    when every account is spent and it is pointing at the soonest reset. */
@@ -2787,8 +2814,12 @@ onUnmounted(() => {
 .closed__ago { opacity: 0.55; font-size: 11.5px; font-variant-numeric: tabular-nums; }
 
 /* DEVICES: pinned under the list (the list is the flex-grow item), so it sits
-   in the space a short rack leaves empty and never pushes a session off. */
-.rack__devices { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; }
+   in the space a short rack leaves empty and is on screen however long the list is.
+   Capped, with its own scroll: an open JOBS or memory breakdown is taller than the rack on a
+   small window, and uncapped it took the list's whole height (the list shrinks to nothing
+   before a `flex: 0 0 auto` neighbour gives up a pixel). The head stays put while it scrolls. */
+.rack__devices { flex: 0 1 auto; min-height: 22px; max-height: 45%; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.rack__devices-wait { margin: 0; padding: 0 6px; font-size: 11.5px; opacity: 0.55; }
 /* The cohort header's look (`.row--cohort`), as a button: it opens and closes. MISSIONS wears it
    too, so the two sections under the list read as one band. */
 .rack__devices-head,
@@ -2808,6 +2839,8 @@ onUnmounted(() => {
     text-transform: uppercase;
     cursor: pointer;
 }
+/* After the shared rule: an opaque head, so the rows scroll under it (`.rack__devices`). */
+.rack__devices-head { position: sticky; top: 0; z-index: 1; flex: 0 0 auto; background: var(--rack-surface); }
 .rack__devices-list { list-style: none; margin: 0; padding: 0 6px; display: flex; flex-direction: column; gap: 6px; }
 /* name | CPU/RAM | value | % | meter — one row per meter, the name spanning them. */
 .device {

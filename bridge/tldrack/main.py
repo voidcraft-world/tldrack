@@ -196,6 +196,7 @@ from tldrack.transcript import (
     configure_transcript_roots,
     normalize_transcript_path,
 )
+from tldrack.account_standing import AccountStandingStore, resolve_standing_path
 from tldrack.usage import UsageLimitsStore, parse_usage_limits, resolve_usage_path
 from tldrack.images import MAX_IMAGE_BODY_BYTES, save_image
 from tldrack.session_names import SessionNameStore, is_generated, resolve_names_path, valid_title
@@ -860,6 +861,7 @@ def build_status_handler(
     closed: ClosedSessionStore | None = None,
     freshness: FreshnessMonitor | None = None,
     usage_limits: UsageLimitsStore | None = None,
+    standing: AccountStandingStore | None = None,
     auto_names: SessionNameStore | None = None,
     permissions: PermissionLedger | None = None,
     pane_sessions: PaneSessionCache | None = None,
@@ -919,6 +921,9 @@ def build_status_handler(
     # memory. SSE clients (GET /events) and the transition ring buffer
     # (GET /activity) are in-memory, per-server.
     usage_limits = usage_limits if usage_limits is not None else UsageLimitsStore()
+    # Which accounts cannot run a turn at all (account_standing.py). Persisted on the production
+    # path for the usage store's reason; a test-built handler keeps it in memory.
+    account_standing = standing if standing is not None else AccountStandingStore()
     # The running model as the STATUSLINE reports it — the only source that
     # knows it before the session's first reply exists. Rides in on the same
     # POST /usage payload as the rate limits; see statusline_models.py.
@@ -1119,6 +1124,10 @@ def build_status_handler(
                 stop_failure = transcripts.stop_failure(row["session"])
                 if stop_failure is not None:
                     row["stop_failure"] = stop_failure
+        # A cut-off that is the ACCOUNT's (a lapsed plan, a dead login) marks its profile out,
+        # here because this is the one place every row's cut-off and profile meet. A write only
+        # when a mark is new (account_standing.py).
+        account_standing.observe(sessions)
         # Additive per-row attention fields (attention.py): `children_running` on a parent whose
         # descendants still work, `open_work_seen` on a parked ⚠️, `open_work_repeat` on a ⚠️ that
         # retells an open loop; and `stuck` (stuck.py) on a busy row circling or silent.
@@ -1189,6 +1198,7 @@ def build_status_handler(
                 bridge_info.get("status_port") or 0,
                 HOOK_EVENTS_BY_KIND,
                 usage_limits.by_profile(),
+                account_standing.by_profile(),
             )
             if profiles is not None
             else None
@@ -3701,6 +3711,10 @@ def build_status_handler(
                 token = store.begin_open_work(session)
                 verdict_left_row(session, "expired")
                 judge_turn_end(session, token, transcript_path, payload.get("session_id"))
+            # A main-thread turn the API answered: its account is in good standing again
+            # (account_standing.py § WHAT CLEARS IT). A subagent's Stop is not the session's turn.
+            if event == "Stop" and not is_subagent_hook(payload) and isinstance(profile_hint, str):
+                account_standing.mark_ok(profile_hint)
             # Remember it across restarts. No-ops on a None model and on an
             # unchanged reading, so a busy agent's PreToolUse storm doesn't
             # rewrite the file on every tool call.
@@ -3951,6 +3965,7 @@ def start_status_server(
         judge_worker=True,
         freshness=freshness,
         usage_limits=UsageLimitsStore(resolve_usage_path()),
+        standing=AccountStandingStore(resolve_standing_path()),
         permissions=PermissionLedger(resolve_permissions_path(), log=lambda message: click.echo(message, err=True)),
         ledger=ledger,
         activity_log=ActivityLog(),

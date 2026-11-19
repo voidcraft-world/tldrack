@@ -34,6 +34,7 @@ import {
     mark_seen as clear_done_pending,
     new_tracker,
     parse_launch_pick,
+    parse_plugin_names,
     parse_profiles,
     parse_session_row,
     parse_session_rows,
@@ -65,6 +66,7 @@ interface SnapshotBody {
     closed?: unknown;
     restorable?: unknown;
     next_step?: unknown;
+    plugins?: unknown;
 }
 
 /** Every top-level key beside `sessions`, parsed once. Null is "absent or malformed": each
@@ -80,10 +82,13 @@ interface SnapshotExtras {
     restorable: number | null;
     /** The suggester's mode while it is on (`tldrack/next_step.py`). */
     next_step_mode: NextStepMode | null;
+    /** The mounted plugins' names (`parse_plugin_names`). */
+    plugins: string[] | null;
 }
 
 const NO_EXTRAS: SnapshotExtras = {
     bridge: null, usage: null, profiles: null, launch_pick: null, closed: null, restorable: null, next_step_mode: null,
+    plugins: null,
 };
 
 /** An additive count key: a positive integer, else null (absent at 0 on the bridge). */
@@ -101,6 +106,7 @@ function parse_snapshot_extras(body: SnapshotBody): SnapshotExtras {
         closed: positive_count(body.closed),
         restorable: positive_count(body.restorable),
         next_step_mode: next_step.success ? next_step.data.mode : null,
+        plugins: parse_plugin_names(body.plugins),
     };
 }
 /** Client-side ticker cache size — also the /activity fetch limit. */
@@ -470,7 +476,7 @@ export function create_rack_ingestor(deps: RackIngestorDeps): RackIngestor {
      * `raw_sessions` keeps the unfiltered list that `known_sessions()` needs.
      */
     function process(incoming: SessionStatus[], reachable: boolean, extras: SnapshotExtras): void {
-        const { bridge, usage, profiles, launch_pick, closed, restorable, next_step_mode } = extras;
+        const { bridge, usage, profiles, launch_pick, closed, restorable, next_step_mode, plugins } = extras;
         const flags = deps.flags();
         raw_sessions = deps.augment_sessions ? deps.augment_sessions(incoming) : incoming;
         const visible = flags.hide_dead_sessions ? raw_sessions.filter(is_live) : raw_sessions;
@@ -589,6 +595,7 @@ export function create_rack_ingestor(deps: RackIngestorDeps): RackIngestor {
         if (closed !== null) last_snapshot.closed = closed;
         if (restorable !== null) last_snapshot.restorable = restorable;
         if (next_step_mode !== null) last_snapshot.next_step_mode = next_step_mode;
+        if (plugins !== null) last_snapshot.plugins = plugins;
         deps.on_snapshot(last_snapshot);
     }
 

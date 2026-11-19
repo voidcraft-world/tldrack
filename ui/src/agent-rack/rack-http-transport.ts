@@ -240,6 +240,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
             spawning,
             devices: devices.state() ?? undefined,
             devices_open,
+            devices_mounted: ingestor.last_snapshot()?.plugins?.includes('devices'),
             closed: closed_list.view(),
             chat_search: chat_search.view(),
             lead: lead.state() ?? undefined,

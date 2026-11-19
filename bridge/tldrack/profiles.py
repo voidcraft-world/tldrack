@@ -1398,7 +1398,11 @@ class ProfileRegistry:
 
     # -- wire -----------------------------------------------------------------
     def summary(
-        self, status_port: int, events: Mapping[str, Iterable[str]], usage: Mapping[str, dict] | None = None
+        self,
+        status_port: int,
+        events: Mapping[str, Iterable[str]],
+        usage: Mapping[str, dict] | None = None,
+        standing: Mapping[str, dict] | None = None,
     ) -> list[dict]:
         """The `/snapshot` `profiles` list, in config order."""
         return [
@@ -1415,6 +1419,9 @@ class ProfileRegistry:
                 "usage": (
                     self._codex_usage.get(profile.config_dir) if profile.kind == "codex" else (usage or {}).get(profile.id)
                 ),
+                # Additive: `{"state": "out", …}` while the account cannot run a turn at all, else
+                # null (account_standing.py). `usage` above may still hold its last windows.
+                "standing": (standing or {}).get(profile.id),
             }
             for profile in self._profiles
         ]
