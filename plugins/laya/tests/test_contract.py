@@ -431,7 +431,10 @@ def test_every_python_shape_parses_as_the_schema_says(built):
     graded = [result["answer"] for result in built["result"][-2:]]
     assert answered == {ref["key"]: ref for ref in graded} and len(answered) == 2
     assert [(ref["open"], ref["needs"]) for ref in graded] == [(True, "running"), (None, None)]
-    assert built["recent"][3]["summary"]["needs"] == {"you": 0, "running": 1, "read": 0} and built["recent"][3]["summary"]["skipped"] == 1
+    assert (
+        built["recent"][3]["summary"]["needs"] == {"you": 0, "running": 1, "read": 0}
+        and built["recent"][3]["summary"]["skipped"] == 1
+    )
     assert built["recent"][0]["summary"]["offset"] == 0 and built["recent"][4]["summary"]["offset"] == 1
     assert [row["key"] for row in built["recent"][4]["rows"]] == [built["recent"][3]["rows"][1]["key"]]
     assert [row["key"] for row in built["recent"][6]["rows"]] == [built["recent"][3]["rows"][1]["key"]], "after = offset 1 here"
