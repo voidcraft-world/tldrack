@@ -41,8 +41,8 @@ export interface OpenWorkMark {
 /** Laya's done verdict as a row carries it (`RackSession.work_done`). */
 export interface WorkDoneMark {
     p: number | null;
-    /** A question opened the turn and its pane has not been opened since: the answer-to-read mark
-     *  beside the ✅. Owned by `bridge/tldrack/open_work.py` — see § An answer to read there. */
+    /** A question opened the turn and its pane has not been opened since: 📖 in the ✅'s place
+     *  (`answer_to_read_shown`). Owned by `bridge/tldrack/open_work.py` — see § An answer to read there. */
     answer?: true;
 }
 import { SERVICES_COHORT_LABEL, is_service_session, type ServiceReadout } from './service-sessions.ts';

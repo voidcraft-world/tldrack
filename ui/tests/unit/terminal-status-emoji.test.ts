@@ -1,15 +1,37 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
+    ANSWER_TO_READ_EMOJI,
     DEAD_SESSION_EMOJI,
     FRESH_SESSION_EMOJI,
+    OPEN_WORK_BADGE,
+    OPEN_WORK_WAITING_BADGE,
+    STOP_FAILURE_EMOJI,
+    STUCK_BADGE,
+    WORK_DONE_EMOJI,
     display_state_emoji,
     fresh_session_shown,
     session_state_emoji,
 } from '../../src/config/terminal-status-flags.ts';
+import { SERVICE_SESSION_EMOJI } from '../../src/engine/terminal/service-sessions.ts';
 import { build_rack_rows, type RackSession, type RackState } from '../../src/engine/terminal/multi-terminal-layout.ts';
 
 const STATES: RackState[] = ['attention', 'done', 'free', 'background', 'busy', 'unknown'];
+
+test('every mark the rack can draw has a row in the README legend', () => {
+    const readme = readFileSync(new URL('../../../README.md', import.meta.url), 'utf8');
+    const legend = readme.slice(readme.indexOf('## Reading the rack'), readme.indexOf('## Measured, not promised'));
+    assert.ok(legend.length > 0, 'README § Reading the rack is the legend');
+    const marks = [
+        ...STATES.map(display_state_emoji),
+        ...Object.values(WORK_DONE_EMOJI),
+        ...Object.values(STOP_FAILURE_EMOJI),
+        ANSWER_TO_READ_EMOJI, DEAD_SESSION_EMOJI, FRESH_SESSION_EMOJI, SERVICE_SESSION_EMOJI,
+        OPEN_WORK_BADGE, OPEN_WORK_WAITING_BADGE, STUCK_BADGE,
+    ];
+    for (const mark of marks) assert.ok(legend.includes(mark), `${mark} has no row in the README legend`);
+});
 
 test('every state has its own glyph, and gone is none of them', () => {
     const glyphs = STATES.map(display_state_emoji);
@@ -40,7 +62,6 @@ test('the glyph column reads top to bottom as how much each agent wants you', ()
 // ── a turn the session limit cut off ──────────────────────────────────────────
 
 import {
-    STOP_FAILURE_EMOJI,
     stop_failure_phase,
     stop_failure_shown,
     stop_failure_title,

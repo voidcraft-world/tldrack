@@ -20,7 +20,8 @@
  *  2. **The operator has SEEN it** (☑️, state `free`), never an unread ✅
  *     (`done`). HIDE-FIRST, AND ONLY AFTER A LOOK: Laya's ✅ alone never moves a
  *     row out of sight. An unread ✅ stays in its project at its urgency rung
- *     until it is opened once. Why: people miss silent defects on exactly the
+ *     until it is opened once, and so does an answer nobody has read (📖).
+ *     Why: people miss silent defects on exactly the
  *     outputs they trust most (in one 2026 study, 79% of the missed defects
  *     had been rated high-confidence — Dissanayake et al.), and an agent's own
  *     account of its work is wrong often enough (22.58% of misalignment
@@ -50,5 +51,7 @@ export const COMPLETE_COHORT_LABEL = 'COMPLETE';
 export function is_complete_session(entry: RackSession): boolean {
     if (!entry.live || is_service_session(entry.session)) return false;
     if (entry.island || entry.open_work || entry.stop_failure) return false;
+    // An unread answer is not seen, whatever the seen-bit says (rule 2): a host that never posts the read keeps it here.
+    if (entry.work_done?.answer) return false;
     return work_done_shown(entry.state, entry.work_done ? true : null, false) && entry.state === 'free';
 }
