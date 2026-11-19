@@ -11,7 +11,8 @@ import kotlinx.serialization.Serializable
 
 // Ports, pure (no Android), of the rack's web review page: ui/src/laya-review/recent-model.ts (marks, grading,
 // tally, the list), ui/src/laya-review/turn-context.ts (the conversation behind a verdict), and the answer/undo flow
-// of ui/src/laya-review/LayaRecentList.vue. Those files own the reasoning.
+// of ui/src/laya-review/LayaRecentList.vue. Those files own the reasoning. Which turns are one conversation, and the
+// pager over them: `LayaThreads`.
 
 /** How a phone-link call came back: its data, or a `Fail` that names the remedy. */
 sealed interface Call<out T> {
@@ -125,8 +126,8 @@ interface ReviewCalls {
 @Serializable
 data class Answered(val key: String, val answer_id: String)
 
-/** Where the list lands: the band it narrows to, the row selected, and whether that is the row the reader already had. */
-data class Landing(val band: Band?, val selected: String?, val same: Boolean)
+/** Where UNDO lands: the band it narrows to, and its turn. */
+data class Landing(val band: Band?, val selected: String?)
 
 /**
  * What one press did, as edits for whatever rows are current when it lands: a reload may have replaced the list
@@ -286,12 +287,6 @@ object LayaRules {
     fun with_answer(rows: List<RecentRow>, key: String, operator: AnswerRef?): List<RecentRow> =
         rows.map { if (it.key == key) it.copy(operator = operator) else it }
 
-    /** After an answer the selection moves to the next unanswered row below it, else stays. */
-    fun next_unanswered(rows: List<RecentRow>, from: Int): Int {
-        for (i in from + 1 until rows.size) if (operator_verdict(rows[i].operator) == null) return i
-        return from
-    }
-
     /**
      * A TO GRADE page (`todo=1`: every answered text left out) with this list's own graded rows put back where their
      * time puts them, so a reload — a return from the pocket, a rotation — never takes away a row graded here, its
@@ -313,27 +308,22 @@ object LayaRules {
 
     private fun at_ms(row: RecentRow): Long = epoch_ms(row.at) ?: Long.MIN_VALUE
 
-    /** A page (re)loaded: the row being read when it is still shown, else the first ungraded row, as the web lands. */
-    fun landing(rows: List<RecentRow>, band: Band?, selected: String?): Landing {
-        val shown = visible_rows(rows, band, unanswered_only = false)
-        if (selected != null && shown.any { it.decision_id == selected }) return Landing(band, selected, same = true)
-        return Landing(band, shown.getOrNull(max(0, next_unanswered(shown, -1)))?.decision_id, same = false)
-    }
-
     /**
      * Back to an answered text's row (UNDO's promise): under the band when it shows it, else with the band cleared,
      * because the reader asked for that row. Null when no row of the text is on the page.
      */
     fun return_to(rows: List<RecentRow>, band: Band?, key: String): Landing? {
         visible_rows(rows, band, unanswered_only = false).firstOrNull { it.key == key }
-            ?.let { return Landing(band, it.decision_id, same = false) }
-        return rows.firstOrNull { it.key == key }?.let { Landing(null, it.decision_id, same = false) }
+            ?.let { return Landing(band, it.decision_id) }
+        return rows.firstOrNull { it.key == key }?.let { Landing(null, it.decision_id) }
     }
 
     /** `4m`, `3h`, `2d` — how long ago, in one short unit. */
-    fun age_text(at: String, now_ms: Long): String {
-        val then = epoch_ms(at) ?: return "—"
-        val s = max(0L, Math.round((now_ms - then) / 1000.0))
+    fun age_text(at: String, now_ms: Long): String = epoch_ms(at)?.let { age_since(it, now_ms) } ?: "—"
+
+    /** The same readout from an epoch-ms stamp (the join's `started_at`, a clip's `ts`). */
+    fun age_since(then_ms: Long, now_ms: Long): String {
+        val s = max(0L, Math.round((now_ms - then_ms) / 1000.0))
         return when {
             s < 60 -> "${s}s"
             s < 3_600 -> "${s / 60}m"
@@ -368,19 +358,12 @@ object LayaRules {
     /** The mark the rack drew, when today's band differs: `was 💬` on a pre-band verdict that would be ✅ now. */
     fun drawn_note(row: RecentRow): String? = if (row.mark == row.band) null else "was ${BAND_MARK.getValue(row.mark)}"
 
-    /** Display names never replace the stable rack identity used by filters and answer requests. */
-    fun review_title(subject: String?, rack_title: String?, conversation_title: String?): String =
-        rack_title?.trim()?.ifEmpty { null }
-            ?: conversation_title?.trim()?.ifEmpty { null }
-            ?: subject?.trim()?.ifEmpty { null }
-            ?: "Conversation"
-
     /**
      * The rack's display name for a row's session, only while it is still that session's. `/topic-labels` answers for
      * the tmux name NOW, and tmux hands a `vc-N` name to the next agent, so `shown` names a verdict only while it still
      * IS the newest naming's label and that naming is no newer than the verdict. A placeholder, a `--title` label or a
-     * ✎ name logs no naming, so under one of those the naming may be a previous wearer's: the conversation title,
-     * then the tmux name, carry the row instead.
+     * ✎ name logs no naming, so under one of those the naming may be a previous wearer's: the tmux name carries the
+     * conversation's head instead.
      */
     fun rack_name(view: TopicView?, at: String): String? {
         val named = view?.named ?: return null
@@ -576,12 +559,17 @@ object LayaRules {
         }
         val hit = pick_hit(search.hits, at_iso, search.next_offset != null)
             ?: return TurnContext.Missing(MissReason.not_indexed, if (at_iso == null) NO_UNIQUE else NOT_INDEXED)
-        val page = load_earlier(ledger, hit.file_id, hit.seq + 1)
+        return load_context_at(ledger, hit.file_id, hit.seq)
+    }
+
+    /** The conversation up to a closing message whose place is known: the needle's hit, or the join's link (no search). */
+    suspend fun load_context_at(ledger: LedgerSource, file_id: Long, closing_seq: Int): TurnContext {
+        val page = load_earlier(ledger, file_id, closing_seq + 1)
         if (page !is TurnContext.Found) return page
-        var context = page.copy(closing_seq = hit.seq)
+        var context = page.copy(closing_seq = closing_seq)
         // An older bridge omits first_user: read the start directly, never mistake the end page's latest prompt for it.
         if (context.first_user == FirstUser.Unknown) {
-            val start = load_context_page(ledger, hit.file_id, PageMode.around, 0, hit.seq)
+            val start = load_context_page(ledger, file_id, PageMode.around, 0, closing_seq)
             if (start is TurnContext.Found) context = context.copy(first_user = start.first_user, title = context.title ?: start.title)
         }
         return context

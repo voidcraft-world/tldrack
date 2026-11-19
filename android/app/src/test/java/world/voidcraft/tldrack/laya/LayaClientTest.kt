@@ -214,6 +214,46 @@ class LayaClientTest {
     }
 
     @Test
+    fun `the join asks with raw commas, one call a chunk, and an older page with the cursor it was given`() = runBlocking {
+        val d1 = "20261107T120000-000000000001"
+        val d2 = "20261107T120000-000000000002"
+        val conv = "11111111-1111-4111-8111-111111111111"
+        val fake = link(the_link { seen ->
+            if (seen.target.startsWith("/ledger/threads")) {
+                200 to """{"decisions":{"$d1":{"status":"linked","thread":"$conv","file_id":7,"closing_seq":40}},"keys":{},"conversations":{"$conv":"$conv"},"threads":{},"indexed_at":1}"""
+            } else {
+                200 to """{"surface":"agent_open_work","rows":[],"summary":{"next":null}}"""
+            }
+        })
+        val got = client(fake).threads(ThreadsAsk(listOf(d1, d2), listOf(conv)))
+        assertEquals("/ledger/threads?d=$d1,$d2&c=$conv", fake.seen.last().target)
+        val join = (got as Call.Ok).data
+        assertTrue(join.decisions.getValue(d1).linked)
+        assertEquals(7L, join.decisions.getValue(d1).file_id)
+        assertEquals(conv, join.conversations[conv])
+
+        // Nothing to ask: no call at all.
+        val before = fake.seen.size
+        assertEquals(Call.Ok(HistoryThreads()), client(fake).threads(ThreadsAsk(emptyList(), emptyList())))
+        assertEquals(before, fake.seen.size)
+
+        val cursor = "n~2026-11-07T12:00:00Z~0123456789abcdef"
+        assertEquals(Call.Ok(RecentPage("agent_open_work", emptyList(), RecentSummary(null))), client(fake).recent(todo = true, after = cursor))
+        // OkHttp escapes the cursor's `~` and `:`; phone-link decodes the query before the bridge reads it.
+        assertEquals("/plugin/laya/review/recent?limit=100&todo=1&after=n%7E2026-11-07T12%3A00%3A00Z%7E0123456789abcdef", fake.seen.last().target)
+        // The first page sends no cursor: a bridge from before it refuses a name it does not know.
+        client(fake).recent(todo = false)
+        assertEquals("/plugin/laya/review/recent?limit=100", fake.seen.last().target)
+    }
+
+    @Test
+    fun `a failed chunk of the join fails the whole join`() = runBlocking {
+        val refused = link(the_link { 404 to """{"ok":false,"error":"not_allowed"}""" })
+        val got = client(refused).threads(ThreadsAsk(listOf("20261107T120000-000000000001"), emptyList()))
+        assertEquals(404, (got as Fail.Refused).status)
+    }
+
+    @Test
     fun `each call takes a fresh nonce, and none is presented twice`() = runBlocking {
         val fake = link(the_link { 200 to """{"ok":true,"v":2}""" })
         val laya = client(fake)

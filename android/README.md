@@ -1,9 +1,11 @@
 # Laya review (Android)
 
-Grade Laya's agent-rack marks from your phone. One screen: the RECENT list the rack's web review page shows, a light
-that says whether the Mac answers, and one bar of grades (DONE, RUNNING, NEEDS YOU, SKIP; UNDO takes the last one
-back). Every grade is a tap. The app talks to nothing but `127.0.0.1:7683`, the `phone-link` plugin's listener on
-your Mac, tunnelled over adb. No account, no cloud.
+Grade Laya's agent-rack marks from your phone. One screen, and ONE conversation on it at a time, as on the rack's web
+review page: its title, your first message, then its turns under the prompt each one answered. Swipe left or right
+(or ◀ ▶) for the next or the previous conversation; scrolling up and down never leaves the one you are reading. A
+light says whether the Mac answers, and one bar of grades acts on the turn you are reading (DONE, READ, RUNNING,
+NEEDS YOU, SKIP; UNDO takes the last one back). Every grade is a tap. The app talks to nothing but `127.0.0.1:7683`,
+the `phone-link` plugin's listener on your Mac, tunnelled over adb. No account, no cloud.
 
 Package `world.voidcraft.tldrack`. The link `tldrack://review` opens it; the bridge's daily push uses it.
 
@@ -46,6 +48,7 @@ BRIDGE DOWN (start the bridge), or REFUSED (the bridge said no, and why).
 | `app/src/main/java/world/voidcraft/tldrack/MainActivity.kt` | The one activity: the screen, and the `tldrack://review` link |
 | `…/laya/LayaScreen.kt` | The screen. Its rules live in `LayaRules.kt`, its fetches in `LayaViewModel.kt` |
 | `…/laya/LayaRules.kt` | Pure rules (no Android), ported from the web page's `ui/src/laya-review/` |
+| `…/laya/LayaThreads.kt` | Which turns are one conversation, and the pager over them: a port of `thread-model.ts` |
 | `…/laya/LayaClient.kt`, `PhoneLinkProof.kt` | The calls, each one signed by the phone-link handshake |
 | `…/ui/Theme.kt` | The palette and the few shared controls |
 | `app/src/main/res/xml/` | Cleartext to `127.0.0.1` only; no backup of the token |
