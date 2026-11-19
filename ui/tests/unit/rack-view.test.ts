@@ -389,7 +389,7 @@ test('a fresh session rides to_rack_session, and anything but a literal true doe
 // An agent's changes are easy to look for in the wrong checkout, so the row
 // says where the agent's edits land. `island_for_session`
 // joins by cwd against EVERY non-main tree, not only the managed rows.
-import { island_for_session, session_island, type WorktreeIsland } from '../../src/engine/terminal/rack-view.ts';
+import { island_for_session, island_pr, session_island, type WorktreeIsland } from '../../src/engine/terminal/rack-view.ts';
 import { build_rack_rows } from '../../src/engine/terminal/multi-terminal-layout.ts';
 import { session_graph } from '../../src/engine/terminal/session-graph.ts';
 
@@ -435,6 +435,38 @@ test('session_island colours the island by the branch PR: blue to make one, gree
     assert.equal(open.pr, 'handled');
     assert.match(open.title, /· PR #101 open/);
     assert.equal(at({ state: 'merged', number: 7, url: null }).pr, 'handled');
+});
+
+test('island_pr: a landed branch is handled whatever its own PR says; not landed with none is needed', () => {
+    const merged_in = { how: 'ancestor', pr: 41 } as const;
+    const none = { state: 'none', number: null, url: null } as const;
+    assert.equal(island_pr({ pr: none, landing: merged_in }), 'handled', 'landed with no PR of its own');
+    assert.equal(island_pr({ pr: { state: 'closed', number: 9, url: null }, landing: merged_in }), 'handled', 'landed with a closed PR');
+    assert.equal(island_pr({ pr: none, landing: { how: 'commits', pr: null } }), 'handled', 'landed with no PR at all');
+    assert.equal(island_pr({ pr: none }), 'needed', 'not landed, no PR');
+    assert.equal(island_pr({ pr: none, landing: null }), 'needed');
+    assert.equal(island_pr({}), 'unknown', 'nothing known stays unknown');
+    // A branch cut from main and never committed to is an ancestor with no PR: nothing of its own landed.
+    assert.equal(island_pr({ pr: none, landing: { how: 'ancestor', pr: null } }), 'needed');
+    assert.equal(island_pr({ landing: { how: 'ancestor', pr: null } }), 'unknown');
+});
+
+test('session_island names how a landed branch landed, and sends only the colour', () => {
+    const at = (landing: WorktreeIsland['landing'], pr: WorktreeIsland['pr'] = { state: 'none', number: null, url: null }) =>
+        session_island({ path: '~/worktrees/my-app/lane', branch: 'lane', pr, landing }, 'vc-3');
+    const carried = at({ how: 'ancestor', pr: 41 });
+    assert.equal(carried.pr, 'handled');
+    assert.match(carried.title, /· landed in #41 —/);
+    assert.doesNotMatch(carried.title, /no PR yet/);
+    assert.equal('pr_state' in carried, false, 'its own PR state would paint it blue in island_status');
+    assert.match(at({ how: 'squash', pr: null }).title, /· landed: on main —/);
+    assert.match(at({ how: 'pr', pr: 12 }, { state: 'closed', number: 3, url: null }).title, /· landed in #12/);
+    const own = at({ how: 'pr', pr: 12 }, { state: 'merged', number: 12, url: null });
+    assert.equal(own.pr_state, 'merged', 'its own merged PR still says so');
+    const fresh = at({ how: 'ancestor', pr: null });
+    assert.equal(fresh.pr, 'needed');
+    assert.match(fresh.title, /· no PR yet/);
+    assert.equal(fresh.pr_state, 'none');
 });
 
 test('session_island drops the label when the row name already says it — the glyph stays', () => {

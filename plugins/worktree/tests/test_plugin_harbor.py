@@ -733,11 +733,16 @@ class TestStateWorktreePaths:
     def test_trees_carry_each_path_with_its_branch(self, plugin):
         _s, body = plugin.handle_get("/state", {})
         assert body["worktree_trees"] == [
-            {"path": "~/other-tool/worktrees/spike-one/demo-app", "branch": "add-stopwatch-feed", "pr": None},
-            {"path": "~/worktrees/demo-app/pr-demo", "branch": "pr-demo", "pr": None},
-            {"path": "~/worktrees/demo-app/cache-all-pages", "branch": "feat/cache-all-pages", "pr": None},
-            {"path": "~/worktrees/demo-app/stale-wt", "branch": "stale-wt", "pr": None},
-            {"path": "~/other-tool/worktrees/spike/demo-app", "branch": None, "pr": None},  # detached
+            {"path": "~/other-tool/worktrees/spike-one/demo-app", "branch": "add-stopwatch-feed", "pr": None, "landing": None},
+            {"path": "~/worktrees/demo-app/pr-demo", "branch": "pr-demo", "pr": None, "landing": {"how": "ancestor", "pr": None}},
+            {"path": "~/worktrees/demo-app/cache-all-pages", "branch": "feat/cache-all-pages", "pr": None, "landing": None},
+            {
+                "path": "~/worktrees/demo-app/stale-wt",
+                "branch": "stale-wt",
+                "pr": None,
+                "landing": {"how": "ancestor", "pr": None},
+            },
+            {"path": "~/other-tool/worktrees/spike/demo-app", "branch": None, "pr": None, "landing": None},  # detached
         ]
         assert body["pr_known"] is False, "no index fetched yet: every null is unknown, never 'no PR'"
         assert [tree["path"] for tree in body["worktree_trees"]] == body["worktree_paths"]

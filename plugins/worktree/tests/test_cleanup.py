@@ -486,3 +486,64 @@ class TestSharedInternals:
     @pytest.mark.parametrize("name", ["", "a b", "x;y", "=wt", "-" * 129, None, 3])
     def test_anything_else_is_refused(self, name):
         assert validate_session_name(name) is not None
+
+
+# ── 6.5: a lane that landed reads as landed — the island's tree and its group ──
+
+
+def state_trees(plugin) -> dict[str, dict]:  # noqa: F811
+    _status, body = plugin.handle_get("/state", {})
+    return {tree["branch"]: tree for tree in body["worktree_trees"] if tree["branch"]}
+
+
+def lane_group(plugin, *branches):  # noqa: F811
+    """A group whose lanes publish under their own names, so the index's PR for the BRANCH is not theirs:
+    what delivers them is the branch's landing, as when a combined PR carried them."""
+    import uuid
+
+    from worktree.task_groups import new_group
+
+    lanes = [{"branch": b, "publication_branch": f"publish/{i}"} for i, b in enumerate(branches)]
+    return plugin._groups.create(
+        new_group(
+            {"label": "Build", "start_sha": "a" * 40, "workers": lanes},
+            {"parent_id": str(uuid.uuid4()), "parent_name": "lead"},
+        )
+    )
+
+
+class TestLandedLanes:
+    def test_each_tree_carries_the_landing_its_row_carries(self, plugin):
+        plugin._pr_index.replace(squash_index(), 1.0)
+        trees, rows = state_trees(plugin), state_rows(plugin)
+        assert trees[OPEN]["landing"] == {"how": "pr", "pr": 77} == rows[OPEN]["landing"]
+        # An ancestor no PR names: told as it is, and the island's `work_landed` keeps it blue.
+        assert trees[DIRTY]["landing"] == {"how": "ancestor", "pr": None}
+        assert not landing_mod.work_landed(trees[DIRTY]["landing"])
+        assert all("landing" in tree for tree in plugin.handle_get("/state", {})[1]["worktree_trees"])
+
+    def test_not_judged_yet_is_null_never_a_guess(self, plugin):
+        assert state_trees(plugin)[OPEN]["landing"] is None  # no PR index yet: unknown
+
+    def test_the_runner_delivers_a_worker_whose_branch_landed_and_not_one_cut_and_untouched(self, plugin, monkeypatch):
+        group = lane_group(plugin, OPEN, DIRTY)
+        plugin._pr_index.replace(squash_index(), 1.0)
+        monkeypatch.setattr(plugin, "_maybe_refresh_prs", lambda *args: None)
+        plugin._sync_group_prs()
+        view = plugin._groups.get(group["id"])
+        landed, fresh = view["workers"]
+        assert landed["landing"] == {"how": "pr", "pr": 77, "branch": OPEN} and "pr_state" not in landed
+        assert "landing" not in fresh, "an ancestor no PR names is not work of its own"
+        assert plugin._groups.awaiting_delivery()
+
+    def test_cleanup_keeps_the_groups_delivery(self, plugin, monkeypatch):
+        group = lane_group(plugin, OPEN)
+        plugin._groups.report(group["id"], {"branch": OPEN, "stage": "blocked", "note": "waiting on the combined PR"})
+        plugin._pr_index.replace(squash_index(), 1.0)
+        Runner(monkeypatch, OPEN_PATH)
+        assert post(plugin, {"branch": OPEN})[0] == 202
+        run_worker(plugin)
+        assert OPEN not in state_rows(plugin), "the tree and the branch are gone"
+        view = plugin._groups.list()[0]
+        assert view["workers"][0]["landing"]["pr"] == 77
+        assert (view["phase"], view["blockers"]) == ("complete", 0)

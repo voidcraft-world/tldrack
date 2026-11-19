@@ -10,6 +10,17 @@ files. A restart retries only interrupted publication, using GitHub's exact-head
 A stored group without the keys reads as `fixed` / `batch`, and behaves as before.
 Which caller uses which mode, and why: owned by plugins/worktree/README.md § Parent task groups — see the
 note there.
+
+── Delivered: its own PR merged, OR its branch landed ─────────────────────────
+A worker's work can reach the base without its own PR: the lanes of one build can
+merge through ONE combined pull request. Until 2026-11-14 every such lane read
+`blocked` with no PR while the harbor said it had landed. So `delivered` is either fact.
+`landing` is stamped once, by `reconcile_landing`, from the harbor's verdict
+(`landing.work_landed`: a fresh branch with nothing of its own never counts), and
+like a merge it is final: the worker counts 100%, is never a blocker, its report
+freezes, and nothing publishes it again, so resuming a paused group cannot open a
+PR for work already on the base. Final also means a tree CLEANUP removed later
+cannot send its group back to `blocked`.
 """
 
 from __future__ import annotations
@@ -53,16 +64,16 @@ def launch_base(group: dict, worker: dict) -> str:
     return worker.get("start_sha") or group["start_sha"]
 
 
+def delivered(worker: dict) -> bool:
+    """Its own PR merged, or its branch landed (the module's note owns why either counts)."""
+    return worker.get("pr_state") == "merged" or bool(worker.get("landing"))
+
+
 def summary(group: dict) -> dict:
     workers = group["workers"]
-    blockers = sum(
-        w.get("pr_state") != "merged" and (w["stage"] in ("blocked", "failed") or bool(w.get("error"))) for w in workers
-    )
+    blockers = sum(not delivered(w) and (w["stage"] in ("blocked", "failed") or bool(w.get("error"))) for w in workers)
     ready = sum(w["stage"] == "ready" for w in workers)
     opened = sum(bool(w.get("pr_url")) for w in workers)
-
-    def delivered(w: dict) -> bool:
-        return w.get("pr_state") == "merged"
 
     complete = all(delivered(w) or (w["stage"] == "ready" and w.get("pr_url")) for w in workers)
     # An open group starts empty; "all of nothing" is neither ready nor complete.
@@ -83,7 +94,7 @@ def summary(group: dict) -> dict:
         else "opening"
         if any(w.get("pr_status") == "opening" for w in workers)
         else "ready"
-        if ready == len(workers)
+        if all(delivered(w) or w["stage"] == "ready" for w in workers)
         else "working",
     }
 
@@ -239,6 +250,38 @@ class TaskGroups:
 
             self.change(group["id"], update, only_if_changed=True)
 
+    def awaiting_delivery(self) -> bool:
+        """Is any worker of any group still undelivered? The plugin asks before it pays for a landing sweep."""
+        return any(not delivered(w) for g in self.list() for w in g["workers"])
+
+    def reconcile_landing(self, landings: dict[str, dict]):
+        """Stamp `landing` on every undelivered worker whose branch, or the
+        publication branch it prepared, is in `landings`: `{branch: {how, pr}}`
+        for each branch whose OWN work the harbor proved on the base
+        (`landing.work_landed`). Final once stamped (the module's note). A
+        publication in flight is left to finish; the next pass stamps it."""
+        if not landings:
+            return
+        for group in self.list():
+            if all(delivered(w) for w in group["workers"]):
+                continue
+
+            def update(current):
+                for worker in current["workers"]:
+                    if delivered(worker) or worker["pr_status"] == "opening":
+                        continue
+                    names = (worker["branch"], worker.get("publication_branch"), worker.get("approved_publication_branch"))
+                    found = next((name for name in names if name and landings.get(name)), None)
+                    if found is None:
+                        continue
+                    landing = landings[found]
+                    worker.update(
+                        landing={"how": landing.get("how"), "pr": landing.get("pr"), "branch": found},
+                        error=None,
+                    )
+
+            self.change(group["id"], update, only_if_changed=True)
+
     def get(self, group_id: str) -> dict:
         with self.lock, closing(self._connect()) as db, db:
             return self._read(db, group_id)
@@ -325,7 +368,7 @@ class TaskGroups:
             worker = next((w for w in group["workers"] if w["branch"] == body.get("branch")), None)
             if worker is None:
                 raise ValueError("branch is not a member of this group")
-            if worker["pr_status"] == "opening" or worker.get("pr_state") == "merged":
+            if worker["pr_status"] == "opening" or delivered(worker):
                 raise ValueError("publication is already claimed; worker report is frozen")
             publication = body.get(
                 "publication_branch",
@@ -380,15 +423,27 @@ class TaskGroups:
 
 
 def releasable(group: dict) -> bool:
-    """release "batch": the whole sealed group, at once."""
+    """release "batch": the whole sealed group, at once. A delivered worker waits on nothing and is never published."""
     return bool(
-        group["sealed"] and group["auto_pr"] and all(w["stage"] == "ready" and not w.get("error") for w in group["workers"])
+        group["sealed"]
+        and group["auto_pr"]
+        and all(delivered(w) or (w["stage"] == "ready" and not w.get("error")) for w in group["workers"])
     )
 
 
+def batch_due(worker: dict) -> bool:
+    """release "batch": this worker still needs its PR opened."""
+    return not worker["pr_url"] and not delivered(worker)
+
+
 def follows_open_pr(group: dict, worker: dict) -> bool:
-    """release "each" keeps following a worker's PR until it merges or closes."""
-    return release_of(group) == "each" and bool(worker.get("pr_url")) and worker.get("pr_state") not in PR_FINISHED
+    """release "each" keeps following a worker's PR until it merges or closes, or its branch lands without it."""
+    return (
+        release_of(group) == "each"
+        and bool(worker.get("pr_url"))
+        and worker.get("pr_state") not in PR_FINISHED
+        and not worker.get("landing")
+    )
 
 
 def _settled_ready(group: dict, worker: dict) -> bool:
@@ -403,7 +458,7 @@ def _settled_ready(group: dict, worker: dict) -> bool:
 
 def publishable(group: dict, worker: dict) -> bool:
     """release "each": this worker's first PR is due. Siblings and the seal do not hold it."""
-    return _settled_ready(group, worker) and not worker.get("pr_url") and worker.get("pr_state") != "merged"
+    return _settled_ready(group, worker) and not worker.get("pr_url") and not delivered(worker)
 
 
 def follow_up_due(group: dict, worker: dict) -> bool:

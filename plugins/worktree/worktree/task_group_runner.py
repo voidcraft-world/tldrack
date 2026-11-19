@@ -22,6 +22,7 @@ from worktree.ship import summarize_checks
 from worktree.task_groups import (
     PR_FINISHED,
     SHA,
+    batch_due,
     follow_up_due,
     follows_open_pr,
     launch_base,
@@ -236,7 +237,7 @@ class GroupRunner:
         )
 
     def release_batch(self, group):
-        if not releasable(group) or all(w["pr_url"] for w in group["workers"]):
+        if not releasable(group) or not any(batch_due(w) for w in group["workers"]):
             return
         self.active = group["label"]
         try:
@@ -244,10 +245,10 @@ class GroupRunner:
             managed = self.managed()
             # Validate the WHOLE group before the first outward mutation.
             for worker in group["workers"]:
-                if not worker["pr_url"]:
+                if batch_due(worker):
                     preflight(group, worker, managed, self.base)
             for worker in group["workers"]:
-                if worker["pr_url"]:
+                if not batch_due(worker):
                     continue
                 with self.store.lock:
                     latest = self.store.get(group["id"])
@@ -273,7 +274,7 @@ class GroupRunner:
                     break
         except Exception as exc:
             # A failed preflight gates the entire batch; only its first pending row needs the error.
-            worker = next(w for w in group["workers"] if not w["pr_url"])
+            worker = next(w for w in group["workers"] if batch_due(w))
             self.store.worker_result(group["id"], worker["branch"], pr_status="error", error=str(exc)[:500])
         finally:
             self.active = None

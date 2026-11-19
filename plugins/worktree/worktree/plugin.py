@@ -388,9 +388,15 @@ class WorktreePlugin:
 
     # -- state --------------------------------------------------------------
     def _sync_group_prs(self):
+        """The group runner's reconcile: each worker's own PR from the index, then its branch's landing
+        (`task_groups.py` owns why either delivers). The landing half is `/state`'s own verdict and cache,
+        and is asked only while a worker waits on it."""
         self._maybe_refresh_prs(branches_mod.fetch_head_mtime(self._repo_root))
         fetched_at, prs = self._pr_index.snapshot()
         self._groups.reconcile_prs(prs, self._base, fetched_at)
+        if self._groups.awaiting_delivery():
+            taken, _rows, _trees, _probe, refs = self._git_snapshot()
+            self._groups.reconcile_landing(own_landings(self._state_landing(taken, refs, fetched_at)))
 
     def _managed(self, records: list[dict] | None = None) -> list[dict]:
         """Every worktree of OURS, newest git order preserved.
@@ -421,26 +427,7 @@ class WorktreePlugin:
         merged list instead would give a four-step ladder a four-second cache
         in front of it, which is most of the latency this route exists to remove.
         """
-        now = time.monotonic()
-        with self._cache_lock:
-            cached = self._cache if self._cache and now - self._cache[0] < STATE_TTL_SECONDS else None
-        if cached is None:
-            records = list_worktrees(self._repo_root)
-            # ADDITIVE: every non-main worktree on the machine, `~`-collapsed and
-            # deliberately unfiltered — the rack's attach-only set, so a session
-            # whose cwd is ANY worktree is focused with `attach:` (README § THE
-            # INVARIANT) rather than only the ones this plugin created. Read off
-            # the same listing `_managed` filters: that one is the write gate,
-            # and it stays exactly as it is.
-            # The sweep list is the harbor's (every live tree, not only ours),
-            # so one sweep answers both routes.
-            probe = [r["path"] for r in records if r.get("path") and not r.get("prunable")]
-            managed = self._managed(records)
-            refs = self._state_refs(managed)
-            cached = (now, self._git_rows(managed, refs), _non_main_trees(records), probe, refs)
-            with self._cache_lock:
-                self._cache = cached
-        taken, rows, worktree_trees, probe, refs = cached
+        taken, rows, worktree_trees, probe, refs = self._git_snapshot()
         dirty = self._dirty.read(probe)
         # Each tree's PR, live like `dirty`: the rack's island turns from "no PR yet" to "PR handled" by it
         # (`tree_pr`). The index refreshes itself while someone polls, here as from the harbor; not due is a
@@ -460,8 +447,15 @@ class WorktreePlugin:
             }
             for row in rows
         ]
+        # ADDITIVE: `landing` (`{how, pr}`, or None) is the harbor's verdict on the tree's branch, the same
+        # one its `worktrees` row carries. The island reads it first: a branch that landed inside another
+        # branch's PR is handled whatever its own PR says (`rack-view.ts::island_pr`).
         trees = [
-            {**tree, "pr": tree_pr(prs.get(tree["branch"] or ""), self._store.get(tree["branch"] or ""))}
+            {
+                **tree,
+                "pr": tree_pr(prs.get(tree["branch"] or ""), self._store.get(tree["branch"] or "")),
+                "landing": landing.get(tree["branch"] or "", UNJUDGED)["landing"],
+            }
             for tree in worktree_trees
         ]
         return {
@@ -523,13 +517,38 @@ class WorktreePlugin:
         except (ValueError, TypeError) as exc:
             return 400, {"error": str(exc)}
 
-    def _state_refs(self, records: list[dict]) -> list[dict]:
+    def _git_snapshot(self) -> tuple:
+        """`(taken, rows, trees, probe, refs)`: `/state`'s git half, cached for `STATE_TTL_SECONDS`. The group
+        runner reads the same snapshot, so its landing and the island's can never disagree."""
+        now = time.monotonic()
+        with self._cache_lock:
+            cached = self._cache if self._cache and now - self._cache[0] < STATE_TTL_SECONDS else None
+        if cached is None:
+            records = list_worktrees(self._repo_root)
+            # ADDITIVE: every non-main worktree on the machine, `~`-collapsed and
+            # deliberately unfiltered — the rack's attach-only set, so a session
+            # whose cwd is ANY worktree is focused with `attach:` (README § THE
+            # INVARIANT) rather than only the ones this plugin created. Read off
+            # the same listing `_managed` filters: that one is the write gate,
+            # and it stays exactly as it is.
+            # The sweep list is the harbor's (every live tree, not only ours),
+            # so one sweep answers both routes.
+            probe = [r["path"] for r in records if r.get("path") and not r.get("prunable")]
+            managed = self._managed(records)
+            trees = _non_main_trees(records)
+            refs = self._state_refs(bool(trees) or self._groups.awaiting_delivery())
+            cached = (now, self._git_rows(managed, refs), trees, probe, refs)
+            with self._cache_lock:
+                self._cache = cached
+        return cached
+
+    def _state_refs(self, wanted: bool) -> list[dict]:
         """EVERY local branch's ref row, from ONE `for-each-ref` — the harbor's
-        own ladder. `/state` reads it twice: each managed tree's ahead/behind,
-        and `landed`, which is judged over all of them (`_prove_landed` owns
-        why). `[]` with no managed tree to answer for, or when the sweep
-        failed."""
-        if not records:
+        own ladder. `/state` reads it for each managed tree's ahead/behind, and
+        for `landed`, judged over all of them (`_prove_landed` owns why), on its
+        rows, its trees and its groups' workers. `[]` with none of those to
+        answer for (`wanted`), or when the sweep failed."""
+        if not wanted:
             return []
         refs, _capabilities, _error = branches_mod.sweep_refs(self._repo_root, self._base)
         return refs
@@ -2370,6 +2389,10 @@ class WorktreePlugin:
         )
         if refusal is not None:
             return refusal
+        # A group worker whose landed branch goes now keeps its delivery: the
+        # runner's next landing sweep would no longer find the branch.
+        if row.get("landed") is True:
+            self._groups.reconcile_landing(own_landings({branch: {"landed": True, "landing": row.get("landing")}}))
 
         # A forced delete of work nothing PROVED safe pins its tip first, and
         # refuses when it cannot (`archive.py` owns why).
@@ -2621,6 +2644,16 @@ class WorktreePlugin:
 def _cut_note(meta: dict) -> str:
     """The log's suffix for a PR list that filled `branches.PR_LIST_CEILING`."""
     return f" (CUT at {branches_mod.PR_LIST_CEILING} — oldest PRs missing)" if meta["truncated"] else ""
+
+
+def own_landings(judged: dict[str, dict]) -> dict[str, dict]:
+    """`{branch: {how, pr}}` for each branch of `_state_landing`'s verdict whose OWN work landed
+    (`landing.work_landed`) — what delivers a group worker (`TaskGroups.reconcile_landing`)."""
+    return {
+        branch: verdict["landing"]
+        for branch, verdict in judged.items()
+        if verdict.get("landed") is True and landing_mod.work_landed(verdict.get("landing"))
+    }
 
 
 def tree_pr(indexed: dict | None, job: dict | None) -> dict | None:

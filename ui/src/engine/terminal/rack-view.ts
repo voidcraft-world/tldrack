@@ -114,7 +114,7 @@ export type BranchLandingHow = 'ancestor' | 'pr' | 'squash' | 'commits';
 export interface BranchLanding {
     how: BranchLandingHow;
     /** The PR that proves it (`pr`), else the PR the patch matched; on an
-     *  `ancestor`, the merged PR that shipped this very tip (`work_landed`); else null. */
+     *  `ancestor`, the merged PR that shipped this very tip or whose merge carried it in (`work_landed`); else null. */
     pr: number | null;
 }
 
@@ -137,19 +137,32 @@ export interface WorktreeIsland {
      * never "no PR".
      */
     pr?: { readonly state: 'open' | 'merged' | 'closed' | 'none'; readonly number: number | null; readonly url: string | null };
+    /**
+     * The branch's landing (`/state.worktree_trees[].landing`, the harbor's verdict): how its work reached the
+     * base, and through which PR. Null or absent: not landed, or not told.
+     */
+    landing?: BranchLanding | null;
 }
 
 /**
  * What a row's island says of the PR, as its colour (`IslandMark.vue`): `needed` (no PR yet, or a closed one:
- * the reminder), `handled` (open or merged), or `unknown` (nothing known: the plain chrome mint).
+ * the reminder), `handled` (open or merged, or the branch's own work landed: a lane merged inside another
+ * branch's PR needs no PR of its own), or `unknown` (nothing known: the plain chrome mint). Two hues, never a
+ * third: they are the operator's call (`CLAUDE.md` of this directory, the PR row).
  */
 export type IslandPr = 'needed' | 'handled' | 'unknown';
 
-/** `island.pr` as the mark reads it (the type's note). */
-export function island_pr(island: Pick<WorktreeIsland, 'pr'>): IslandPr {
+/** `island.pr` as the mark reads it (the type's note). Landed wins, whatever the branch's own PR says. */
+export function island_pr(island: Pick<WorktreeIsland, 'pr' | 'landing'>): IslandPr {
+    if (work_landed(island.landing)) return 'handled';
     const state = island.pr?.state;
     if (state === undefined) return 'unknown';
     return state === 'open' || state === 'merged' ? 'handled' : 'needed';
+}
+
+/** The island title's words for a landed branch: the PR that carried it, else that it is on the base. */
+function landed_words(landing: BranchLanding): string {
+    return landing.pr === null ? 'landed: on main' : `landed in #${landing.pr}`;
 }
 
 /**
@@ -822,14 +835,19 @@ export function session_island(
           ? `detached HEAD · ${island.path}`
           : island.path;
     const pr = island_pr(island);
+    const landed = work_landed(island.landing) ? island.landing! : null;
     const number = island.pr?.number == null ? '' : ` #${island.pr.number}`;
-    const pr_words = pr === 'unknown' ? '' : pr === 'handled' ? ` · PR${number} ${island.pr!.state}` : island.pr!.state === 'closed' ? ` · PR${number} closed, none open` : ' · no PR yet';
+    const pr_words = landed ? ` · ${landed_words(landed)}`
+        : pr === 'unknown' ? '' : pr === 'handled' ? ` · PR${number} ${island.pr!.state}` : island.pr!.state === 'closed' ? ` · PR${number} closed, none open` : ' · no PR yet';
     return {
         path: island.path,
         label: said ? null : text,
         title: `Worktree: ${where}${pr_words} — this agent's edits land there, not in the main checkout`,
         pr,
-        ...(island.pr ? { pr_state: island.pr.state } : {}),
+        // A landed island whose own PR reads none or closed sends only its colour: `island-status.ts` reads an
+        // exact state ahead of the colour, and that state is not its story any more. Open or merged still says it.
+        ...(island.pr && !(landed && (island.pr.state === 'none' || island.pr.state === 'closed'))
+            ? { pr_state: island.pr.state } : {}),
     };
 }
 
