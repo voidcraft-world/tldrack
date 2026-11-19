@@ -76,14 +76,18 @@ class PhoneLinkPlugin:
             log(f"phone-link: {config.error}")
         elif config.source != "default":
             log(f"phone-link: the token goes to {config.app_package} (set by {config.source})")
-        self._state = LinkState(PHONE_LINK_PORT, app=config.to_json())
+        if config.tailnet_error:
+            log(f"phone-link: {config.tailnet_error}")
+        elif config.tailnet is not None:
+            log(f"phone-link: the tailnet door is ON for {config.tailnet.authority}")
+        self._state = LinkState(PHONE_LINK_PORT, app=config.to_json(), tailnet=config.tailnet_json())
         self._tokens = TokenStore(directory)
         if self._tokens.value() is None:
             log(f"phone-link: cannot keep a token in {self._tokens.path.parent} ({self._tokens.error})")
         elif self._tokens.minted:
             log(f"phone-link: minted the link token in {self._tokens.path.parent}")
         self._server = LinkServer(
-            LinkApp(self._tokens, self._state, int(context.status_port)),
+            LinkApp(self._tokens, self._state, int(context.status_port), tailnet=config.tailnet),
             self._state,
             log=log,
             lock_path=directory / LOCK_FILE,

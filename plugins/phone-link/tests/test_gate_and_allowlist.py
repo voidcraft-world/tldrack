@@ -3,6 +3,7 @@
 import pytest
 
 from phone_link import allowlist, gate
+from phone_link.config import TailnetDoor
 
 NONCE = "n" * 43
 MAC = "a" * 64
@@ -91,6 +92,92 @@ def test_a_missing_or_malformed_credential_is_none(auth):
     else:
         sent["authorization"] = auth
     assert gate.credential(sent) is None
+
+
+# -- the tailnet door -----------------------------------------------------------------------------------
+DOOR = TailnetDoor("mymac.tail1234.ts.net", 7683, "operator@example.com")
+
+
+def served(**extra):
+    """A request as `tailscale serve` hands it on: the client's own Host, and serve's headers for a tailnet user."""
+    base = headers(
+        host=DOOR.authority,
+        x_forwarded_for="100.64.0.7",
+        x_forwarded_host=DOOR.authority,
+        x_forwarded_proto="https",
+        tailscale_user_login="operator@example.com",
+        tailscale_user_name="The Operator",
+        tailscale_user_profile_pic="https://example.com/p.png",
+        tailscale_headers_info="https://tailscale.com/s/serve-headers",
+    )
+    for name, value in extra.items():
+        name = name.replace("_", "-")
+        if value is None:
+            base.pop(name, None)
+        else:
+            base[name] = value if isinstance(value, list) else [value]
+    return base
+
+
+def test_the_door_does_not_exist_until_it_is_configured():
+    assert gate.refusal(served()) == gate.HOST_REFUSED
+    assert gate.refusal(served(), DOOR) is None
+
+
+def test_the_door_changes_nothing_for_loopback():
+    assert gate.refusal(headers(), DOOR) is None
+    # A tailnet caller claiming to be local still carries serve's headers, and rule 2 still refuses them.
+    assert gate.refusal(served(host="127.0.0.1:7683"), DOOR) == gate.PROXY_REFUSED
+    assert gate.refusal(headers(host="evil.example"), DOOR) == gate.HOST_REFUSED
+    assert gate.refusal(headers(x_forwarded_for="1.2.3.4"), DOOR) == gate.PROXY_REFUSED
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "mymac.tail1234.ts.net",  # the port is part of the name the door answers to
+        "mymac.tail1234.ts.net:8443",
+        "someone-else.tail1234.ts.net:7683",
+        "mymac.tail1234.ts.net.evil.example:7683",
+        "x" + DOOR.authority,
+    ],
+)
+def test_only_the_one_configured_name_and_port_is_the_door(host):
+    assert gate.refusal(served(host=host), DOOR) == gate.HOST_REFUSED
+
+
+def test_the_doors_name_is_matched_whatever_its_case():
+    assert gate.refusal(served(host=DOOR.authority.upper()), DOOR) is None
+    assert gate.refusal(served(tailscale_user_login="Operator@Example.com"), DOOR) is None
+    assert gate.refusal(served(x_forwarded_host=DOOR.host), DOOR) is None  # with or without the port
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"tailscale_funnel_request": "?1"},  # from the public internet
+        {"tailscale_user_login": "stranger@example.com"},
+        {"tailscale_user_login": None},  # a tagged device: serve vouches for no user
+        {"tailscale_user_login": ["operator@example.com", "operator@example.com"]},
+        {"x_forwarded_for": None},  # not through serve at all
+        {"x_forwarded_proto": "http"},
+        {"x_forwarded_proto": None},
+        {"x_forwarded_host": "evil.example"},
+        {"x_forwarded_host": None},
+        {"x_forwarded_port": "7683"},  # a header of serve's family that serve does not send
+        {"tailscale_something_new": "1"},
+        {"forwarded": "for=1.2.3.4"},
+        {"via": "1.1 proxy"},
+        {"x_real_ip": "1.2.3.4"},
+    ],
+)
+def test_the_door_takes_exactly_what_serve_sends_for_the_configured_login(change):
+    assert gate.refusal(served(**change), DOOR) == gate.TAILNET_REFUSED
+
+
+def test_a_browser_is_refused_at_the_door_too():
+    assert gate.refusal(served(origin="https://mymac.tail1234.ts.net:7683"), DOOR) == gate.BROWSER_REFUSED
+    assert gate.refusal(served(sec_fetch_site="same-origin"), DOOR) == gate.BROWSER_REFUSED
 
 
 # -- the allowlist ------------------------------------------------------------------------------------
