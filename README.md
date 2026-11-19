@@ -13,8 +13,8 @@ reads finished turns for you and marks them ✅ done or ⚠️ needs you.
   </tr>
   <tr><th colspan="2">Laya review · desktop</th><th>Laya review · Android</th></tr>
   <tr>
-    <td align="center" colspan="2"><a href="docs/img/laya-review-desktop.webp"><img src="docs/img/thumbs/laya-review-desktop.webp" width="568" alt="Laya review on the desktop: one finished turn's closing message as Laya read it, the deal filters, agreement with Sonnet and with Laya, and one button per grade: DONE, READ, RUNNING, NEEDS YOU, SKIP."></a></td>
-    <td align="center"><a href="docs/img/laya-review-android.webp"><img src="docs/img/thumbs/laya-review-android.webp" width="172" alt="Laya review on Android: the grade counts, one finished turn with Laya's score, and tap-only grade buttons along the bottom: DONE, READ, RUNNING, NEEDS YOU, SKIP, UNDO."></a></td>
+    <td align="center" colspan="2"><a href="docs/img/laya-review-desktop.webp"><img src="docs/img/thumbs/laya-review-desktop.webp" width="568" alt="Laya review on the desktop: one session's prompt and the closing message of its turn, Laya's score of 0.67 just under the cut, and one button per grade: DONE, READ, RUNNING, NEEDS YOU, SKIP. An annotation reads: I would mark it Done, so Laya gave the wrong answer; the bug is fixed and none of this ending text needed to be read by me."></a></td>
+    <td align="center"><a href="docs/img/laya-review-android.webp"><img src="docs/img/thumbs/laya-review-android.webp" width="252" alt="Laya review on Android: the grade counts, one finished turn with Laya's score, and tap-only grade buttons along the bottom: DONE, READ, RUNNING, NEEDS YOU, SKIP, UNDO."></a></td>
   </tr>
 </table>
 
