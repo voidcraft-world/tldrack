@@ -106,7 +106,7 @@ def test_running_signal_preserves_raw_choice(monkeypatch):
 
 
 def test_resume_and_distinct_scoring_days(lab, monkeypatch):
-    checkpoint = "voidcraft-agent-open-work-20261109-010000-3"
+    checkpoint = "tldrack-agent-open-work-20261109-010000-3"
     lab.checkpoint(checkpoint)
     monkeypatch.setattr(n, "manifest", lambda b: {"checkpoint": checkpoint, "at": "2026-11-09T00:00:00Z"})
     monkeypatch.setattr(n, "status", lambda b: {"ready": True})
@@ -173,11 +173,11 @@ def test_invalid_choice_confidence_refused(monkeypatch, confidence):
 def test_choice_checkpoint_stays_out_of_binary_candidates_and_retention_keeps_pointer(lab):
     from laya_lab import registry
 
-    name = "voidcraft-agent-open-work-20261101-010000-3"
+    name = "tldrack-agent-open-work-20261101-010000-3"
     lab.checkpoint(name)
     lab.path(f"checkpoints/{name}.data/head.json").write_text('{"kind":"needs-you-choice"}')
     for i in range(2, 6):
-        lab.checkpoint(f"voidcraft-agent-open-work-2026110{i}-010000")
+        lab.checkpoint(f"tldrack-agent-open-work-2026110{i}-010000")
     lab.path("needs-you/model.json").write_text(json.dumps({"version": 1, "shadow_only": True, "checkpoint": name}))
     assert name not in registry.available_checkpoints(lab.base, n.SURFACE)
     assert name in registry.retention(lab.base, n.SURFACE)["keep"]

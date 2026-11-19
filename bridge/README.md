@@ -121,7 +121,7 @@ foreground (Ctrl-C stops it), which is what `up` starts inside tmux:
 | `--port` | `TLDRACK_PORT` | `7681` | Port ttyd listens on |
 | `--status-port` | `TLDRACK_STATUS_PORT` | `--port + 1` | Port of the API and the page |
 | `--start-dir` | `TLDRACK_START_DIR` | the working directory | Where new sessions start |
-| `--session` | `TLDRACK_SESSION` | `voidcraft` | The tmux session a bare terminal URL opens |
+| `--session` | `TLDRACK_SESSION` | `tldrack` | The tmux session a bare terminal URL opens |
 | `--pinned` | — | off | Serve only the default session; ignore `?arg=` |
 | `--read-only` | — | off | View-only terminals |
 | `--no-index-patch` | — | off | Serve ttyd's stock page (no live font size, no Shift+Enter newline) |

@@ -2,7 +2,7 @@
  * The rack ingestors' shared middle.
  *
  * `rack-http-transport.ts` and a host application's own payload owner each
- * own a `create_fleet_ingestor`, and each keeps its own focus,
+ * own a `create_rack_ingestor`, and each keeps its own focus,
  * its own `pending_new` and its own idea of where the bridge is. What they must
  * never disagree about is what an optimistic row looks like and when a pending
  * `+ NEW` name stops being pending — those live here, once.

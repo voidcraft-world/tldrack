@@ -18,7 +18,6 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from tldrack.lead.runs import kind_word
 
 SKILL_ENV = "TLDRACK_LEAD_SKILL"
 
@@ -50,12 +49,12 @@ def launch_prompt(resume_run: str | None) -> str:
     )
 
 
-def crew_prompt(run: Mapping[str, Any], step: Mapping[str, Any]) -> str:
+def worker_prompt(run: Mapping[str, Any], step: Mapping[str, Any]) -> str:
     """The worker's first line. Its full brief is `lead brief`, printed from the store."""
     lead = run.get("lead_session") or "the lead"
     finish = (
         f"save it with `{CLI} report <file>`"
-        if step["kind"] == "scout"
+        if step["kind"] == "report"
         else f'commit, run the affected tests, then `{CLI} ready --title "…" --body-file <file>` '
         "(the bridge pushes and opens the PR: never git push)"
     )
@@ -78,7 +77,7 @@ def lead_context(run_id: str | None) -> str:
     return f"{ROLE} {where}"
 
 
-def crew_context(run_id: str, step_id: str) -> str:
+def worker_context(run_id: str, step_id: str) -> str:
     return (
         f"You are a worker on LEAD run {run_id}, step {step_id}. `{CLI} brief` prints your brief. Never use "
         f"AskUserQuestion (`{CLI} ask`); finish with `{CLI} ready` or `{CLI} report`; never git push."
@@ -152,14 +151,14 @@ def _age(seconds: float) -> str:
 def step_line(
     step: Mapping[str, Any],
     *,
-    crew_state: str | None,
+    worker_state: str | None,
     worker: Mapping[str, Any],
     parked_by: list[str],
     waiting: Mapping[str, Any] | None = None,
 ) -> str:
-    bits = [f"{step['step_id']:<5}", f"{kind_word(step['kind']):<6}", f"{step['lane']:<6}", f"{step['state']:<9}"]
-    if step.get("crew_session"):
-        bits.append(f"{step['crew_session']} ({step.get('profile') or '?'}) {crew_state or 'gone'}")
+    bits = [f"{step['step_id']:<5}", f"{step['kind']:<6}", f"{step['lane']:<6}", f"{step['state']:<9}"]
+    if step.get("worker_session"):
+        bits.append(f"{step['worker_session']} ({step.get('profile') or '?'}) {worker_state or 'gone'}")
     if worker.get("pr_url"):
         bits.append(f"PR {worker['pr_url'].rsplit('/', 1)[-1]}" + (f" CI {worker['ci']}" if worker.get("ci") else ""))
     if worker.get("pr_state") == "merged":
@@ -186,7 +185,7 @@ def status_text(
     events: list[Mapping[str, Any]],
     actions: list[Mapping[str, Any]],
     orphans: Iterable[Mapping[str, Any]] = (),
-    crew_live: int = 0,
+    worker_live: int = 0,
 ) -> str:
     lines = [ROLE, ""]
     if run is None:
@@ -202,11 +201,11 @@ def status_text(
         return "\n".join(lines)
     lines.append(f"RUN {run['id']} · {run['title']} · plan {run.get('plan_path')} (sha {str(run.get('plan_sha256'))[:12]})")
     over = (
-        f" (over the cap: no new spawn until {crew_live - run['parallel_max'] + 1} close)"
-        if crew_live > run["parallel_max"]
+        f" (over the cap: no new spawn until {worker_live - run['parallel_max'] + 1} close)"
+        if worker_live > run["parallel_max"]
         else ""
     )
-    lines.append(f"caps: {crew_live}/{run['parallel_max']} workers live{over} · {run['spawns']}/{run['spawn_cap']} spawns")
+    lines.append(f"caps: {worker_live}/{run['parallel_max']} workers live{over} · {run['spawns']}/{run['spawn_cap']} spawns")
     lines += ["", "STEPS"] + (step_lines or ["  (none yet: `tldrack lead step add`)"])
     if questions:
         lines += ["", "WORKER QUESTIONS (yours to answer)"]
@@ -244,7 +243,7 @@ def status_text(
 def brief_text(run: Mapping[str, Any], step: Mapping[str, Any], resolved: list[Mapping[str, Any]]) -> str:
     """`lead brief`: the worker's whole brief, read from the store on demand."""
     lines = [
-        f"LEAD run {run['id']} · {run['title']} · your step {step['step_id']} ({kind_word(step['kind'])}): {step['title']}",
+        f"LEAD run {run['id']} · {run['title']} · your step {step['step_id']} ({step['kind']}): {step['title']}",
         f"Plan: {run.get('plan_path')}",
         "",
         step["brief"],

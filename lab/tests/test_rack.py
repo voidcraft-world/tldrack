@@ -1,4 +1,4 @@
-"""`laya-lab fleet`: the rack's live use as counts, from a synthetic ledger, metrics store and next-step log.
+"""`laya-lab rack`: the rack's live use as counts, from a synthetic ledger, metrics store and next-step log.
 
 Every session name and text here is invented. No model loads.
 """
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from laya_lab import fleet
+from laya_lab import rack
 from laya_lab.golden import SUITES
 from laya_bridge.ledger import Ledger
 from tldrack import rack_metrics
@@ -36,7 +36,7 @@ class Desk:
 
     def raised(self, *, days_ago: float = 0, count: int = 1) -> None:
         self.now = NOW - timedelta(days=days_ago)
-        assert self.metrics.signal(fleet.REACHED_SIGNAL, "invented-session", count=count)
+        assert self.metrics.signal(rack.REACHED_SIGNAL, "invented-session", count=count)
 
 
 @pytest.fixture
@@ -69,7 +69,7 @@ def write_next_steps(path: Path, events: list[tuple[str, str, float]]) -> Path:
 
 
 def measure(desk, tmp_path, **kwargs):
-    return fleet.measure(
+    return rack.measure(
         desk.lab.base,
         SUITE_SPEC,
         now=NOW,
@@ -88,7 +88,7 @@ def test_each_verdict_is_banded_at_the_cuts_it_was_served_with(desk, tmp_path):
     got, why = measure(desk, tmp_path)
     assert why is None
     assert got["judged"] == 4 and got["verdicts"] == {"done": 1, "reply": 1, "open": 2}
-    assert got["reached"] == 2 and got["days"] == fleet.DEFAULT_DAYS
+    assert got["reached"] == 2 and got["days"] == rack.DEFAULT_DAYS
     assert got["latency"] == {"n": 4, "p50_ms": 400.0, "p90_ms": 400.0}
     assert got["next_step"] is None
 
@@ -124,11 +124,11 @@ def test_the_next_step_rate_is_what_the_log_says_was_taken(desk, tmp_path):
     assert got["next_step"] == {"suggested": 3, "taken": 2}
 
 
-def test_no_decision_or_no_metrics_store_is_no_fleet_with_a_reason(desk, tmp_path):
+def test_no_decision_or_no_metrics_store_is_no_rack_with_a_reason(desk, tmp_path):
     got, why = measure(desk, tmp_path)
     assert got is None and "no agent_open_work decision" in why
     desk.verdict(0.9)
-    got, why = fleet.measure(desk.lab.base, SUITE_SPEC, now=NOW, metrics_path=tmp_path / "absent.sqlite")
+    got, why = rack.measure(desk.lab.base, SUITE_SPEC, now=NOW, metrics_path=tmp_path / "absent.sqlite")
     assert got is None and "metrics" in why
 
 
@@ -139,34 +139,52 @@ def test_more_warnings_than_open_verdicts_is_refused_not_written(desk, tmp_path)
     assert got is None and "disagree" in why
 
 
-def test_fold_sets_fleet_and_keeps_every_other_key(desk, tmp_path):
+def test_fold_sets_rack_and_keeps_every_other_key(desk, tmp_path):
     desk.verdict(0.9)
     desk.raised()
     got, _ = measure(desk, tmp_path)
     results = tmp_path / "results" / "2026-11-13.json"
     results.parent.mkdir()
-    results.write_text(json.dumps({"v": 1, "voters": [], "sets": [], "fleet": None}), encoding="utf-8")
-    fleet.fold_into(results, got)
+    results.write_text(json.dumps({"v": 1, "voters": [], "sets": [], "rack": None}), encoding="utf-8")
+    rack.fold_into(results, got)
     written = json.loads(results.read_text(encoding="utf-8"))
-    assert written["fleet"] == got and written["voters"] == [] and written["v"] == 1
+    assert written["rack"] == got and written["voters"] == [] and written["v"] == 1
     assert not list(results.parent.glob(".*.tmp"))
+
+
+def test_a_file_and_a_command_line_from_before_the_rename_still_work(desk, tmp_path):
+    # Legacy (step 6.8): the block, the command and the bench flag were all `fleet` before 0.1.0.
+    from laya_lab import cli
+
+    desk.verdict(0.9)
+    desk.raised()
+    got, _ = measure(desk, tmp_path)
+    results = tmp_path / "2026-11-13.json"
+    results.write_text(json.dumps({"v": 1, "voters": [], "sets": [], "fleet": None}), encoding="utf-8")
+    rack.fold_into(results, got)
+    written = json.loads(results.read_text(encoding="utf-8"))
+    # step 6.8: the old block's name is gone from the file, and the old command line still parses.
+    assert written["rack"] == got and "fleet" not in written
+    parser = cli.build_parser()
+    assert cli.LEGACY_COMMANDS[parser.parse_args(["fleet"]).command] == "rack"
+    assert parser.parse_args(["bench", "--fleet"]).rack is True
 
 
 def test_fold_refuses_a_fixture_or_a_missing_file(tmp_path):
     fixture = tmp_path / "fixture.json"
-    fixture.write_text(json.dumps({"fixture": True, "fleet": None}), encoding="utf-8")
+    fixture.write_text(json.dumps({"fixture": True, "rack": None}), encoding="utf-8")
     with pytest.raises(ValueError):
-        fleet.fold_into(fixture, {})
+        rack.fold_into(fixture, {})
     with pytest.raises(FileNotFoundError):
-        fleet.fold_into(tmp_path / "absent.json", {})
+        rack.fold_into(tmp_path / "absent.json", {})
 
 
 def test_the_cli_folds_into_the_named_day(desk, tmp_path, monkeypatch, capsys):
     desk.verdict(0.9)
     desk.raised()
-    real = fleet.measure
+    real = rack.measure
     monkeypatch.setattr(
-        fleet,
+        rack,
         "measure",
         lambda base, suite, days: real(
             base, suite, days=days, now=NOW, metrics_path=desk.metrics.path, next_step_path=tmp_path / "none.jsonl"
@@ -174,8 +192,8 @@ def test_the_cli_folds_into_the_named_day(desk, tmp_path, monkeypatch, capsys):
     )
     out_dir = tmp_path / "results"
     out_dir.mkdir()
-    (out_dir / "2026-11-13.json").write_text(json.dumps({"v": 1, "fleet": None}), encoding="utf-8")
-    assert fleet.cmd(SUITE, desk.lab.base, write=True, day="2026-11-13", out_dir=out_dir) == 0
-    assert json.loads((out_dir / "2026-11-13.json").read_text(encoding="utf-8"))["fleet"]["judged"] == 1
+    (out_dir / "2026-11-13.json").write_text(json.dumps({"v": 1, "rack": None}), encoding="utf-8")
+    assert rack.cmd(SUITE, desk.lab.base, write=True, day="2026-11-13", out_dir=out_dir) == 0
+    assert json.loads((out_dir / "2026-11-13.json").read_text(encoding="utf-8"))["rack"]["judged"] == 1
     assert "invented" not in capsys.readouterr().out
-    assert fleet.cmd(SUITE, desk.lab.base, write=True, day="2026-11-14", out_dir=out_dir) == 1
+    assert rack.cmd(SUITE, desk.lab.base, write=True, day="2026-11-14", out_dir=out_dir) == 1

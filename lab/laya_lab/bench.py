@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Any
 
 from laya_lab import siblings  # noqa: F401  (puts laya_bridge on sys.path)
-from laya_lab import compare, fleet, infer
+from laya_lab import compare, rack, infer
 from laya_lab import floor as floor_voter
 from laya_lab.golden import SUITES, Suite, load_cases
 from laya_lab.latency import spread
@@ -854,7 +854,7 @@ def results(
     seed: int = BOOTSTRAP_SEED,
     resamples: int = BOOTSTRAP_RESAMPLES,
 ) -> dict[str, Any]:
-    """The whole file. `fleet` (the rack's live use) is None here: `run` measures it (`fleet.py` owns how)."""
+    """The whole file. `rack` (the rack's live use) is None here: `run` measures it (`rack.py` owns how)."""
     voters = [voter for voter in plan.voters if voter.name in answered]
     scored = []
     for set_name, data in sets.items():
@@ -879,7 +879,7 @@ def results(
         "commit": commit,
         "voters": [voter_entry(voter, answered) for voter in voters],
         "sets": scored,
-        "fleet": None,
+        "rack": None,
         "reproduce": {"command": REPRODUCE.format(suite=suite.name), "set": "golden"},
     }
 
@@ -984,13 +984,13 @@ def run(
     out_dir: Path | None = None,
     day: str | None = None,
     challengers: Sequence[str] = (),
-    with_fleet: bool = False,
+    with_rack: bool = False,
 ) -> int:
     """The command. `plan` (tests: voters that load nothing) replaces the machine's own; `out_dir` and `day` say
     where the file goes (default: this checkout's `bench/results/`, today).
 
-    `with_fleet` (`--fleet`) also measures the rack's own use into the file. Off by default: a results file is
-    published, and the fleet block is the operator's week in counts, so it goes out only when they ask for it."""
+    `with_rack` (`--rack`) also measures the rack's own use into the file. Off by default: a results file is
+    published, and the rack block is the operator's week in counts, so it goes out only when they ask for it."""
     suite = SUITES[name]
     try:
         plan = (
@@ -1017,12 +1017,12 @@ def run(
         print("[laya-lab] bench: no voter answered; nothing was written")
         return 1
     payload = results(suite, sets, plan, answered, generated_at=rows.utc_stamp(), commit=head_commit(paths.REPO_ROOT))
-    if with_fleet:
-        payload["fleet"], no_fleet = fleet.measure(base, suite)
-        if no_fleet:
-            print(f"  fleet    none: {no_fleet}")
+    if with_rack:
+        payload["rack"], no_rack = rack.measure(base, suite)
+        if no_rack:
+            print(f"  rack     none: {no_rack}")
     else:
-        print("  fleet    withheld: the rack's own use stays out of a published file unless --fleet asks for it")
+        print("  rack     withheld: the rack's own use stays out of a published file unless --rack asks for it")
     try:
         write_results(payload, sets, out_dir, day)
     except RuntimeError as error:

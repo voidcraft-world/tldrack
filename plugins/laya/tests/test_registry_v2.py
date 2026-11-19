@@ -89,7 +89,7 @@ def test_a_promotion_before_restart_keeps_the_running_checkpoints_own_cut(tree):
 def test_aliases_that_name_nothing_or_collide_are_dropped(tree):
     v2(tree, champion=CHECKPOINT, challenger=None)
     payload = json.loads((tree.base / "models.json").read_text())
-    payload["aliases"][SURFACE].update(challenger=CHECKPOINT, previous="voidcraft-agent-open-work-19990101-0000")
+    payload["aliases"][SURFACE].update(challenger=CHECKPOINT, previous="tldrack-agent-open-work-19990101-0000")
     payload["aliases"]["paste"] = {"champion": CHECKPOINT}  # another surface's version
     tree.models(payload)
     aliases = paths.registry_versions(tree.base)["aliases"]
@@ -113,21 +113,21 @@ def test_migrate_payload_carries_each_served_entry_and_its_own_cut_and_names_wha
         "version": 1,
         "models": {
             FINE_TUNE: {"path": f"checkpoints/{CHECKPOINT}", "surface": SURFACE, "trained": {"at": "2026-01-02T03:04:00Z"}},
-            "voidcraft-paste": {"path": "checkpoints/voidcraft-paste-20261009-1200"},
+            "tldrack-paste": {"path": "checkpoints/tldrack-paste-20261009-1200"},
             "my-custom": {"path": "checkpoints/x"},
         },
-        "thresholds": {SURFACE: cut(CHECKPOINT), "paste": cut("another-folder", model="voidcraft-paste"), "news_gate": cut("r")},
+        "thresholds": {SURFACE: cut(CHECKPOINT), "paste": cut("another-folder", model="tldrack-paste"), "news_gate": cut("r")},
     }
     out, notes = paths.migrate_payload(v1)
     assert out["version"] == 2 and out["models"][FINE_TUNE]["path"] == f"checkpoints/{CHECKPOINT}"
     assert out["thresholds"][SURFACE]["at"] == 0.62
     assert out["aliases"] == {
         SURFACE: {"champion": CHECKPOINT, "challenger": None, "previous": None},
-        "paste": {"champion": "voidcraft-paste-20261009-1200", "challenger": None, "previous": None},
+        "paste": {"champion": "tldrack-paste-20261009-1200", "challenger": None, "previous": None},
     }
     assert out["versions"][CHECKPOINT]["cut"]["at"] == 0.62 and out["versions"][CHECKPOINT]["tags"] == {"gate": "MIGRATED"}
     assert out["versions"][CHECKPOINT]["registered_at"] == "2026-01-02T03:04:00Z"
-    assert "cut" not in out["versions"]["voidcraft-paste-20261009-1200"]
+    assert "cut" not in out["versions"]["tldrack-paste-20261009-1200"]
     assert any("my-custom" in note for note in notes) and any("paste cut" in note for note in notes)
     assert any("news_gate cut" in note for note in notes)
     assert paths.migrate_payload(out) == (out, []), "a v2 payload passes through"

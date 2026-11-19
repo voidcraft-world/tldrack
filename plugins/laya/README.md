@@ -112,7 +112,7 @@ and laya-lab never forks them. Only `guard`, `runtime` and `plugin` import `void
   bearer key never leaves the plugin. Everything else reaches Laya through the bridge's guards.
 - **English checkpoint only** at start (`LAYA_MODELS=english`); stops itself after 15 idle minutes.
 - **Fine-tunes**: each surface's @champion in `<data>/laya/models.json` (written by laya-lab, `lab/`)
-  is served by name — a caller pins one with `"model": "voidcraft-paste"`. A @challenger is never loaded:
+  is served by name — a caller pins one with `"model": "tldrack-paste"` (a legacy `voidcraft-` name, from before step 6.8, reads as the same model for one release: `served_name` in `paths.py`). A @challenger is never loaded:
   laya-lab's nightly pack scores it in shadow (`shadow/<surface>.jsonl`, read through `lab_files.read_shadow`).
 - **File modes**: at mount the plugin tightens the operator's files under `laya/` to 0600 and their
   folders to 0700 (`files.tighten_params`), and logs each path it changed.

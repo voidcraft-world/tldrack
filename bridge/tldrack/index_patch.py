@@ -17,14 +17,16 @@ ttyd's xterm.js drops. The script handles it. Why, and the read-refusal rule:
 owned by ui/src/engine/terminal/terminal-clipboard.ts — see the note there.
 
 Contract with the page that frames ttyd (keep the string literals in sync):
-  'voidcraft-terminal-config'    ↔ ui/src/events/messages.ts MESSAGE_TERMINAL_CONFIG
-  'voidcraft-terminal-font-step' ↔ ui/src/events/messages.ts MESSAGE_TERMINAL_FONT_STEP
-  'voidcraft-terminal-key'       ↔ ui/src/events/messages.ts MESSAGE_TERMINAL_KEY
+  'tldrack-terminal-config'    ↔ ui/src/events/messages.ts MESSAGE_TERMINAL_CONFIG
+  'tldrack-terminal-font-step' ↔ ui/src/events/messages.ts MESSAGE_TERMINAL_FONT_STEP
+  'tldrack-terminal-key'       ↔ ui/src/events/messages.ts MESSAGE_TERMINAL_KEY
+The two messages this page reads are also taken under their legacy names (LEGACY_MESSAGE_PREFIX: owned by
+ui/src/events/messages.ts — see the note there), so a host one release behind keeps its font control and key bar.
 The config message carries `font_size` (device px), applied live to xterm, and
 Cmd/Ctrl + = / − / 0 are consumed here as font-size steps so they never trigger
 browser page zoom while the terminal has focus.
 
-Soft keys ('voidcraft-terminal-key') back the REMOTE rack's on-screen key bar:
+Soft keys ('tldrack-terminal-key') back the REMOTE rack's on-screen key bar:
 an Android keyboard has no Esc, Tab, Ctrl or arrows, and Claude Code needs Esc
 and Ctrl-C constantly. **The message carries a TOKEN and this file owns the byte
 sequence — never the other way round.** A caller-supplied byte string would be a
@@ -150,11 +152,13 @@ INJECTED_SCRIPT = r"""
     window.addEventListener('message', function (event) {
         if (!from_trusted_parent(event)) return;
         var data = event.data;
-        if (data && data.type === 'voidcraft-terminal-key') {
+        var type = data ? String(data.type) : '';
+        /* 'voidcraft-…': the legacy names, read for one release (step 6.8); nothing here posts them. */
+        if (type === 'tldrack-terminal-key' || type === 'voidcraft-terminal-key') {
             send_soft_key(data.key);
             return;
         }
-        if (!data || data.type !== 'voidcraft-terminal-config') return;
+        if (type !== 'tldrack-terminal-config' && type !== 'voidcraft-terminal-config') return;
         var font_size = Number(data.font_size);
         if (font_size >= 8 && font_size <= 120) {
             pending_font_size = Math.round(font_size);
@@ -191,7 +195,7 @@ INJECTED_SCRIPT = r"""
         else return;
         e.preventDefault();
         e.stopImmediatePropagation();
-        window.parent.postMessage({ type: 'voidcraft-terminal-font-step', step: step }, '*');
+        window.parent.postMessage({ type: 'tldrack-terminal-font-step', step: step }, '*');
     }, true);
 
     /* ── Copy on select: tmux copy-mode → OSC 52 → the clipboard ─────────

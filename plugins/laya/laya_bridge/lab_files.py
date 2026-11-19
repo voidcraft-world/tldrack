@@ -54,6 +54,7 @@ from laya_bridge.paths import (
     data_file,
     dataset_versions_path,
     fine_tune_name,
+    served_name,
     shadow_path,
     stability_path,
     stop_set_path,
@@ -241,14 +242,16 @@ def newest_report(base: Path, suite: str, model: str, kind: str) -> tuple[Path, 
     """The newest `kind` report (golden | heldout) of `suite` for `model`, or None.
 
     Matched by filename, then by the report's own `model` (and `kind`; a report with none is golden),
-    so a renamed file never speaks for another model. Each read is capped at 1 MiB.
+    so a renamed file never speaks for another model. A report under the legacy name is the same model's
+    (`paths.served_name`). Each read is capped at 1 MiB.
     """
     pattern = golden_report_pattern(suite) if kind == "golden" else heldout_report_pattern(suite)
+    model = served_name(model)
     for match, path in _listing(base, pattern):
-        if match["model"] != model:
+        if served_name(match["model"]) != model:
             continue
         report = _report(path)
-        if report is None or report.get("model") != model:
+        if report is None or served_name(str(report.get("model"))) != model:
             continue
         if report.get("kind", "golden") != kind or report.get("suite", suite) != suite:
             continue
@@ -832,7 +835,7 @@ def _parse_scores(data: bytes) -> list[dict]:
             continue
         if any(name in row for name in TEACHER_FIELDS) and not _teacher_ok(row):
             row = {name: value for name, value in row.items() if name not in TEACHER_FIELDS}
-        kept.append(row)
+        kept.append({**row, "model": served_name(row["model"])})
     return kept
 
 
@@ -1072,7 +1075,7 @@ def threshold_view(raw: Any) -> dict | None:
     labels = raw.get("labels")
     return {
         "at": float(raw["at"]),
-        "model": raw["model"],
+        "model": served_name(raw["model"]),
         "checkpoint": raw["checkpoint"],
         "swept_at": raw["swept_at"] if is_iso(raw.get("swept_at")) else None,
         "labels": labels if labels in HELDOUT_LABELS else None,

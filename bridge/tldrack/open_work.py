@@ -134,7 +134,7 @@ FALSE_DONE_COST = 3.0
 
 #: The laya-lab fine-tune this surface pins when one is registered (`fine_tune_name` convention,
 #: owned by schemas/src/decide.ts).
-FINE_TUNE_MODEL = "voidcraft-agent-open-work"
+FINE_TUNE_MODEL = "tldrack-agent-open-work"
 
 #: The ledger surface every verdict is tagged with (`DECIDE_SURFACES`, schemas/src/decide.ts).
 LEDGER_SURFACE = "agent_open_work"

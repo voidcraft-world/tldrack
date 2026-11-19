@@ -169,8 +169,8 @@ def test_the_stamps_ride_one_leading_field_and_reach_the_row(tmp_path):
     tail = ("", "", "1700000000", "", "lead-1", "0", "1", "1", "/repo", "a", "a title")
     both = parse_tmux_panes(TMUX_FIELD_SEP.join(("fable opus", *tail)))["lead-1"]
     assert (both["launch_model"], both["subagent_model"]) == ("fable", "opus")
-    crew = parse_tmux_panes(TMUX_FIELD_SEP.join(("opus ", *tail)))["lead-1"]
-    assert crew["launch_model"] == "opus" and "subagent_model" not in crew
+    worker = parse_tmux_panes(TMUX_FIELD_SEP.join(("opus ", *tail)))["lead-1"]
+    assert worker["launch_model"] == "opus" and "subagent_model" not in worker
     capped = parse_tmux_panes(TMUX_FIELD_SEP.join((" opus", *tail)))["lead-1"]
     assert capped["subagent_model"] == "opus" and "launch_model" not in capped
     for unset in (" ", "", "x; y"):  # tmux prints a lone space for two unset options

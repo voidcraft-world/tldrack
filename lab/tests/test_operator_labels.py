@@ -190,7 +190,7 @@ def built_rows(lab):
     return [json.loads(line) for line in (lab.base / "data" / "agent_open_work.jsonl").read_text().splitlines()]
 
 
-def retrain(lab, built, name="voidcraft-agent-open-work-20261110-0300"):
+def retrain(lab, built, name="tldrack-agent-open-work-20261110-0300"):
     """What `train.run` does with a built set: the door, then the training record of a registered checkpoint."""
     from laya_lab.registry import register
     from laya_lab.train import withhold_reserve
@@ -239,7 +239,7 @@ def test_a_long_hand_off_graded_at_both_doors_trains_through_neither_key_when_on
     assert {row["key"] for row in built} == {train_key}
     stale = [*built, {"key": short_key, "state": fitted, "questions": {}, "expected": {"q": True}}]
     assert retrain(lab, stale) == (built, 1), "a set built before the fix: the door holds the other key's row"
-    trained, _without = rows.trained_keys(lab.base, "voidcraft-agent-open-work")
+    trained, _without = rows.trained_keys(lab.base, "tldrack-agent-open-work")
     assert trained == {train_key} and open_work_data.judged_key(full) not in trained
     assert label_budget.read(lab.base, SURFACE).reserve == {full_key}
     ready = review_data.sweep_readiness(lab.base, SURFACE)

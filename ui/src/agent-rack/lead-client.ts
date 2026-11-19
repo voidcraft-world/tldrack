@@ -468,7 +468,7 @@ export interface LeadActionDeps {
     /** The rack's notice strip: a refusal, or the steps an answer reopened. */
     launch_notice: Pick<LaunchNotice, 'show' | 'clear'>;
     /** Tick the owner's rack ingestor, so the new row (and with it the hand-off) lands now. */
-    tick_fleet: () => void;
+    tick_rack: () => void;
     /** Re-read `/lead/state`, so a press shows at once rather than a poll later. */
     tick_lead: () => void;
     fetch_impl?: FetchImpl;
@@ -488,7 +488,7 @@ export function handle_lead_action(action: string, value: unknown, deps: LeadAct
             base_url: deps.base_url,
             on_launched: (session) => {
                 deps.island_focus.arm(session, (deps.now ?? Date.now)());
-                deps.tick_fleet();
+                deps.tick_rack();
                 deps.tick_lead();
             },
             on_failure: (message) => deps.launch_notice.show(message),

@@ -38,8 +38,8 @@ def todays_golden(model="english", **extra):
 def test_report_names_match_their_patterns():
     stamp = lab_files.report_stamp(datetime(2026, 10, 27, 1, 2, 3, tzinfo=timezone.utc))
     assert stamp == "20261027-010203"
-    golden = lab_files.golden_report_name(SUITE, "voidcraft-agent-open-work", stamp)
-    assert lab_files.golden_report_pattern(SUITE).fullmatch(golden)["model"] == "voidcraft-agent-open-work"
+    golden = lab_files.golden_report_name(SUITE, "tldrack-agent-open-work", stamp)
+    assert lab_files.golden_report_pattern(SUITE).fullmatch(golden)["model"] == "tldrack-agent-open-work"
     heldout = lab_files.heldout_report_name(SUITE, "english", "operator", stamp)
     match = lab_files.heldout_report_pattern(SUITE).fullmatch(heldout)
     assert (match["model"], match["labels"], match["stamp"]) == ("english", "operator", stamp)
@@ -50,7 +50,7 @@ def test_todays_filenames_are_read():
     pattern = lab_files.golden_report_pattern(SUITE)
     for name, model in (
         ("agent-open-work-english-20260102-010101.json", "english"),
-        ("agent-open-work-voidcraft-agent-open-work-20260102-030405.json", "voidcraft-agent-open-work"),
+        ("agent-open-work-tldrack-agent-open-work-20260102-030405.json", "tldrack-agent-open-work"),
     ):
         assert pattern.fullmatch(name)["model"] == model
 
@@ -61,7 +61,7 @@ def test_newest_report_matches_name_and_the_reports_own_model(tree):
     write_report(tree, "agent-open-work-english-20261017-000000.json", todays_golden(model="multilingual"))  # renamed
     write_report(tree, "agent-open-work-english-20261018-000000.json", {"model": "english", "kind": "heldout"})
     write_report(
-        tree, "agent-open-work-voidcraft-agent-open-work-20261019-000000.json", todays_golden(model="voidcraft-agent-open-work")
+        tree, "agent-open-work-tldrack-agent-open-work-20261019-000000.json", todays_golden(model="tldrack-agent-open-work")
     )
     path, report = lab_files.newest_report(tree.base, SUITE, "english", "golden")
     assert path.name == "agent-open-work-english-20260102-010203.json" and report["cases"] == 31
@@ -118,10 +118,10 @@ def test_golden_view_refuses_a_broken_report():
 
 def test_heldout_round_trip(tree):
     stamp = "20261027-010203"
-    name = lab_files.heldout_report_name(SUITE, "voidcraft-agent-open-work", "operator", stamp)
-    head = lab_files.heldout_report_head("2026-10-27T01:02:03Z", SUITE, "voidcraft-agent-open-work", "operator", 48, 0.62, 0.55)
+    name = lab_files.heldout_report_name(SUITE, "tldrack-agent-open-work", "operator", stamp)
+    head = lab_files.heldout_report_head("2026-10-27T01:02:03Z", SUITE, "tldrack-agent-open-work", "operator", 48, 0.62, 0.55)
     write_report(tree, name, {**head, "sweep": [], "misses": [{"key": "0123456789abcdef"}]})
-    path, report = lab_files.newest_report(tree.base, SUITE, "voidcraft-agent-open-work", "heldout")
+    path, report = lab_files.newest_report(tree.base, SUITE, "tldrack-agent-open-work", "heldout")
     assert lab_files.heldout_view(path, report) == {
         "at": "2026-10-27T01:02:03Z",
         "rows": 48,
@@ -156,7 +156,7 @@ def test_a_operator_calibration_block_reaches_ops_as_numbers_only():
 
 
 def test_scores_round_trip_and_bad_rows_are_dropped(tree):
-    good = lab_files.scores_row(rows.state_key("t"), 0.81, "voidcraft-agent-open-work", "ck-1", 1, 0.7, "2026-10-27T01:02:03Z")
+    good = lab_files.scores_row(rows.state_key("t"), 0.81, "tldrack-agent-open-work", "ck-1", 1, 0.7, "2026-10-27T01:02:03Z")
     tree.write_jsonl(
         "data/agent-open-work-laya-p.jsonl",
         [
@@ -197,34 +197,34 @@ def test_threshold_and_trained_entries_round_trip_through_the_registry(tree):
         thresholds={
             "agent_open_work": lab_files.threshold_entry(
                 0.62,
-                "voidcraft-agent-open-work",
-                "voidcraft-agent-open-work-20260102-0304",
+                "tldrack-agent-open-work",
+                "tldrack-agent-open-work-20260102-0304",
                 "2026-10-27T01:02:03Z",
                 "operator",
                 48,
                 0.55,
-                "heldout-agent-open-work-voidcraft-agent-open-work-operator-20261027-010203.json",
+                "heldout-agent-open-work-tldrack-agent-open-work-operator-20261027-010203.json",
             )
         }
     )
     payload = json.loads((tree.base / "models.json").read_text())
-    payload["models"]["voidcraft-agent-open-work"]["trained"] = lab_files.trained_entry(
+    payload["models"]["tldrack-agent-open-work"]["trained"] = lab_files.trained_entry(
         2, 400, 70, "55cf4c4", "2026-01-02T03:04:00Z"
     )
     tree.models(payload)
     view = paths.registry_view(tree.base)
     assert view["thresholds"]["agent_open_work"] == {
         "at": 0.62,
-        "model": "voidcraft-agent-open-work",
-        "checkpoint": "voidcraft-agent-open-work-20260102-0304",
+        "model": "tldrack-agent-open-work",
+        "checkpoint": "tldrack-agent-open-work-20260102-0304",
         "swept_at": "2026-10-27T01:02:03Z",
         "labels": "operator",
         "rows": 48,
         "kappa": 0.55,
-        "report": "heldout-agent-open-work-voidcraft-agent-open-work-operator-20261027-010203.json",
+        "report": "heldout-agent-open-work-tldrack-agent-open-work-operator-20261027-010203.json",
         "done_at": None,
     }
-    model = view["models"]["voidcraft-agent-open-work"]
+    model = view["models"]["tldrack-agent-open-work"]
     assert model["trained"] == {
         "epochs": 2,
         "train_rows": 400,
@@ -238,8 +238,8 @@ def test_threshold_and_trained_entries_round_trip_through_the_registry(tree):
 def test_a_malformed_threshold_is_dropped(tree):
     tree.register(
         thresholds={
-            "agent_open_work": {"at": True, "model": "voidcraft-agent-open-work", "checkpoint": "x"},
-            "Bad Surface": {"at": 0.5, "model": "voidcraft-agent-open-work", "checkpoint": "x"},
+            "agent_open_work": {"at": True, "model": "tldrack-agent-open-work", "checkpoint": "x"},
+            "Bad Surface": {"at": 0.5, "model": "tldrack-agent-open-work", "checkpoint": "x"},
         }
     )
     assert paths.registry_view(tree.base)["thresholds"] == {}
@@ -249,8 +249,8 @@ def test_a_malformed_threshold_is_dropped(tree):
 def test_a_done_cut_rides_the_threshold_entry_only_under_the_open_cut(done_at, kept):
     entry = lab_files.threshold_entry(
         0.62,
-        "voidcraft-agent-open-work",
-        "voidcraft-agent-open-work-20260102-0304",
+        "tldrack-agent-open-work",
+        "tldrack-agent-open-work-20260102-0304",
         "2026-10-27T01:02:03Z",
         "operator",
         48,
@@ -281,7 +281,7 @@ LATENCY = {
         "state": "ran",
         "states": 900,
         "overflowed": 4,
-        "tokenizer": {"model": "voidcraft-agent-open-work", "digest": "sha256:0123456789abcdef", "window": 512, "room": 470},
+        "tokenizer": {"model": "tldrack-agent-open-work", "digest": "sha256:0123456789abcdef", "window": 512, "room": 470},
     },
 }
 
@@ -346,7 +346,7 @@ def test_a_broken_latency_report_has_no_view(tree):
 
 # -- the stability meter ---------------------------------------------------------------
 
-V1, V2, V3, V4 = (f"voidcraft-agent-open-work-2026110{day}-0900" for day in range(1, 5))
+V1, V2, V3, V4 = (f"tldrack-agent-open-work-2026110{day}-0900" for day in range(1, 5))
 
 
 def scored(version, verdicts, *, cut=0.7, device="mps", digest="sha256:aaaa", at="2026-11-09T09:00:00Z"):

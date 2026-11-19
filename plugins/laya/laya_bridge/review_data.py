@@ -172,7 +172,6 @@ FREE_CLASSES = ("new", "repeat")
 #: The row a verdict landed on, flagged or not (`landing.HELD_REASONS`, `free` when nothing held it), or `unknown`.
 #: Recall splits on these.
 AUDIENCES = ("free", *landing.HELD_REASONS, "unknown")
-FINE_TUNE_PREFIX = "voidcraft-"
 
 
 @dataclass(frozen=True)
@@ -204,8 +203,9 @@ def served_model(base: Path, surface: str, loaded: Mapping[str, str] | None = No
 
 
 def is_laya_model(name: str) -> bool:
-    """A reference `by` that is a Laya model (a built-in or a `voidcraft-*` fine-tune), not a labeller."""
-    return name in BUILTIN_MODELS or name.startswith(FINE_TUNE_PREFIX)
+    """A reference `by` that is a Laya model (a built-in or a `tldrack-*` fine-tune, its legacy name too), not a
+    labeller."""
+    return name in BUILTIN_MODELS or paths.served_name(name).startswith(paths.FINE_TUNE_PREFIX)
 
 
 def training_record(base: Path, spec: ReviewSurface, served: Served) -> tuple[frozenset[str], bool]:
@@ -646,7 +646,7 @@ def _ledger_laya(decision: Mapping[str, Any], spec: ReviewSurface) -> dict | Non
     return {
         "p": float(first["p"]),
         "threshold": float(threshold),
-        "model": str(decision.get("model") or "english"),
+        "model": paths.served_name(str(decision.get("model") or "english")),
         "checkpoint": Path(relative).name if relative else None,
         "question_version": version if files.is_count(version) else 0,
         "source": "ledger",

@@ -83,7 +83,7 @@ def start(plan: str, title: str, parallel: int) -> None:
 def cap(parallel: int) -> None:
     """Change the run's live-worker cap. Lowering it kills no worker; it only holds new spawns."""
     result = post("cap", {"parallel": parallel})
-    click.echo(f"{result['run']}: worker cap {result['parallel']} ({result['crew_live']} live)")
+    click.echo(f"{result['run']}: worker cap {result['parallel']} ({result['worker_live']} live)")
 
 
 @lead.group()
@@ -99,10 +99,10 @@ def step() -> None:
 )
 @click.option(
     "--kind",
-    type=click.Choice(["change", "report", "ship", "scout"]),
+    type=click.Choice(["change", "report", "ship", "scout"]),  # ship, scout: legacy (step 6.8), read as change, report
     default="change",
     show_default=True,
-    help="change: delivers a PR or a merge. report: research that ends in a report. (ship and scout are their old names.)",
+    help="change: delivers a PR or a merge. report: research that ends in a report. (ship and scout are their old names, taken for one release.)",
 )
 @click.option("--lane", type=click.Choice(["claude", "codex", "any"]), default="claude", show_default=True)
 @click.option("--after", multiple=True, help="A step that must land first (repeat).")

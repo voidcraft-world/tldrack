@@ -50,38 +50,38 @@ def test_utc_stamp_is_the_z_form_zod_reads():
 
 
 def test_trained_keys_union_every_record_and_report_checkpoints_without_one(tree):
-    tree.register(checkpoint="voidcraft-agent-open-work-20260102-0203", train_texts=["alpha", "beta"])
-    tree.register(checkpoint="voidcraft-agent-open-work-20260102-0304", train_texts=["gamma"])
-    tree.path("checkpoints/voidcraft-agent-open-work-20261017-0900").mkdir()  # no .data
-    tree.register(checkpoint="voidcraft-agent-open-work-x-20260102-0304", train_texts=["other surface"])  # a longer name
-    keys, without = rows.trained_keys(tree.base, "voidcraft-agent-open-work")
+    tree.register(checkpoint="tldrack-agent-open-work-20260102-0203", train_texts=["alpha", "beta"])
+    tree.register(checkpoint="tldrack-agent-open-work-20260102-0304", train_texts=["gamma"])
+    tree.path("checkpoints/tldrack-agent-open-work-20261017-0900").mkdir()  # no .data
+    tree.register(checkpoint="tldrack-agent-open-work-x-20260102-0304", train_texts=["other surface"])  # a longer name
+    keys, without = rows.trained_keys(tree.base, "tldrack-agent-open-work")
     assert keys == {rows.state_key(t) for t in ("alpha", "beta", "gamma")}
-    assert without == ("voidcraft-agent-open-work-20261017-0900",)
+    assert without == ("tldrack-agent-open-work-20261017-0900",)
 
 
 def test_trained_keys_skip_bad_lines_and_never_keep_rows(tree):
-    path = tree.write_jsonl("checkpoints/voidcraft-agent-open-work-1.data/train.jsonl", [{"state": "one"}])
+    path = tree.write_jsonl("checkpoints/tldrack-agent-open-work-1.data/train.jsonl", [{"state": "one"}])
     with path.open("a") as handle:
         handle.write("{torn\n")
         handle.write(json.dumps({"state": "two"}) + "\n")
-    tree.path("checkpoints/voidcraft-agent-open-work-1").mkdir()
-    keys, without = rows.trained_keys(tree.base, "voidcraft-agent-open-work")
+    tree.path("checkpoints/tldrack-agent-open-work-1").mkdir()
+    keys, without = rows.trained_keys(tree.base, "tldrack-agent-open-work")
     assert keys == {rows.state_key("one"), rows.state_key("two")} and without == ()
 
 
 def test_a_linked_or_oversized_record_counts_as_no_record(tree, tmp_path, monkeypatch):
     outside = tmp_path / "outside.jsonl"
     outside.write_text(json.dumps({"state": "leak"}) + "\n")
-    tree.path("checkpoints/voidcraft-agent-open-work-1").mkdir()
-    data = tree.path("checkpoints/voidcraft-agent-open-work-1.data/x").parent
+    tree.path("checkpoints/tldrack-agent-open-work-1").mkdir()
+    data = tree.path("checkpoints/tldrack-agent-open-work-1.data/x").parent
     (data / "train.jsonl").symlink_to(outside)
-    keys, without = rows.trained_keys(tree.base, "voidcraft-agent-open-work")
-    assert keys == frozenset() and without == ("voidcraft-agent-open-work-1",)
+    keys, without = rows.trained_keys(tree.base, "tldrack-agent-open-work")
+    assert keys == frozenset() and without == ("tldrack-agent-open-work-1",)
 
     os.unlink(data / "train.jsonl")
     (data / "train.jsonl").write_text(json.dumps({"state": "big"}) + "\n")
     monkeypatch.setattr(rows, "TRAIN_CAP_BYTES", 4)
-    assert rows.trained_keys(tree.base, "voidcraft-agent-open-work") == (frozenset(), ("voidcraft-agent-open-work-1",))
+    assert rows.trained_keys(tree.base, "tldrack-agent-open-work") == (frozenset(), ("tldrack-agent-open-work-1",))
 
 
 def test_trained_keys_are_cached_per_stamp(tree, monkeypatch):
@@ -89,10 +89,10 @@ def test_trained_keys_are_cached_per_stamp(tree, monkeypatch):
     calls = []
     real = files.read_capped
     monkeypatch.setattr(files, "read_capped", lambda path, cap: calls.append(path) or real(path, cap))
-    rows.trained_keys(tree.base, "voidcraft-agent-open-work")
-    rows.trained_keys(tree.base, "voidcraft-agent-open-work")
+    rows.trained_keys(tree.base, "tldrack-agent-open-work")
+    rows.trained_keys(tree.base, "tldrack-agent-open-work")
     assert len(calls) == 1
 
 
 def test_no_checkpoints_folder_is_no_keys(tree):
-    assert rows.trained_keys(tree.base, "voidcraft-agent-open-work") == (frozenset(), ())
+    assert rows.trained_keys(tree.base, "tldrack-agent-open-work") == (frozenset(), ())

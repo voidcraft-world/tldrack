@@ -19,14 +19,14 @@ the real one.
 THE REGISTRY, version 2: versions and aliases, following MLflow's model registry. Additive over v1:
 
     {"version": 2,
-     "versions": {"voidcraft-agent-open-work-20260102-0304": {"path": "checkpoints/voidcraft-agent-open-work-20260102-0304",
+     "versions": {"tldrack-agent-open-work-20260102-0304": {"path": "checkpoints/tldrack-agent-open-work-20260102-0304",
                    "surface": "agent_open_work", "registered_at": "…Z", "tags": {"gate": "PASS", …},
-                   "cut": {"at": 0.62, "checkpoint": "voidcraft-agent-open-work-20260102-0304", …}}},
-     "aliases": {"agent_open_work": {"champion": "voidcraft-agent-open-work-20260102-0304", "challenger": null,
+                   "cut": {"at": 0.62, "checkpoint": "tldrack-agent-open-work-20260102-0304", …}}},
+     "aliases": {"agent_open_work": {"champion": "tldrack-agent-open-work-20260102-0304", "challenger": null,
                                      "previous": null}},
      "history": [{"at": "…Z", "surface": "agent_open_work", "alias": "champion", "from": null, "to": "…", "why": "…"}],
-     "models": {"voidcraft-agent-open-work": {"path": "checkpoints/voidcraft-agent-open-work-20260102-0304", …}},
-     "thresholds": {"agent_open_work": {"at": 0.62, "model": "voidcraft-agent-open-work", …}}}
+     "models": {"tldrack-agent-open-work": {"path": "checkpoints/tldrack-agent-open-work-20260102-0304", …}},
+     "thresholds": {"agent_open_work": {"at": 0.62, "model": "tldrack-agent-open-work", …}}}
 
 `versions` and `aliases` are the truth. A version is keyed by its checkpoint folder's name and carries its own swept
 cut, so moving an alias moves the cut with it: a promotion serves the challenger at the cut swept for it, and a
@@ -39,7 +39,7 @@ laya-serve. @previous is the champion a promotion replaced: the one-night rollba
 (`with_serving_view`) and never read back by this version. They are why a v2 file is SAFE in any order: a bridge or
 laya-lab that predates v2 (a revert, or a lane run before its merge) still serves each champion at its own cut.
 
-Version 1 (`{"version": 1, "models": {"voidcraft-paste": {"path": …}}, "thresholds": {surface: cut}}`) meant "every
+Version 1 (`{"version": 1, "models": {"tldrack-paste": {"path": …}}, "thresholds": {surface: cut}}`) meant "every
 entry is served". It is still READ exactly so; `migrate_payload` is the one v1 → v2 rule, and laya-lab's strict
 writer runs it in place before its first write: owned by `lab/laya_lab/registry.py` — see the note there. A v1
 file that still holds `versions` (a pre-v2 writer rewrote a v2 file) keeps them, reconciled to what that writer served.
@@ -99,7 +99,11 @@ REGISTRY_VERSION = 2
 LEGACY_REGISTRY_VERSION = 1
 #: champion: served · challenger: shadow-scored, never served · previous: the champion a promotion replaced.
 ALIASES = ("champion", "challenger", "previous")
-FINE_TUNE_PREFIX = "voidcraft-"
+FINE_TUNE_PREFIX = "tldrack-"
+#: Legacy (step 6.8): the prefix every fine-tune carried before 0.1.0. It is still on disk in registries, ledger and
+#: scores rows, report names and checkpoint folders, so it is read as the same model for one release (`served_name`,
+#: `rows.checkpoint_name`); nothing writes it. TS twin: schemas/src/decide.ts `LAYA_LEGACY_FINE_TUNE_PREFIX`.
+LEGACY_FINE_TUNE_PREFIX = "voidcraft-"
 #: How many alias moves `history` keeps (laya-lab appends; the oldest fall off).
 HISTORY_MAX = 64
 
@@ -219,8 +223,22 @@ def fine_tune_name(surface: str) -> str:
     return f"{FINE_TUNE_PREFIX}{surface.replace('_', '-')}"
 
 
+#: A version's folder name is its fine-tune's name, then `-<stamp>` (`rows.checkpoint_name`): a `-` and a digit.
+_VERSION_TAIL = re.compile(r"-[0-9]")
+
+
+def served_name(name: str) -> str:
+    """A MODEL name as it is served today: one under LEGACY_FINE_TUNE_PREFIX reads as `tldrack-<surface>`, any other name
+    as it is. Every reader of a stored or requested model name goes through it. A version's folder name is never
+    rewritten: it keeps the name it was trained under (`rows.checkpoint_name` matches both prefixes)."""
+    if name.startswith(LEGACY_FINE_TUNE_PREFIX) and _VERSION_TAIL.search(name) is None:
+        return FINE_TUNE_PREFIX + name[len(LEGACY_FINE_TUNE_PREFIX) :]
+    return name
+
+
 def surface_of_name(name: str) -> str | None:
-    """The surface a served name serves (`voidcraft-agent-open-work` → `agent_open_work`), or None."""
+    """The surface a served name serves (`tldrack-agent-open-work` → `agent_open_work`; its legacy name too), or None."""
+    name = served_name(name)
     if not name.startswith(FINE_TUNE_PREFIX):
         return None
     surface = name[len(FINE_TUNE_PREFIX) :].replace("-", "_")
@@ -325,7 +343,7 @@ def migrate_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[st
         raw_path = entry.get("path") if isinstance(entry, dict) else None
         surface = entry.get("surface") if isinstance(entry, dict) else None
         surface = surface if isinstance(surface, str) and SURFACE_NAME.fullmatch(surface) else surface_of_name(str(name))
-        if not isinstance(raw_path, str) or not raw_path or surface is None or name != fine_tune_name(surface):
+        if not isinstance(raw_path, str) or not raw_path or surface is None or served_name(str(name)) != fine_tune_name(surface):
             notes.append(f"dropped {name!r}: not a surface's served fine-tune")
             continue
         version = Path(raw_path).name
@@ -338,7 +356,7 @@ def migrate_payload(payload: Mapping[str, Any]) -> tuple[dict[str, Any], list[st
         }
         kept.update({k: v for k, v in entry.items() if k in ("path", "eval", "trained")}, surface=surface)
         cut = thresholds.get(surface)
-        if isinstance(cut, dict) and cut.get("model") == name and cut.get("checkpoint") == version:
+        if isinstance(cut, dict) and served_name(str(cut.get("model"))) == served_name(name) and cut.get("checkpoint") == version:
             kept["cut"] = dict(cut)
         else:
             kept.pop("cut", None)  # the v1 writer's served cut is the one that holds; none means it was cleared
@@ -468,7 +486,7 @@ def _legacy_view(root: Path, payload: Mapping[str, Any]) -> dict[str, dict]:
         if target is None:
             continue
         surface = entry.get("surface")
-        view["models"][name] = {
+        view["models"][served_name(name)] = {
             "path": str(target),
             "relative": target.relative_to(root).as_posix(),
             "checkpoint": target.name,
@@ -557,7 +575,12 @@ def thresholds_view(view: Mapping[str, Any], loaded: Mapping[str, str] | None = 
         out[surface] = entry
     for name, served in (loaded or {}).items():
         own = view.get("cuts", {}).get(Path(served).name) if isinstance(served, str) else None
-        if own is None or own["surface"] in out or name != fine_tune_name(own["surface"]) or not 0 < own["cut"]["at"] < 1:
+        if (
+            own is None
+            or own["surface"] in out
+            or served_name(name) != fine_tune_name(own["surface"])
+            or not 0 < own["cut"]["at"] < 1
+        ):
             continue
         out[own["surface"]] = {**own["cut"], "model": name}
     return out

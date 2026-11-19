@@ -15,12 +15,14 @@
  * lives in its own file and is imported only by the mount that uses it.
  */
 import type { RackPayload } from '../engine/terminal/rack-view.ts';
+import { message_is } from '../events/messages.ts';
 
 /** host → rack frame: the current rack and which session is in the live pane. A host that embeds
- *  the rack in a frame posts this; both strings are part of that contract, so they do not change. */
-export const MESSAGE_AGENT_RACK_DATA = 'voidcraft-agent-rack-data';
+ *  the rack in a frame posts this; both strings are part of that contract (the rack reads each under
+ *  its legacy name too: `events/messages.ts` `message_is`). */
+export const MESSAGE_AGENT_RACK_DATA = 'tldrack-agent-rack-data';
 /** rack frame → host: `{ action, session?, value? }`, in the vocabulary of `RackAction` below. */
-export const MESSAGE_AGENT_RACK_ACTION = 'voidcraft-agent-rack-action';
+export const MESSAGE_AGENT_RACK_ACTION = 'tldrack-agent-rack-action';
 
 /** `RackPayload` moved to `engine/terminal/rack-view.ts`, beside the one
  *  function that builds it — the same placement `RackSession` already has in
@@ -130,7 +132,7 @@ export function create_iframe_transport(): RackTransport {
         },
         subscribe: (on_payload) => {
             const listener = (event: MessageEvent): void => {
-                if (event.data?.type !== MESSAGE_AGENT_RACK_DATA) return;
+                if (!message_is(event.data, MESSAGE_AGENT_RACK_DATA)) return;
                 on_payload(event.data.payload as RackPayload);
             };
             window.addEventListener('message', listener);

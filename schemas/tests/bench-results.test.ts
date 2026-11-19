@@ -140,14 +140,19 @@ describe('the results contract', () => {
     refused(file, 'sets.0.scores.0.operating');
   });
 
-  it('counts the fleet once: every judged turn drew one verdict, and only an open one reaches the operator', () => {
+  it('counts the rack once: every judged turn drew one verdict, and only an open one reaches the operator', () => {
     const file = copy();
-    file.fleet!.judged += 1;
-    refused(file, 'fleet.verdicts');
+    file.rack!.judged += 1;
+    refused(file, 'rack.verdicts');
     const reached = copy();
-    reached.fleet!.reached = reached.fleet!.verdicts.open + 1;
-    refused(reached, 'fleet.reached');
-    assert.ok(benchResultsSchema.safeParse({ ...copy(), fleet: null }).success, 'a bench without a ledger has no fleet');
+    reached.rack!.reached = reached.rack!.verdicts.open + 1;
+    refused(reached, 'rack.reached');
+    assert.ok(benchResultsSchema.safeParse({ ...copy(), rack: null }).success, 'a bench without a ledger has no rack');
+    // Legacy (step 6.8): a file written before 0.1.0 names the block `fleet`.
+    const { rack, ...older } = copy();
+    const parsed = benchResultsSchema.safeParse({ ...older, fleet: rack });
+    assert.ok(parsed.success && parsed.data.rack?.judged === rack?.judged);
+    assert.equal(benchResultsSchema.safeParse({ ...copy(), fleet: rack }).success, false, 'never both');
   });
 
   it('carries one protocol: a real file drops the fixture flag, never sets it false', () => {

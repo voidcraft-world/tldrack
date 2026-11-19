@@ -1,7 +1,7 @@
 """Restart: end the lead mid-run, start a fresh one on the same run, and it resumes without
 re-spawning a finished step — because the run lives in rack.sqlite, not in the lead's conversation."""
 
-from lead_fakes import build, crew_appears, launch_and_start, ok, publish
+from lead_fakes import build, worker_appears, launch_and_start, ok, publish
 
 
 def test_a_fresh_lead_resumes_without_respawning_finished_steps(tmp_path):
@@ -12,12 +12,12 @@ def test_a_fresh_lead_resumes_without_respawning_finished_steps(tmp_path):
     # S1 and S2 ship and close; S3 is working; S4 and S5 have not started.
     for sid in ("S1", "S2"):
         ok(service.handle("spawn", {"step": sid}, lead))
-        crew_appears(service, fake, lead, sid, run_id)
+        worker_appears(service, fake, lead, sid, run_id)
         publish(fake, service.runs.step(run_id, sid)["branch"])
         service.tick()
         ok(service.handle("close", {"step": sid}, lead))
     ok(service.handle("spawn", {"step": "S3"}, lead))
-    s3_crew = crew_appears(service, fake, lead, "S3", run_id)
+    s3_worker = worker_appears(service, fake, lead, "S3", run_id)
     service.handle("status", {}, lead)  # the old lead read everything up to here
     spawns_before = len(fake.worktree.creates)
     publish(fake, service.runs.step(run_id, "S3")["branch"], ci="pending")  # S3 reports ready while nobody leads
@@ -55,7 +55,7 @@ def test_a_fresh_lead_resumes_without_respawning_finished_steps(tmp_path):
     ok(service.handle("spawn", {"step": "S5"}, new_lead))
     status, body = service.handle("spawn", {"step": "S4"}, new_lead)
     assert status == 409, "a spawn in flight cannot be claimed twice"
-    assert service.role_of(s3_crew) == ("crew", run_id, "S3")
+    assert service.role_of(s3_worker) == ("worker", run_id, "S3")
 
 
 def test_adopt_lets_a_fresh_lead_take_an_orphaned_run(tmp_path):

@@ -502,7 +502,7 @@ export function cohort_rollup(sessions: RackSession[]): string {
 /**
  * A cohort header's text. The SERVICES band reads a COUNT, never the agent
  * rollup: a dev server is a plain shell, which the rollup would call `idle`
- * while it is serving — a false word where `fleet_header`'s count rule fits.
+ * while it is serving — a false word where `rack_header`'s count rule fits.
  * The COMPLETE band counts too: its rollup would only say `N done` again.
  */
 export function cohort_header_text(cohort: RackCohort): string {
@@ -683,7 +683,7 @@ export function hold_row_order(held: readonly string[], fresh: readonly RackRow[
  * is a prompt waiting for work. Sorting by that ordering is what lets the dot
  * column be read on its own as the rack's state, which is the whole reason the
  * header no longer spells the same thing out in words (see `rack-view.ts`
- * `fleet_header`).
+ * `rack_header`).
  *
  * `busy` and `free` used to share rank 2 and fall through to a name sort, so the
  * dots interleaved by whatever the sessions happened to be called and the column

@@ -13,6 +13,7 @@
  *                a column after it changes its width, never its origin.
  *   - `off`.
  */
+import { message_is } from '../events/messages.ts';
 
 export const CANVAS_LAYOUTS = ['under', 'column', 'off'] as const;
 export type CanvasLayout = (typeof CANVAS_LAYOUTS)[number];
@@ -38,7 +39,7 @@ export const NEXT_STEP_SLOT_ID = 'rack-next-step-slot';
 export const LEAD_DECISIONS_SLOT_ID = 'rack-lead-decisions-slot';
 
 /** The `postMessage` type the canvas page posts to the rack (`kit.js` `hello`). */
-export const CANVAS_MESSAGE_TYPE = 'voidcraft-agent-canvas';
+export const CANVAS_MESSAGE_TYPE = 'tldrack-agent-canvas';
 
 /** Session names as the bridge validates them (`snapshot.py` SESSION_NAME_RE). */
 const SESSION_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -122,7 +123,7 @@ export interface CanvasHello {
 export function parse_canvas_hello(data: unknown): CanvasHello | null {
     if (typeof data !== 'object' || data === null) return null;
     const record = data as Record<string, unknown>;
-    if (record.type !== CANVAS_MESSAGE_TYPE || typeof record.session !== 'string') return null;
+    if (!message_is(record, CANVAS_MESSAGE_TYPE) || typeof record.session !== 'string') return null;
     return {
         session: record.session,
         has_canvas: record.has_canvas === true,

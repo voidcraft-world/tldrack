@@ -36,22 +36,19 @@ from tldrack.rack_db import RackDb
 
 RUN_ID_RE = re.compile(r"R\d{4}-[0-9a-f]{4}")
 STEP_ID_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,15}")
-#: A step's kind, as stored in rack.sqlite and sent on the wire. People and the LEAD use the words in
-#: KIND_WORDS: a `change` step delivers a branch, a PR or a merge; a `report` step a write-up. The stored
-#: tokens are renamed to the words, with a read-old fallback, before v0.1.0.
-KINDS = ("ship", "scout")
-KIND_WORDS = {"ship": "change", "scout": "report"}
-_KIND_TOKENS = {word: token for token, word in KIND_WORDS.items()} | {token: token for token in KINDS}
+#: A step's kind, as stored in rack.sqlite and sent on the wire: a `change` step delivers a branch, a PR or a
+#: merge; a `report` step a write-up.
+KINDS = ("change", "report")
+#: Legacy (step 6.8): the kinds' tokens before 0.1.0. rack.sqlite is migrated (rack_db.py `_SCHEMA_V3`); a plan
+#: or a CLI call one release behind still names them, and reads as the new kind.
+LEGACY_KINDS = {"ship": "change", "scout": "report"}
 
 
 def kind_token(value: object) -> str | None:
-    """The stored kind for `change` / `report`, or for a legacy `ship` / `scout`; None for anything else."""
-    return _KIND_TOKENS.get(value) if isinstance(value, str) else None
-
-
-def kind_word(token: str) -> str:
-    """The word a person reads for a stored kind."""
-    return KIND_WORDS.get(token, token)
+    """The kind `value` names (its legacy token too), or None for anything else."""
+    if not isinstance(value, str):
+        return None
+    return value if value in KINDS else LEGACY_KINDS.get(value)
 
 
 LANES = ("claude", "codex", "any")
@@ -103,9 +100,9 @@ def deps_met(step: Mapping[str, Any], steps: Mapping[str, Mapping[str, Any]], me
         other = steps.get(dep)
         if other is None:
             return False
-        if other["kind"] == "ship" and dep not in merged:
+        if other["kind"] == "change" and dep not in merged:
             return False
-        if other["kind"] == "scout" and other["state"] != "closed":
+        if other["kind"] == "report" and other["state"] != "closed":
             return False
     return True
 
@@ -159,7 +156,7 @@ class LeadRuns:
         run_dir: Callable[[str], Path],
         parallel_max: object = DEFAULT_PARALLEL,
         lead_model: str | None = None,
-        crew_model: str | None = None,
+        worker_model: str | None = None,
     ) -> dict:
         name = flat(title, 200)
         if not name:
@@ -185,7 +182,7 @@ class LeadRuns:
             digest = hashlib.sha256(plan_text.encode()).hexdigest()
             conn.execute(
                 "INSERT INTO lead_runs (id, title, plan_path, plan_sha256, lead_identity, lead_session, profile, "
-                "parallel_max, spawn_cap, state, created_at, lead_model, crew_model) "
+                "parallel_max, spawn_cap, state, created_at, lead_model, worker_model) "
                 "VALUES (?,?,?,?,?,?,?,?,?, 'open', ?,?,?)",
                 (
                     run_id,
@@ -199,7 +196,7 @@ class LeadRuns:
                     spawn_cap(0),
                     now,
                     lead_model,
-                    crew_model,
+                    worker_model,
                 ),
             )
             self._event(conn, run_id, "started", None, {"plan": plan_path or str(copy), "sha256": digest[:12]})
@@ -322,15 +319,15 @@ class LeadRuns:
             raise LeadError(f"no step {step_id} in {run_id}", 404)
         return _row(row)
 
-    def crew_step(self, session: str, lineage: str | None = None) -> dict | None:
+    def worker_step(self, session: str, lineage: str | None = None) -> dict | None:
         """The open step this worker session works, joined by name AND (once known) lineage id."""
         with self.db.read() as conn:
             for row in conn.execute(
                 "SELECT s.* FROM lead_steps s JOIN lead_runs r ON r.id = s.run_id "
-                "WHERE r.state = 'open' AND s.crew_session = ? AND s.state NOT IN ('closed', 'abandoned')",
+                "WHERE r.state = 'open' AND s.worker_session = ? AND s.state NOT IN ('closed', 'abandoned')",
                 (session,),
             ):
-                if lineage is None or row["crew_lineage"] in (None, lineage):
+                if lineage is None or row["worker_lineage"] in (None, lineage):
                     return _row(row)
         return None
 
@@ -348,8 +345,8 @@ class LeadRuns:
         allowed = {
             "state",
             "branch",
-            "crew_session",
-            "crew_lineage",
+            "worker_session",
+            "worker_lineage",
             "profile",
             "attempts",
             "report_path",
@@ -392,7 +389,7 @@ class LeadRuns:
                 raise LeadError(f"{run_id} has spent its {run['spawn_cap']} worker spawns; end or abandon steps", 429)
             conn.execute("UPDATE lead_runs SET spawns = spawns + 1 WHERE id = ?", (run_id,))
             conn.execute(
-                "UPDATE lead_steps SET state = 'spawning', branch = ?, crew_session = ?, crew_lineage = NULL, "
+                "UPDATE lead_steps SET state = 'spawning', branch = ?, worker_session = ?, worker_lineage = NULL, "
                 "profile = ?, attempts = attempts + 1, observed = '{}' WHERE run_id = ? AND step_id = ?",
                 (branch, session, profile, run_id, step_id),
             )
@@ -431,7 +428,7 @@ class LeadRuns:
         qid = f"Q-{secrets.token_hex(3)}"
         with self.db.write() as conn:
             conn.execute(
-                "INSERT INTO crew_questions VALUES (?,?,?,?,?,?,?,?, 'open', NULL, NULL, NULL)",
+                "INSERT INTO worker_questions VALUES (?,?,?,?,?,?,?,?, 'open', NULL, NULL, NULL)",
                 (qid, run_id, step_id, session, question, int(blocking), assumed, self._clock()),
             )
             self._event(conn, run_id, "asked", step_id, {"question": qid, "blocking": blocking})
@@ -439,13 +436,13 @@ class LeadRuns:
 
     def question(self, qid: str) -> dict:
         with self.db.read() as conn:
-            row = conn.execute("SELECT * FROM crew_questions WHERE id = ?", (qid,)).fetchone()
+            row = conn.execute("SELECT * FROM worker_questions WHERE id = ?", (qid,)).fetchone()
         if row is None:
             raise LeadError("no such question", 404)
         return dict(row)
 
     def questions(self, run_id: str, *, open_only: bool = True) -> list[dict]:
-        sql = "SELECT * FROM crew_questions WHERE run_id = ?" + (" AND state = 'open'" if open_only else "")
+        sql = "SELECT * FROM worker_questions WHERE run_id = ?" + (" AND state = 'open'" if open_only else "")
         with self.db.read() as conn:
             return [dict(r) for r in conn.execute(sql + " ORDER BY opened_at", (run_id,))]
 
@@ -453,13 +450,13 @@ class LeadRuns:
         self, qid: str, *, state: str, resolution: str | None = None, source: str | None = None, decision_key: str | None = None
     ) -> dict:
         with self.db.write() as conn:
-            row = conn.execute("SELECT state FROM crew_questions WHERE id = ?", (qid,)).fetchone()
+            row = conn.execute("SELECT state FROM worker_questions WHERE id = ?", (qid,)).fetchone()
             if row is None:
                 raise LeadError("no such question", 404)
             if row["state"] != "open":
                 raise LeadError(f"{qid} is already {row['state']}", 409)
             conn.execute(
-                "UPDATE crew_questions SET state = ?, resolution = ?, source = ?, decision_key = ? WHERE id = ?",
+                "UPDATE worker_questions SET state = ?, resolution = ?, source = ?, decision_key = ? WHERE id = ?",
                 (state, resolution, source, decision_key, qid),
             )
         return self.question(qid)
@@ -573,8 +570,8 @@ def next_actions(
                 "why": "answer it from the plan or an earlier decision, or escalate it",
             }
         )
-    crew_live = sum(1 for s in steps if live.get(s["step_id"]) is not None or s["state"] == "spawning")
-    room = max(0, run["parallel_max"] - crew_live)
+    worker_live = sum(1 for s in steps if live.get(s["step_id"]) is not None or s["state"] == "spawning")
+    room = max(0, run["parallel_max"] - worker_live)
     spare = max(0, run["spawn_cap"] - run["spawns"])
     for s in steps:
         sid, state = s["step_id"], s["state"]
@@ -601,7 +598,7 @@ def next_actions(
                 actions.append({"verb": "close", "step": sid, "why": f"PR open, CI {ci}"})
         elif state == "reported" and (row is None or row.get("state") == "free"):
             actions.append({"verb": "close", "step": sid, "why": "report saved"})
-        elif state == "working" and row is None and s.get("crew_lineage"):
+        elif state == "working" and row is None and s.get("worker_lineage"):
             actions.append({"verb": "spawn --follow-up", "step": sid, "why": "its worker session is gone"})
     if steps and all(s["state"] in FINAL for s in steps):
         actions.append({"verb": "end", "step": None, "why": "every step is closed or abandoned"})

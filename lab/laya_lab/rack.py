@@ -1,13 +1,13 @@
-"""`laya-lab fleet`: what the rack's live use looked like, as the counts a bench results file carries under `fleet`.
+"""`laya-lab rack`: what the rack's live use looked like, as the counts a bench results file carries under `rack`.
 
-    laya-lab fleet                     # the last DEFAULT_DAYS days, printed
-    laya-lab fleet --days 14
-    laya-lab fleet --write             # fold them into today's bench/results/<date>.json (the bench run's own file)
+    laya-lab rack                      # the last DEFAULT_DAYS days, printed
+    laya-lab rack --days 14
+    laya-lab rack --write              # fold them into today's bench/results/<date>.json (the bench run's own file)
 
-`laya-lab bench --fleet` measures the same thing itself and writes it beside the voters; `--write` is for a results
-file a run already wrote, so a fleet number never costs a second pass over the models. Both are opt-in: a results file
+`laya-lab bench --rack` measures the same thing itself and writes it beside the voters; `--write` is for a results
+file a run already wrote, so a rack number never costs a second pass over the models. Both are opt-in: a results file
 is published, and these counts are the operator's own use of the rack. Shape: owned by
-`schemas/src/bench-results.ts` (`benchFleetSchema`) — see the note there.
+`schemas/src/bench-results.ts` (`benchRackSchema`) — see the note there.
 
 Three stores, one window (`since` → now). Each is read, never written:
 
@@ -22,7 +22,7 @@ Three stores, one window (`since` → now). Each is read, never written:
   operator took, by [Do it] or by hand (`next_step.summarize`'s `took`). None when the log holds none in the window.
 
 A store that is missing leaves its part None where the schema allows it (`latency`, `next_step`) and makes the whole
-fleet None where it does not (no decisions, no metrics): the reason is printed, never written. Counts only: no
+rack None where it does not (no decisions, no metrics): the reason is printed, never written. Counts only: no
 session name, state or text leaves this module.
 """
 
@@ -118,7 +118,7 @@ def measure(
     metrics_path: Path | None = None,
     next_step_path: Path | None = None,
 ) -> tuple[dict | None, str | None]:
-    """`(fleet, None)`, or `(None, why)` when the window cannot be told. The module note owns which store says what."""
+    """`(rack, None)`, or `(None, why)` when the window cannot be told. The module note owns which store says what."""
     if days < 1:
         raise ValueError("days: at least 1")
     until = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -154,18 +154,18 @@ def measure(
     }, None
 
 
-def lines(fleet: Mapping[str, Any]) -> list[str]:
-    judged, verdicts = fleet["judged"], fleet["verdicts"]
+def lines(rack: Mapping[str, Any]) -> list[str]:
+    judged, verdicts = rack["judged"], rack["verdicts"]
     share = " · ".join(f"{name} {verdicts[name]} ({verdicts[name] / judged:.0%})" for name in VERDICTS)
     out = [
-        f"  fleet    {fleet['from']} → {fleet['to']} ({fleet['days']} d) · {judged} judged · {share}",
-        f"           ⚠️ reached {fleet['reached']} ({fleet['reached'] / fleet['days']:.1f} / day)",
+        f"  rack    {rack['from']} → {rack['to']} ({rack['days']} d) · {judged} judged · {share}",
+        f"           ⚠️ reached {rack['reached']} ({rack['reached'] / rack['days']:.1f} / day)",
     ]
-    if fleet["latency"]:
+    if rack["latency"]:
         out.append(
-            f"           live ms p50 {fleet['latency']['p50_ms']} · p90 {fleet['latency']['p90_ms']} (n {fleet['latency']['n']})"
+            f"           live ms p50 {rack['latency']['p50_ms']} · p90 {rack['latency']['p90_ms']} (n {rack['latency']['n']})"
         )
-    taken = fleet["next_step"]
+    taken = rack["next_step"]
     out.append(
         "           next step: none suggested"
         if taken is None
@@ -174,14 +174,17 @@ def lines(fleet: Mapping[str, Any]) -> list[str]:
     return out
 
 
-def fold_into(path: Path, fleet: Mapping[str, Any]) -> None:
-    """Set `fleet` in a results file a bench run wrote, whole or not at all (its every other key is kept)."""
+def fold_into(path: Path, rack: Mapping[str, Any]) -> None:
+    """Set `rack` in a results file a bench run wrote, whole or not at all (its every other key is kept)."""
     if path.is_symlink() or not path.is_file():
         raise FileNotFoundError(f"{path.name}: no results file to fold into (run `laya-lab bench` first)")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or "fleet" not in payload or payload.get("fixture"):
+    # Legacy (step 6.8): the block's name in a file written before 0.1.0.
+    if isinstance(payload, dict) and "fleet" in payload and "rack" not in payload:
+        payload["rack"] = payload.pop("fleet")
+    if not isinstance(payload, dict) or "rack" not in payload or payload.get("fixture"):
         raise ValueError(f"{path.name} is not a bench results file a run wrote")
-    payload["fleet"] = dict(fleet)
+    payload["rack"] = dict(rack)
     tmp = path.with_name(f".{path.name}.tmp")
     try:
         tmp.write_text(json.dumps(payload, indent=2, allow_nan=False, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -200,20 +203,20 @@ def cmd(
     out_dir: Path | None = None,
 ) -> int:
     """Exit 0 measured (and folded) · 1 not measured, or nothing to fold into."""
-    fleet, why = measure(base, SUITES[suite_name], days=days)
-    if fleet is None:
-        print(f"[laya-lab] fleet: {why}")
+    rack, why = measure(base, SUITES[suite_name], days=days)
+    if rack is None:
+        print(f"[laya-lab] rack: {why}")
         return 1
-    for line in lines(fleet):
+    for line in lines(rack):
         print(line)
     if write:
         from laya_lab.bench import RESULTS_DIR
 
         target = (out_dir or paths.REPO_ROOT.joinpath(*RESULTS_DIR)) / f"{day or date.today().isoformat()}.json"
         try:
-            fold_into(target, fleet)
+            fold_into(target, rack)
         except (OSError, ValueError) as error:
-            print(f"[laya-lab] fleet: {error}")
+            print(f"[laya-lab] rack: {error}")
             return 1
-        print(f"  fleet → {'/'.join((*RESULTS_DIR, target.name))}")
+        print(f"  rack → {'/'.join((*RESULTS_DIR, target.name))}")
     return 0

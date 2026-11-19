@@ -46,7 +46,7 @@ function row(over: Partial<ReviewRecentRow> = {}): ReviewRecentRow {
         done_threshold: 0.4,
         mark: 'done',
         band: 'done',
-        model: 'voidcraft-agent-open-work',
+        model: 'tldrack-agent-open-work',
         checkpoint: null,
         text: 'shipped',
         text_chars: 7,

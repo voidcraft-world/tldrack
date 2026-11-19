@@ -13691,7 +13691,7 @@
       ]
     }
   ],
-  "fleet": null,
+  "rack": null,
   "reproduce": {
     "command": "TLDRACK_DATA_DIR=$(mktemp -d) uv run --project lab laya-lab bench agent-open-work",
     "set": "golden"

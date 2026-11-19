@@ -102,7 +102,7 @@ def handler(tmp_path: Path, ledger: LedgerScheduler | None):
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=SessionModelStore(tmp_path / "models.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1, "started_at": 0},
         control=ShutdownControl("status-only"),
         ledger=ledger,

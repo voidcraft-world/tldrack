@@ -42,7 +42,7 @@ from laya_bridge.landing import LandingError, LandingLog, clean_landing
 from laya_bridge.envelope import Refusal, error_response, ok_body, refusal_response
 from laya_bridge.ledger import Ledger, LedgerTagError, clean_react, clean_tag
 from laya_bridge.ops import ops_state
-from laya_bridge.paths import PathsError, ensure_laya_dir, laya_dir, registry_view
+from laya_bridge.paths import PathsError, ensure_laya_dir, laya_dir, registry_view, served_name
 from laya_bridge.runtime import LayaRuntime
 from laya_bridge.wire import BUILTIN_MODELS, WireError, clean_request
 
@@ -393,6 +393,7 @@ class LayaPlugin:
         """The name a ledger row records: the payload's when it is served, else the pin, else `english`."""
         served = set(BUILTIN_MODELS) | set(self._runtime.loaded() or {})
         named = payload.get("model")
+        named = served_name(named) if isinstance(named, str) else named
         if isinstance(named, str) and named in served:
             return named
         pinned = cleaned.get("model")
@@ -400,6 +401,8 @@ class LayaPlugin:
 
     def _decide(self, body: Any, *, rack_ok: bool) -> tuple:
         known = frozenset(BUILTIN_MODELS) | frozenset(self._extra_models())
+        if isinstance(body, dict) and isinstance(body.get("model"), str):
+            body = {**body, "model": served_name(body["model"])}  # a caller that pins a legacy name (paths.py)
         try:
             cleaned = clean_request(body, known)
             tag = clean_tag(body.get("ledger"), rack_ok=rack_ok)

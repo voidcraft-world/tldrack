@@ -4,9 +4,9 @@
  "at": "2001-01-02T02:00:00Z",
  "run_id": "0000000000a2",
  "suite": "agent-open-work",
- "model": "voidcraft-agent-open-work",
+ "model": "tldrack-agent-open-work",
  "checkpoint": {
-  "name": "voidcraft-agent-open-work-20010102-0200"
+  "name": "tldrack-agent-open-work-20010102-0200"
  },
  "question_version": 2,
  "threshold_source": "code",

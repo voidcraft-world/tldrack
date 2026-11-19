@@ -198,8 +198,8 @@ def test_a_decision_row_has_every_field_and_safe_modes(tree, book):
         {"surface": "agent_open_work", "subject": "wt-a", "question_version": 1, "threshold": 0.7, "done_threshold": 0.4},
         cleaned(),
         {"answers": {"q": {"noul": 0.9}}},
-        "voidcraft-agent-open-work",
-        "laya-local/voidcraft-agent-open-work@x",
+        "tldrack-agent-open-work",
+        "laya-local/tldrack-agent-open-work@x",
         str(checkpoint),
         23.7,
     )
@@ -216,9 +216,9 @@ def test_a_decision_row_has_every_field_and_safe_modes(tree, book):
         "question_version": 1,
         "threshold": 0.7,
         "done_threshold": 0.4,
-        "model": "voidcraft-agent-open-work",
-        "model_id": "laya-local/voidcraft-agent-open-work@x",
-        "checkpoint_path": "checkpoints/voidcraft-agent-open-work-20260102-0304",
+        "model": "tldrack-agent-open-work",
+        "model_id": "laya-local/tldrack-agent-open-work@x",
+        "checkpoint_path": "checkpoints/tldrack-agent-open-work-20260102-0304",
         "state_hash": ledger.rows.state_digest("phase C is next"),
         "state": "phase C is next",
         "state_truncated": False,
@@ -245,7 +245,7 @@ def test_a_row_says_how_busy_the_mac_was_and_whether_the_model_was_cold(tree):
     assert (second["load"], second["cold"]) == (1.235, False), "the same model, the same laya-serve start: warm"
     for _unreadable in range(3):
         assert "load" not in record(spawn=1), "no sample, NaN or a negative one: the field is left out"
-    assert record("voidcraft-paste", spawn=1)["cold"] is True, "each model warms up on its own first answer"
+    assert record("tldrack-paste", spawn=1)["cold"] is True, "each model warms up on its own first answer"
     assert record(spawn=2)["cold"] is True, "laya-serve restarted: cold again"
     assert "cold" not in record(), "a caller that names no start says nothing about cold"
 
@@ -405,7 +405,7 @@ def test_a_nan_state_is_not_recorded(tree, book):
 def test_a_checkpoint_outside_laya_is_recorded_as_none(tree, book, tmp_path):
     outside = tmp_path / "ck"
     outside.mkdir()
-    book.record_decision(None, cleaned(), {}, "voidcraft-x", None, str(outside), 1)
+    book.record_decision(None, cleaned(), {}, "tldrack-x", None, str(outside), 1)
     [row] = read_rows(tree.base / "ledger" / "untagged.jsonl")
     assert row["checkpoint_path"] is None
 

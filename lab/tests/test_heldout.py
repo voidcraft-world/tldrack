@@ -238,7 +238,7 @@ def test_a_cut_lives_on_its_checkpoint_and_moves_with_the_alias(lab):
     register(lab.base, SURFACE, folder, {"eval_items": 1})
     assert served_threshold(lab.base, SURFACE, FINE_TUNE) == (0.62, "swept"), "serving it again restores its own cut"
 
-    newer = serve(lab, name="voidcraft-agent-open-work-20261101-0900")
+    newer = serve(lab, name="tldrack-agent-open-work-20261101-0900")
     assert served_threshold(lab.base, SURFACE, FINE_TUNE) == (0.7, "code"), "a new checkpoint starts at the code's cut"
     assert registry.rollback(lab.base, SURFACE, "test") == (CHECKPOINT, newer.name)
     assert served_threshold(lab.base, SURFACE, FINE_TUNE) == (0.62, "swept"), "a rollback restores the old cut, never 0.7"
@@ -247,7 +247,7 @@ def test_a_cut_lives_on_its_checkpoint_and_moves_with_the_alias(lab):
 def test_served_threshold_is_swept_only_for_the_model_and_checkpoint_it_was_swept_on(lab):
     serve(lab)
     with pytest.raises(SystemExit, match="not a registered version"):
-        set_threshold(lab.base, SURFACE, entry(checkpoint="voidcraft-agent-open-work-20261001-0900"))
+        set_threshold(lab.base, SURFACE, entry(checkpoint="tldrack-agent-open-work-20261001-0900"))
     assert served_threshold(lab.base, SURFACE, FINE_TUNE) == (0.7, "code")
     set_threshold(lab.base, SURFACE, entry())
     assert served_threshold(lab.base, SURFACE, FINE_TUNE) == (0.62, "swept")
@@ -260,7 +260,7 @@ def test_apply_on_the_challenger_keeps_the_served_cut_and_scopes_rows_to_the_cha
     serve(lab)
     operator_labels(lab, 20, 20)
     set_threshold(lab.base, SURFACE, entry())
-    rival = lab.checkpoint("voidcraft-agent-open-work-20261101-0900", train_texts=None)
+    rival = lab.checkpoint("tldrack-agent-open-work-20261101-0900", train_texts=None)
     register(lab.base, SURFACE, rival, {"eval_items": 1}, as_="challenger")
     assert (
         heldout.run_sweep(SUITE, lab.base, model="challenger", labels="operator", apply=True, router=scored({}))

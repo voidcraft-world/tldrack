@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
     OFFICE_LISTENER_TTL_MS,
     create_office_relay,
-    office_fleet,
+    office_rack,
     office_session,
     parse_office_message,
     type OfficeChannel,
@@ -48,35 +48,35 @@ describe('the projection a rack relays', () => {
     });
 
     test('a detached rack relays itself frozen', () => {
-        const fleet = office_fleet({ sessions: [row('a')], focused: 'a', reachable: true, attached: false });
-        assert.equal(fleet.frozen, true);
-        assert.equal(office_fleet({ sessions: [], focused: null, reachable: false }).frozen, false);
+        const rack = office_rack({ sessions: [row('a')], focused: 'a', reachable: true, attached: false });
+        assert.equal(rack.frozen, true);
+        assert.equal(office_rack({ sessions: [], focused: null, reachable: false }).frozen, false);
     });
 });
 
 describe('parse_office_message', () => {
     test('carries only valid context percentages into the map', () => {
         for (const value of [0, 40, 100, -1, 101, NaN, '40']) {
-            const message = parse_office_message({ type: 'office:fleet', fleet: {
+            const message = parse_office_message({ type: 'office:rack', rack: {
                 sessions: [{ ...row('a'), context_left: value }],
             } });
-            assert.ok(message?.type === 'office:fleet');
-            assert.equal(message.fleet.sessions[0].context_left,
+            assert.ok(message?.type === 'office:rack');
+            assert.equal(message.rack.sessions[0].context_left,
                 typeof value === 'number' && value >= 0 && value <= 100 ? value : undefined);
         }
     });
     test('rejects junk', () => {
-        for (const raw of [null, 7, 'office:hello', {}, { type: 'nope' }, { type: 'office:select' }, { type: 'office:fleet' }]) {
+        for (const raw of [null, 7, 'office:hello', {}, { type: 'nope' }, { type: 'office:select' }, { type: 'office:rack' }]) {
             assert.equal(parse_office_message(raw), null, JSON.stringify(raw));
         }
-        const huge = { type: 'office:fleet', fleet: { sessions: Array.from({ length: 501 }, (_, i) => row(`s${i}`)) } };
+        const huge = { type: 'office:rack', rack: { sessions: Array.from({ length: 501 }, (_, i) => row(`s${i}`)) } };
         assert.equal(parse_office_message(huge), null);
     });
 
     test('a round trip survives intact', () => {
         const message: OfficeMessage = {
-            type: 'office:fleet',
-            fleet: office_fleet({
+            type: 'office:rack',
+            rack: office_rack({
                 sessions: [row('a', { lineage: LINEAGE, activity: { zone: 'web', tool: null, detail: null } })],
                 focused: 'a',
                 reachable: true,
@@ -84,12 +84,15 @@ describe('parse_office_message', () => {
         };
         assert.deepEqual(parse_office_message(JSON.parse(JSON.stringify(message))), message);
         assert.deepEqual(parse_office_message({ type: 'office:select', session: 'a' }), { type: 'office:select', session: 'a' });
+        // Legacy (step 6.8): a rack page one release behind relays the same rack as `office:fleet`.
+        assert.deepEqual(parse_office_message({ type: 'office:fleet', fleet: message.rack }), message);
+        assert.equal(parse_office_message({ type: 'office:fleet', rack: message.rack }), null);
     });
 
     test('re-validates every row: bad state is unknown, bad lineage and nameless rows are dropped', () => {
         const parsed = parse_office_message({
-            type: 'office:fleet',
-            fleet: {
+            type: 'office:rack',
+            rack: {
                 sessions: [
                     { session: 'a', state: 'exploding', live: true, lineage: { id: 'not-a-uuid' }, activity: { tool: 'Bash' } },
                     { state: 'busy' },
@@ -98,8 +101,8 @@ describe('parse_office_message', () => {
                 focused: 42,
             },
         });
-        assert.ok(parsed && parsed.type === 'office:fleet');
-        assert.deepEqual(parsed.fleet, {
+        assert.ok(parsed && parsed.type === 'office:rack');
+        assert.deepEqual(parsed.rack, {
             sessions: [{ session: 'a', state: 'unknown', live: true }],
             focused: null,
             reachable: true,
@@ -143,7 +146,7 @@ describe('the rack-side relay', () => {
         assert.equal(h.posted.length, 0);
         h.hear({ type: 'office:hello' });
         assert.equal(h.posted.length, 1);
-        assert.equal(h.posted[0].type, 'office:fleet');
+        assert.equal(h.posted[0].type, 'office:rack');
     });
 
     test('relays each payload while the office beats, and stops once it goes quiet', () => {
@@ -161,7 +164,7 @@ describe('the rack-side relay', () => {
         const h = harness();
         h.hear({ type: 'office:select', session: 'vc-1' });
         h.hear({ type: 'office:select', session: 42 });
-        h.hear({ type: 'office:fleet', fleet: { sessions: [] } }); // another rack's relay
+        h.hear({ type: 'office:rack', rack: { sessions: [] } }); // another rack's relay
         assert.deepEqual(h.selected, ['vc-1']);
     });
 

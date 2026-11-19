@@ -10,9 +10,9 @@ import {
     derive_effective_state,
     display_state,
     estimate_session_cost,
-    fleet_summary_segments,
+    rack_summary_segments,
     format_bridge_sublabel,
-    format_fleet_summary,
+    format_rack_summary,
     format_model_label,
     format_model_name,
     format_token_count,
@@ -37,7 +37,7 @@ import {
     resolve_launch_profile,
     PROFILE_LABEL_MAX,
     status_port_for_url,
-    summarize_fleet_attention,
+    summarize_rack_attention,
     title_hint_state,
     ATTENTION_NOTICE_TAG,
     type BridgeIdentity,
@@ -429,18 +429,18 @@ test('count_by_display counts a word outside the vocabulary as unknown, never Na
     assert.deepEqual(count_by_display(rows), { ...ZERO, unknown: 2 });
 });
 
-test('format_fleet_summary: needs you → busy → background → done → free, zeros dropped', () => {
+test('format_rack_summary: needs you → busy → background → done → free, zeros dropped', () => {
     assert.equal(
-        format_fleet_summary({ busy: 2, background: 4, attention: 1, done: 1, free: 3, unknown: 0 }),
+        format_rack_summary({ busy: 2, background: 4, attention: 1, done: 1, free: 3, unknown: 0 }),
         '1 needs you · 2 busy · 4 background · 1 awaiting review · 3 free',
     );
-    assert.equal(format_fleet_summary({ ...ZERO, free: 2, unknown: 1 }), '2 free');
-    assert.equal(format_fleet_summary({ ...ZERO, unknown: 3 }), '3 unknown');
-    assert.equal(format_fleet_summary(ZERO), '');
+    assert.equal(format_rack_summary({ ...ZERO, free: 2, unknown: 1 }), '2 free');
+    assert.equal(format_rack_summary({ ...ZERO, unknown: 3 }), '3 unknown');
+    assert.equal(format_rack_summary(ZERO), '');
 });
 
-test('fleet_summary_segments carries the state each segment is dotted with', () => {
-    assert.deepEqual(fleet_summary_segments({ ...ZERO, background: 1, free: 2 }), [
+test('rack_summary_segments carries the state each segment is dotted with', () => {
+    assert.deepEqual(rack_summary_segments({ ...ZERO, background: 1, free: 2 }), [
         { state: 'background', text: '1 background' },
         { state: 'free', text: '2 free' },
     ]);
@@ -489,23 +489,23 @@ test('format_transition_text renders time, change, and detail', () => {
 // ── coalesced rack notifications ──────────────────────────────────────────
 
 test('nothing outstanding renders no notice — the caller\'s cue to retract', () => {
-    assert.equal(summarize_fleet_attention([]), null);
+    assert.equal(summarize_rack_attention([]), null);
 });
 
 test('a lone blocked agent is NAMED and keeps its message verbatim', () => {
-    const notice = summarize_fleet_attention([{ session: 'api', message: 'allow Bash?' }]);
+    const notice = summarize_rack_attention([{ session: 'api', message: 'allow Bash?' }]);
     assert.ok(notice);
     assert.equal(notice.title, 'tldrack — agent needs input');
     assert.equal(notice.body, 'api — allow Bash?');
 });
 
 test('a lone blocked agent with no message still says what it wants', () => {
-    const notice = summarize_fleet_attention([{ session: 'api', message: null }]);
+    const notice = summarize_rack_attention([{ session: 'api', message: null }]);
     assert.equal(notice?.body, 'api needs input');
 });
 
 test('several blocked agents COALESCE into one counted summary, not N banners', () => {
-    const notice = summarize_fleet_attention([
+    const notice = summarize_rack_attention([
         { session: 'api', message: 'allow Bash?' },
         { session: 'web', message: 'allow Write?' },
         { session: 'infra', message: null },
@@ -517,8 +517,8 @@ test('several blocked agents COALESCE into one counted summary, not N banners', 
 });
 
 test('every attention notice shares ONE tag so renders replace instead of stack', () => {
-    const one = summarize_fleet_attention([{ session: 'api', message: null }]);
-    const many = summarize_fleet_attention([
+    const one = summarize_rack_attention([{ session: 'api', message: null }]);
+    const many = summarize_rack_attention([
         { session: 'api', message: null },
         { session: 'web', message: null },
     ]);
@@ -527,11 +527,11 @@ test('every attention notice shares ONE tag so renders replace instead of stack'
 });
 
 test('the key ignores ordering — a reshuffled set must not re-alert', () => {
-    const a = summarize_fleet_attention([
+    const a = summarize_rack_attention([
         { session: 'web', message: null },
         { session: 'api', message: null },
     ]);
-    const b = summarize_fleet_attention([
+    const b = summarize_rack_attention([
         { session: 'api', message: 'now with a message' },
         { session: 'web', message: null },
     ]);
@@ -539,8 +539,8 @@ test('the key ignores ordering — a reshuffled set must not re-alert', () => {
 });
 
 test('the key CHANGES when a new agent joins the outstanding set', () => {
-    const before = summarize_fleet_attention([{ session: 'api', message: null }]);
-    const after = summarize_fleet_attention([
+    const before = summarize_rack_attention([{ session: 'api', message: null }]);
+    const after = summarize_rack_attention([
         { session: 'api', message: null },
         { session: 'web', message: null },
     ]);

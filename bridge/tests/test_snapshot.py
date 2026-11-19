@@ -30,13 +30,13 @@ def _client(session, tty):
 def test_parse_multi_session():
     output = "\n".join(
         [
-            _pane("voidcraft", "1", "1", "1", "claude"),
+            _pane("tldrack", "1", "1", "1", "claude"),
             _pane("research", "0", "1", "1", "vim"),
         ]
     )
     parsed = parse_tmux_panes(output)
     assert parsed == {
-        "voidcraft": {"title": "claude", "attached": True, "cwd": "/repo", "profile": None},
+        "tldrack": {"title": "claude", "attached": True, "cwd": "/repo", "profile": None},
         "research": {"title": "vim", "attached": False, "cwd": "/repo", "profile": None},
     }
 
@@ -64,8 +64,8 @@ def test_parse_first_pane_kept_when_no_active():
 
 def test_parse_braille_prefixed_title_preserved():
     # Claude Code writes spinner-prefixed progress into the pane title verbatim.
-    output = _pane("voidcraft", "1", "1", "1", "⠹ refactoring")
-    assert parse_tmux_panes(output)["voidcraft"]["title"] == "⠹ refactoring"
+    output = _pane("tldrack", "1", "1", "1", "⠹ refactoring")
+    assert parse_tmux_panes(output)["tldrack"]["title"] == "⠹ refactoring"
 
 
 def test_parse_attached_count_to_bool():
@@ -152,12 +152,12 @@ def test_merge_store_only_has_null_tmux_fields():
 
 
 def test_merge_both_sources_combined():
-    tmux = {"voidcraft": {"title": "claude", "attached": True, "cwd": "/repo"}}
-    store_entries = [{"session": "voidcraft", "state": "busy", "age_seconds": 1.2, "message": None}]
-    merged = merge_snapshot(tmux, store_entries, None, {"voidcraft": ["/dev/ttys013"]})
+    tmux = {"tldrack": {"title": "claude", "attached": True, "cwd": "/repo"}}
+    store_entries = [{"session": "tldrack", "state": "busy", "age_seconds": 1.2, "message": None}]
+    merged = merge_snapshot(tmux, store_entries, None, {"tldrack": ["/dev/ttys013"]})
     assert merged == [
         {
-            "session": "voidcraft",
+            "session": "tldrack",
             "state": "busy",
             "age_seconds": 1.2,
             "message": None,
@@ -209,7 +209,7 @@ def test_merge_carries_model_and_usage_from_store():
     usage = {"input_tokens": 10, "output_tokens": 20, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 5}
     store_entries = [
         {
-            "session": "voidcraft",
+            "session": "tldrack",
             "state": "busy",
             "age_seconds": 1.0,
             "message": None,
@@ -218,7 +218,7 @@ def test_merge_carries_model_and_usage_from_store():
             "usage": usage,
         }
     ]
-    row = merge_snapshot({"voidcraft": {"title": "claude", "attached": True}}, store_entries)[0]
+    row = merge_snapshot({"tldrack": {"title": "claude", "attached": True}}, store_entries)[0]
     assert row["model"] == "claude-opus-4-8"
     assert row["usage"] == usage
 
@@ -516,11 +516,11 @@ def test_status_store_list_empty():
 
 def test_status_store_list_after_set():
     store = StatusStore()
-    store.set("voidcraft", "busy", "compiling")
+    store.set("tldrack", "busy", "compiling")
     rows = store.list()
     assert len(rows) == 1
     row = rows[0]
-    assert row["session"] == "voidcraft"
+    assert row["session"] == "tldrack"
     assert row["state"] == "busy"
     assert row["message"] == "compiling"
     assert isinstance(row["age_seconds"], float) and row["age_seconds"] >= 0

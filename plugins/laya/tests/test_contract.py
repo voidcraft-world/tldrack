@@ -213,7 +213,7 @@ def built(tree, fake_runtime):
     """Real rows and bodies from the Python writers, over one synthetic tree."""
     checkpoint = tree.register(train_texts=["trained text"])
     book = Ledger(lambda: tree.base, clock=lambda: NOW)
-    known = frozenset({"english", "voidcraft-agent-open-work"})
+    known = frozenset({"english", "tldrack-agent-open-work"})
     questions = {"open": NOUL, "kind": CHOICE, "bad": SCORE}
     answers = {
         "answers": {
@@ -237,8 +237,8 @@ def built(tree, fake_runtime):
                 ledger.clean_tag(tag, rack_ok=True),
                 clean_request({"state": f"text for {surface}", "questions": questions}, known),
                 answers,
-                "voidcraft-agent-open-work",
-                f"laya-local/voidcraft-agent-open-work@{checkpoint.name}",
+                "tldrack-agent-open-work",
+                f"laya-local/tldrack-agent-open-work@{checkpoint.name}",
                 str(checkpoint),
                 12.5,
             )
@@ -336,7 +336,7 @@ def built(tree, fake_runtime):
         [
             lab_files.stability_row(
                 key=f"{i:016x}",
-                version=f"voidcraft-agent-open-work-2026110{day}-0900",
+                version=f"tldrack-agent-open-work-2026110{day}-0900",
                 digest="sha256:0123456789abcdef",
                 device="mps",
                 p=0.9 if (i + day) % 3 else 0.1,
@@ -417,7 +417,7 @@ def test_every_python_shape_parses_as_the_schema_says(built):
     abstains = [d for row in ledger_rows if row["kind"] == "decision" for d in row["decisions"] if d.get("abstain")]
     assert sorted(a["type"] for a in abstains) == ["choice", "noul", "score"]
     assert {row["checkpoint_path"] for row in ledger_rows if row["kind"] == "decision"} == {
-        "checkpoints/voidcraft-agent-open-work-20260102-0304",
+        "checkpoints/tldrack-agent-open-work-20260102-0304",
         None,
     }
     assert [row["answer"] for row in built["operator"] if row["op"] == "answer"] == ["agree", "skip"]
@@ -500,7 +500,7 @@ def test_kappa_s_interval_laya_s_rates_and_the_operator_calibration_parse_as_the
         )
     report = {
         **lab_files.heldout_report_head(
-            "2026-10-27T01:05:00Z", "agent-open-work", "voidcraft-agent-open-work", "operator", 44, 0.62, 0.55
+            "2026-10-27T01:05:00Z", "agent-open-work", "tldrack-agent-open-work", "operator", 44, 0.62, 0.55
         ),
         "calibration": {
             "rows": 44,
@@ -511,7 +511,7 @@ def test_kappa_s_interval_laya_s_rates_and_the_operator_calibration_parse_as_the
             "reliability": [],
         },
     }
-    name = lab_files.heldout_report_name("agent-open-work", "voidcraft-agent-open-work", "operator", "20261027-010500")
+    name = lab_files.heldout_report_name("agent-open-work", "tldrack-agent-open-work", "operator", "20261027-010500")
     tree.path(f"evals/{name}").write_text(json.dumps(report))
     plugin = LayaPlugin(context=None, runtime=fake_runtime, params_dir=lambda: tree.base)
     headers = {"host": "127.0.0.1:7682", "origin": "http://localhost:5173"}

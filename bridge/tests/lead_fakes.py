@@ -246,13 +246,13 @@ def launch_and_start(service: LeadService, fake: FakeBridge, steps=("S1", "S2", 
     return lead, run_id
 
 
-def crew_appears(service: LeadService, fake: FakeBridge, lead: str, step_id: str, run_id: str) -> str:
+def worker_appears(service: LeadService, fake: FakeBridge, lead: str, step_id: str, run_id: str) -> str:
     """The worker session the worktree plugin would have started, live and parented to the lead."""
     step = service.runs.step(run_id, step_id)
     lead_identity = service.runs.run(run_id)["lead_identity"]
-    fake.row(step["crew_session"], str(uuid.uuid4()), parent=lead_identity)
+    fake.row(step["worker_session"], str(uuid.uuid4()), parent=lead_identity)
     service.tick()
-    return step["crew_session"]
+    return step["worker_session"]
 
 
 def publish(fake: FakeBridge, branch: str, head: str = H1, ci: str = "passing") -> None:

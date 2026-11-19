@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
     adopt_focus,
     build_rack_payload,
-    fleet_header,
+    rack_header,
     live_sessions,
     parse_context_left,
     to_rack_session,
@@ -26,14 +26,14 @@ function row(overrides: Partial<PortSnapshotRow> & { session: string }): PortSna
     };
 }
 
-const FLEET: PortSnapshotRow[] = [
+const RACK: PortSnapshotRow[] = [
     row({ session: 'alpha', state: 'attention', display: 'attention', message: 'needs a decision', repo: '/r/one' }),
     row({ session: 'beta', state: 'busy', display: 'busy', cwd: '/tmp/beta', model: 'claude-opus-4-8' }),
     row({ session: 'gamma', display: 'done' }),
 ];
 
 const COMMON = {
-    rows: FLEET,
+    rows: RACK,
     focused: 'alpha',
     reachable: true,
     max_sessions: 8,
@@ -114,7 +114,7 @@ test('an empty rack reads as the bare noun, never a dangling separator', () => {
 test('the count and the list can no longer disagree', () => {
     // One path counting the whole snapshot while another counts its own
     // filtered list is the disagreement. Both count exactly the rows they render.
-    const payload = build_rack_payload({ ...COMMON, rows: FLEET.slice(0, 2) });
+    const payload = build_rack_payload({ ...COMMON, rows: RACK.slice(0, 2) });
     assert.equal(payload.sessions.length, 2);
     assert.equal(payload.summary, 'agents · 2');
 });
@@ -127,24 +127,24 @@ test('the count and the list can no longer disagree', () => {
 // header carries only what dots cannot.
 
 test('the header does not move when a session merely changes state', () => {
-    const before = build_rack_payload({ ...COMMON, rows: FLEET }).summary;
+    const before = build_rack_payload({ ...COMMON, rows: RACK }).summary;
     // The flicker: gamma goes done → free, nothing else moves.
     const after = build_rack_payload({
         ...COMMON,
-        rows: [FLEET[0], FLEET[1], row({ session: 'gamma', display: 'free' })],
+        rows: [RACK[0], RACK[1], row({ session: 'gamma', display: 'free' })],
     }).summary;
     assert.equal(before, after);
     assert.equal(before, 'agents · 3');
 });
 
 test('the header DOES move when the rack gains or loses a session — that is real news', () => {
-    assert.equal(build_rack_payload({ ...COMMON, rows: FLEET.slice(0, 1) }).summary, 'agents · 1');
-    assert.equal(fleet_header(0), 'agents');
-    assert.equal(fleet_header(12), 'agents · 12');
+    assert.equal(build_rack_payload({ ...COMMON, rows: RACK.slice(0, 1) }).summary, 'agents · 1');
+    assert.equal(rack_header(0), 'agents');
+    assert.equal(rack_header(12), 'agents · 12');
 });
 
 test('no state word survives in the header', () => {
-    const payload = build_rack_payload({ ...COMMON, rows: FLEET });
+    const payload = build_rack_payload({ ...COMMON, rows: RACK });
     for (const word of ['busy', 'free', 'done', 'needs you', 'unknown']) {
         assert.ok(!payload.summary.includes(word), `header still spells out "${word}"`);
     }

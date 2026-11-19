@@ -15,7 +15,7 @@
     laya-lab compare agent-open-work --voter other=http://127.0.0.1:8010  # voters side by side (compare.py)
     laya-lab gate agent-open-work      # the promotion gate: newest unserved checkpoint vs the served one (gate.py)
     laya-lab bench                     # every voter this machine can ask, one protocol → bench/results/<date>.json (bench.py)
-    laya-lab fleet                     # the rack's live use as counts; --write folds them into today's results (fleet.py)
+    laya-lab rack                      # the rack's live use as counts; --write folds them into today's results (rack.py)
     laya-lab card                      # the verifier card's preview; --publish --digest writes it into docs/ (card.py)
     laya-lab unregister coordinator    # back to the base checkpoint for that surface
     laya-lab verdict golden agent-open-work    # the verdict line of the report THIS scheduled run wrote
@@ -156,9 +156,11 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--dry-run", action="store_true", help="print the plan (voters, sets, n); load and write nothing")
     bench.add_argument("--device", choices=("mps", "cuda", "cpu"), default="mps")
     bench.add_argument(
-        "--fleet",
+        "--rack",
+        "--fleet",  # legacy (step 6.8): the flag's name before 0.1.0, taken for one release
+        dest="rack",
         action="store_true",
-        help="also measure the rack's own use (fleet.py) into the file, which is published; off by default",
+        help="also measure the rack's own use (rack.py) into the file, which is published; off by default",
     )
     bench.add_argument(
         "--challenger",
@@ -166,14 +168,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="an unregistered fine-tune (checkpoint folder) to score at its own question version; repeatable",
     )
-    fleet = commands.add_parser(
-        "fleet",
+    rack = commands.add_parser(
+        "rack",
+        aliases=["fleet"],  # legacy (step 6.8): the command's name before 0.1.0, taken for one release
         help="the rack's live use (verdicts, ⚠️ raised, live latency, next-step taken) "
         "as counts; --write folds them into today's bench results file",
     )
-    fleet.add_argument("suite", nargs="?", default="agent-open-work", choices=sorted(GOLDEN_SUITES))
-    fleet.add_argument("--days", type=int, default=7, help="the window, ending now (default 7)")
-    fleet.add_argument("--write", action="store_true", help="fold into bench/results/<today>.json, which a bench run wrote")
+    rack.add_argument("suite", nargs="?", default="agent-open-work", choices=sorted(GOLDEN_SUITES))
+    rack.add_argument("--days", type=int, default=7, help="the window, ending now (default 7)")
+    rack.add_argument("--write", action="store_true", help="fold into bench/results/<today>.json, which a bench run wrote")
     challenger = commands.add_parser("challenger", help="armed challenger decision; requires current evidence token")
     challenger.add_argument("action", choices=("promote", "reject"))
     challenger.add_argument("--surface", choices=("agent_open_work",), required=True)
@@ -640,12 +643,12 @@ def cmd_bench(args: argparse.Namespace, base: Path) -> int:
         device=args.device,
         dry_run=args.dry_run,
         challengers=args.challenger,
-        with_fleet=args.fleet,
+        with_rack=args.rack,
     )
 
 
-def cmd_fleet(args: argparse.Namespace, base: Path) -> int:
-    from laya_lab.fleet import cmd
+def cmd_rack(args: argparse.Namespace, base: Path) -> int:
+    from laya_lab.rack import cmd
 
     return cmd(args.suite, base, days=args.days, write=args.write)
 
@@ -655,6 +658,9 @@ def cmd_challenger(args, base):
 
     return cmd(args, base)
 
+
+#: Legacy (step 6.8): a command's name before 0.1.0 (its parser's alias), dispatched as the new one.
+LEGACY_COMMANDS = {"fleet": "rack"}
 
 COMMANDS: dict[str, Callable[[argparse.Namespace, Any], int]] = {
     "status": cmd_status,
@@ -683,7 +689,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Any], int]] = {
     "challenger": cmd_challenger,
     "card": cmd_card,
     "bench": cmd_bench,
-    "fleet": cmd_fleet,
+    "rack": cmd_rack,
     "needs-you": cmd_needs_you,
     "teacher-kappa": cmd_teacher_kappa,
 }
@@ -694,7 +700,7 @@ def main(argv: list[str] | None = None) -> int:
     args.raw_argv = argv if argv is not None else sys.argv[1:]
     base = base_dir(create=not reads_only(args))  # a read never creates the tree
     tighten(base)
-    return COMMANDS[args.command](args, base)
+    return COMMANDS[LEGACY_COMMANDS.get(args.command, args.command)](args, base)
 
 
 # ── status ────────────────────────────────────────────────────────────────────

@@ -75,6 +75,9 @@ test('hello: only the canvas message shape is accepted, questions are bounded', 
     assert.equal(parse_canvas_hello(null), null);
     assert.equal(parse_canvas_hello({ type: 'other', session: 'a' }), null);
     assert.equal(parse_canvas_hello({ type: CANVAS_MESSAGE_TYPE }), null);
+    // Legacy (step 6.8): a canvas page one release behind still says hello under its old name.
+    assert.equal(parse_canvas_hello({ type: 'voidcraft-agent-canvas', session: 'a' })?.session, 'a');
+    assert.equal(parse_canvas_hello({ type: 'other-agent-canvas', session: 'a' }), null);
     assert.deepEqual(parse_canvas_hello({ type: CANVAS_MESSAGE_TYPE, session: 'a', has_canvas: true, question: '' }), {
         session: 'a',
         has_canvas: true,

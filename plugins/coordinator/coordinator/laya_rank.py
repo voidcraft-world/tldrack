@@ -58,7 +58,7 @@ MAX_PAIR_QUESTIONS = 200
 
 #: The fine-tune the gate waits for and every question pins: a copy of
 #: `fine_tune_name('coordinator')`, owned by schemas/src/decide.ts.
-FINE_TUNE_MODEL = "voidcraft-coordinator"
+FINE_TUNE_MODEL = "tldrack-coordinator"
 #: The ledger surface these decisions are tagged with (`DECIDE_SURFACES`, schemas/src/decide.ts).
 LEDGER_SURFACE = "coordinator"
 #: A copy of `LAYA_LEDGER_SUBJECT`: owned by schemas/src/decide.ts.

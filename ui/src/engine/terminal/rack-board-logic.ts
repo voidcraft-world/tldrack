@@ -18,7 +18,7 @@ import type { RackRow, RackState } from './multi-terminal-layout.ts';
 
 /** Per-session detail the board renders in columns. Everything here already
  *  exists on the bridge's snapshot rows; most of it was surfaced nowhere. */
-export interface FleetBoardSession {
+export interface RackBoardSession {
     state: RackState;
     /** Short model label, already formatted by the caller. */
     model: string | null;
@@ -42,18 +42,18 @@ export interface FleetBoardSession {
     message: string | null;
 }
 
-export interface FleetBoardInput {
+export interface RackBoardInput {
     /** Straight from `build_rack_rows`. */
     rows: RackRow[];
-    sessions: Map<string, FleetBoardSession>;
+    sessions: Map<string, RackBoardSession>;
     /** Maximum LINES the board can draw, including continuations and overflow. */
     max_lines: number;
 }
 
-export type FleetBoardLineKind = 'cohort' | 'session' | 'detail' | 'overflow' | 'empty';
+export type RackBoardLineKind = 'cohort' | 'session' | 'detail' | 'overflow' | 'empty';
 
-export interface FleetBoardLine {
-    kind: FleetBoardLineKind;
+export interface RackBoardLine {
+    kind: RackBoardLineKind;
     session?: string;
     /** Status colour key; absent on non-session lines. */
     state?: RackState;
@@ -67,8 +67,8 @@ export interface FleetBoardLine {
     attached: boolean;
 }
 
-export interface FleetBoardView {
-    lines: FleetBoardLine[];
+export interface RackBoardView {
+    lines: RackBoardLine[];
     /** Live sessions the board is showing. */
     shown: number;
     /** Live sessions in the rack overall. */
@@ -92,7 +92,7 @@ export interface FleetBoardView {
  * A machine with no bridge running otherwise shows empty instruments and no
  * clue why. The fix has to live on the surface the operator is already looking at.
  */
-export function bridge_down_view(start_command: string): FleetBoardView {
+export function bridge_down_view(start_command: string): RackBoardView {
     return {
         lines: [
             {
@@ -121,7 +121,7 @@ export function bridge_down_view(start_command: string): FleetBoardView {
  * that is not on the machine. `engine/terminal/local-network-gate.ts` owns why
  * the gate exists at all.
  */
-export function local_access_view(denied: boolean): FleetBoardView {
+export function local_access_view(denied: boolean): RackBoardView {
     const head = denied ? 'LOCAL ACCESS BLOCKED BY THE BROWSER' : 'LOCAL TOOLS OFF — CLICK TO CONNECT';
     const detail = denied
         ? 'Chrome ▸ Site settings ▸ Additional permissions ▸ Local network access'
@@ -141,7 +141,7 @@ export function local_access_view(denied: boolean): FleetBoardView {
 }
 
 /** Column labels, in render order. */
-export const FLEET_BOARD_COLUMNS = ['STATE', 'SESSION', 'MODEL', 'WORK', 'AGE'];
+export const RACK_BOARD_COLUMNS = ['STATE', 'SESSION', 'MODEL', 'WORK', 'AGE'];
 
 /** Human state words. Deliberately not the internal vocabulary: "attention" is
  *  what the hook calls it, "BLOCKED" is what it means to the person reading. */
@@ -212,7 +212,7 @@ export function clip(text: string, max: number): string {
  * the rack lives by, and for the same reason: a board that quietly drops the
  * agent asking for you is worse than no board.
  */
-export function build_fleet_board(input: FleetBoardInput): FleetBoardView {
+export function build_rack_board(input: RackBoardInput): RackBoardView {
     const { rows, sessions, max_lines } = input;
 
     let total = 0;
@@ -231,7 +231,7 @@ export function build_fleet_board(input: FleetBoardInput): FleetBoardView {
         };
     }
 
-    const lines: FleetBoardLine[] = [];
+    const lines: RackBoardLine[] = [];
     let shown = 0;
     let truncated_from: number | null = null;
 
@@ -325,7 +325,7 @@ export function build_fleet_board(input: FleetBoardInput): FleetBoardView {
 }
 
 /** Header text: `RACK   3 BLOCKED · 8 SESSIONS`, or just the count when calm. */
-export function fleet_board_header(view: FleetBoardView): string {
+export function rack_board_header(view: RackBoardView): string {
     if (view.total === 0) return 'RACK';
     const parts: string[] = [];
     if (view.blocked > 0) parts.push(`${view.blocked} BLOCKED`);

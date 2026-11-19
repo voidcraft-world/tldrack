@@ -90,7 +90,7 @@ adjusts the focused handle. `ui/src/agent-rack/CanvasResizableSection.vue` owns 
 `canvas-sections.ts` owns the limits. The office starts larger; the map row defaults to 280–420px as
 the column widens so its SVG can use the extra width. Existing saved heights still win.
 
-The office uses the rack's current fleet and sends robot selections through that rack's transport.
+The office draws the rack's current sessions and sends robot selections through that rack's transport.
 It pauses rendering outside the visible strip or in a hidden tab. Mouse drag orbits; the wheel,
 trackpad pinch and two-finger touch pinch zoom inside the 3D view. FIT and the zoom buttons remain
 available. In the embedded view a one-finger swipe scrolls the column; a pinch never selects an

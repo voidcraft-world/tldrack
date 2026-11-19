@@ -21,7 +21,7 @@ from conftest import CHECKPOINT, SURFACE, store_env
 
 #: A second surface with no golden suite, and an invented checkpoint of it.
 OTHER_SURFACE = "coordinator"
-OTHER_CHECKPOINT = "voidcraft-coordinator-20261005-1200"
+OTHER_CHECKPOINT = "tldrack-coordinator-20261005-1200"
 
 
 def test_split_is_by_state_and_stable():
@@ -93,8 +93,8 @@ def test_registry_round_trips_through_the_plugins_reader(tmp_path):
     base = tmp_path / "laya"
     checkpoint = base / "checkpoints" / OTHER_CHECKPOINT
     checkpoint.mkdir(parents=True)
-    assert register(base, OTHER_SURFACE, checkpoint, {"eval_items": 120}) == "voidcraft-coordinator"
-    assert read_extra_models(store_env(tmp_path)) == {"voidcraft-coordinator": str(checkpoint.resolve())}
+    assert register(base, OTHER_SURFACE, checkpoint, {"eval_items": 120}) == "tldrack-coordinator"
+    assert read_extra_models(store_env(tmp_path)) == {"tldrack-coordinator": str(checkpoint.resolve())}
     payload = read_registry(base)
     assert payload["versions"][checkpoint.name]["eval"] == {"eval_items": 120}
     assert payload["aliases"][OTHER_SURFACE] == {"champion": checkpoint.name, "challenger": None, "previous": None}
@@ -116,7 +116,7 @@ def test_register_records_how_the_checkpoint_was_trained(tmp_path):
     register(base, SURFACE, checkpoint, {"eval_items": 70}, trained=trained)
     assert read_registry(base)["versions"][CHECKPOINT]["trained"] == trained
     view = read_registry_view(store_env(tmp_path))
-    assert view["models"]["voidcraft-agent-open-work"]["trained"] == {**trained}
+    assert view["models"]["tldrack-agent-open-work"]["trained"] == {**trained}
     register(base, SURFACE, checkpoint, {"eval_items": 70})
     assert "trained" not in read_registry(base)["versions"][CHECKPOINT]
 
@@ -228,7 +228,7 @@ def test_every_command_tightens_the_store_first(tmp_path, monkeypatch, capsys):
         "latency": ["agent-open-work"],
         "stability": ["agent-open-work"],
         "teacher-kappa": [],
-        "fleet": [],
+        "rack": [],
         "question-challenger": ["agent_open_work", "--version", "3"],
     }
     assert set(argv) == set(cli.COMMANDS)
@@ -258,22 +258,34 @@ def test_available_checkpoints_dedupes_and_needs_weights(tmp_path):
     registered = base / "checkpoints" / CHECKPOINT
     for folder in (
         registered,
-        base / "checkpoints" / "voidcraft-agent-open-work-20261001-0900",
-        base / "checkpoints" / "voidcraft-agent-open-work-20261002-0900",
-        base / "checkpoints" / "voidcraft-coordinator-20261001-0900",
+        base / "checkpoints" / "tldrack-agent-open-work-20261001-0900",
+        base / "checkpoints" / "tldrack-agent-open-work-20261002-0900",
+        base / "checkpoints" / "tldrack-coordinator-20261001-0900",
     ):
         folder.mkdir(parents=True)
     for folder in (
         registered,
-        base / "checkpoints" / "voidcraft-agent-open-work-20261001-0900",
-        base / "checkpoints" / "voidcraft-coordinator-20261001-0900",
+        base / "checkpoints" / "tldrack-agent-open-work-20261001-0900",
+        base / "checkpoints" / "tldrack-coordinator-20261001-0900",
     ):
         (folder / "model.safetensors").write_bytes(b"w")
     (base / "checkpoints" / f"{CHECKPOINT}.data").mkdir()
-    assert list(available_checkpoints(base, SURFACE)) == ["voidcraft-agent-open-work-20261001-0900", CHECKPOINT]
+    assert list(available_checkpoints(base, SURFACE)) == ["tldrack-agent-open-work-20261001-0900", CHECKPOINT]
     register(base, SURFACE, registered, {})
-    assert list(available_checkpoints(base, SURFACE)) == ["voidcraft-agent-open-work", "voidcraft-agent-open-work-20261001-0900"]
+    assert list(available_checkpoints(base, SURFACE)) == ["tldrack-agent-open-work", "tldrack-agent-open-work-20261001-0900"]
     # the registered folder's own name still names it: `gate --served <folder>` after it was registered
-    assert resolve_model(base, SURFACE, CHECKPOINT) == ("voidcraft-agent-open-work", registered.resolve())
+    assert resolve_model(base, SURFACE, CHECKPOINT) == ("tldrack-agent-open-work", registered.resolve())
     with pytest.raises(SystemExit, match="no model"):
-        resolve_model(base, SURFACE, "voidcraft-agent-open-work-20261002-0900")  # no weights
+        resolve_model(base, SURFACE, "tldrack-agent-open-work-20261002-0900")  # no weights
+
+
+def test_a_checkpoint_trained_under_the_legacy_prefix_is_still_the_surfaces(tmp_path):
+    # Legacy (step 6.8): folders and model names from before 0.1.0 carry `voidcraft-`.
+    base = tmp_path / "laya"
+    legacy = base / "checkpoints" / "voidcraft-agent-open-work-20261001-0900"
+    legacy.mkdir(parents=True)
+    (legacy / "model.safetensors").write_bytes(b"w")
+    assert list(available_checkpoints(base, SURFACE)) == ["voidcraft-agent-open-work-20261001-0900"]
+    register(base, SURFACE, legacy, {})
+    assert resolve_model(base, SURFACE, "voidcraft-agent-open-work") == ("tldrack-agent-open-work", legacy.resolve())
+    assert resolve_model(base, SURFACE, legacy.name) == ("tldrack-agent-open-work", legacy.resolve())

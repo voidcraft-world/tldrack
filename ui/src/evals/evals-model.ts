@@ -9,7 +9,7 @@ import {
     benchResultsSchema,
     cost_curve,
     type BenchEstimate,
-    type BenchFleet,
+    type BenchRack,
     type BenchProtocol,
     type BenchResults,
     type BenchRocPoint,
@@ -162,8 +162,8 @@ export interface ReadLess {
     taken_share: number | null;
 }
 
-export function read_less(fleet: BenchFleet): ReadLess {
-    const { judged, reached, verdicts, days } = fleet;
+export function read_less(rack: BenchRack): ReadLess {
+    const { judged, reached, verdicts, days } = rack;
     const share = (n: number): number => (judged === 0 ? 0 : n / judged);
     const counts: [ReadLessPart, number][] = [
         ['done', verdicts.done],
@@ -178,7 +178,7 @@ export function read_less(fleet: BenchFleet): ReadLess {
         kept_share: share(judged - reached),
         parts: counts.map(([key, n]) => ({ key, n, share: share(n) })),
         per_day: { judged: judged / days, reached: reached / days },
-        taken_share: fleet.next_step && fleet.next_step.suggested > 0 ? fleet.next_step.taken / fleet.next_step.suggested : null,
+        taken_share: rack.next_step && rack.next_step.suggested > 0 ? rack.next_step.taken / rack.next_step.suggested : null,
     };
 }
 

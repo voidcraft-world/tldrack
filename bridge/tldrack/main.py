@@ -224,7 +224,7 @@ from voidcraft_world_bridge.server import BridgeHandler, bridge_block
 LEDGER_STATUS_TTL = 30.0
 
 DEFAULT_PORT = int(os.environ.get("TLDRACK_PORT", "7681"))
-DEFAULT_SESSION = os.environ.get("TLDRACK_SESSION", "voidcraft")
+DEFAULT_SESSION = os.environ.get("TLDRACK_SESSION", "tldrack")
 # New tmux sessions start where the operator started the bridge: `cd my-project && tldrack up`.
 # The project is theirs, not this package's, so the package's own location is never the answer.
 DEFAULT_START_DIR = os.environ.get("TLDRACK_START_DIR") or os.getcwd()
@@ -892,7 +892,7 @@ def build_status_handler(
     # `topic_labels` (topic_labels.py) is the name-label log: absent (a test that gives none),
     # nothing is recorded and /topic-labels answers 503.
     # `rack_db` (rack_db.py) turns on the decision inbox and the LEAD launch (lead/); absent, their
-    # routes answer 503 and no row grows `lead`/`crew`, so a test-built handler never touches a real
+    # routes answer 503 and no row grows `lead`/`worker`, so a test-built handler never touches a real
     # operator store. `decision_secret` is minted here when not given (decision_secret.py owns why).
     # `next_step_paths` = (state file, log file) turns the suggested next step on
     # (next_step.py); absent, the bridge has no suggester and the routes 503, so a
@@ -1064,7 +1064,7 @@ def build_status_handler(
             return None
 
     # The LEAD launch (lead/service.py), built below once spawn and kill exist; read late by the
-    # snapshot (rows' `lead` / `crew`) and the hook.
+    # snapshot (rows' `lead` / `worker`) and the hook.
     lead_service: LeadService | None = None
     secret = decision_secret if decision_secret is not None else DecisionSecret()
 
@@ -1135,7 +1135,7 @@ def build_status_handler(
                 row["open_work_graded"] = True
             if (reading := stuck_of(row)) is not None:
                 row["stuck"] = reading
-            if lead_service is not None:  # `lead` on a lead row, `crew` on a worker row (lead/service.py)
+            if lead_service is not None:  # `lead` on a lead row, `worker` on a worker row (lead/service.py)
                 row.update(lead_service.row_fields(row))
         # Additive per-row `fresh: true` on a live `free` row that has not been
         # prompted yet (§ Fresh sessions). Omitted otherwise, like `stop_failure`.

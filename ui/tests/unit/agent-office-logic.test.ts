@@ -126,19 +126,19 @@ describe('rooms', () => {
 });
 
 describe('layout', () => {
-    const fleet = (n: number, over: (i: number) => Partial<RackSession> = () => ({})): RackSession[] =>
+    const rack = (n: number, over: (i: number) => Partial<RackSession> = () => ({})): RackSession[] =>
         Array.from({ length: n }, (_, i) => agent(`agent-${String(i).padStart(2, '0')}`, over(i)));
 
     test('two agents in a room face each other across one desk pair', () => {
-        const [first, second] = desks(build_office(fleet(2)));
+        const [first, second] = desks(build_office(rack(2)));
         assert.equal(first.desk.x, second.desk.x);
         assert.deepEqual([first.desk.facing, second.desk.facing].sort(), [-1, 1]);
     });
 
     test('desks never overlap and every seat stays inside its room', () => {
         const sessions = [
-            ...fleet(13),
-            ...fleet(3, () => ({ repo: 'my-docs' })).map((s, i) => ({ ...s, session: `my-docs-${i}` })),
+            ...rack(13),
+            ...rack(3, () => ({ repo: 'my-docs' })).map((s, i) => ({ ...s, session: `my-docs-${i}` })),
             agent('lead', { lineage: { id: LEAD_ID } }),
             agent('kid', { lineage: { id: CHILD_A, parent_id: LEAD_ID } }),
         ];
@@ -165,9 +165,9 @@ describe('layout', () => {
 
     test('rooms never overlap', () => {
         const sessions = [
-            ...fleet(9),
+            ...rack(9),
             ...['my-docs', 'billing', 'web-lab', 'help-desk'].flatMap((repo) =>
-                fleet(3).map((s, i) => ({ ...s, session: `${repo}-${i}`, repo })),
+                rack(3).map((s, i) => ({ ...s, session: `${repo}-${i}`, repo })),
             ),
         ];
         const { rooms } = build_office(sessions);
@@ -184,18 +184,18 @@ describe('layout', () => {
     });
 
     test('a state change moves nothing — positions change only with the rack', () => {
-        const before = build_office(fleet(6));
-        const after = build_office(fleet(6, (i) => ({ state: i % 2 ? 'attention' : 'free' })));
+        const before = build_office(rack(6));
+        const after = build_office(rack(6, (i) => ({ state: i % 2 ? 'attention' : 'free' })));
         assert.equal(after.geometry_key, before.geometry_key);
         assert.deepEqual(
             desks(after).map(({ desk }) => [desk.agent.session, desk.x, desk.z, desk.facing]),
             desks(before).map(({ desk }) => [desk.agent.session, desk.x, desk.z, desk.facing]),
         );
-        assert.notEqual(build_office(fleet(7)).geometry_key, before.geometry_key);
+        assert.notEqual(build_office(rack(7)).geometry_key, before.geometry_key);
     });
 
     test('a big room stacks pods rather than one endless row', () => {
-        const layout = build_office(fleet(20));
+        const layout = build_office(rack(20));
         const room = layout.rooms[0];
         const columns = new Set(room.desks.map((desk) => desk.x)).size;
         assert.equal(columns, OFFICE_GEOMETRY.pod_columns);
@@ -206,7 +206,7 @@ describe('layout', () => {
         const g = OFFICE_GEOMETRY;
         for (const count of [1, 2, 4, 5, 13]) {
             const layout = build_office([
-                ...fleet(3),
+                ...rack(3),
                 ...Array.from({ length: count }, (_, i) => agent(`svc-${i}`)),
             ]);
             const room = layout.rooms.find((room) => room.kind === 'services')!;
@@ -252,7 +252,7 @@ describe('layout', () => {
     });
 
     test('the focused agent is flagged', () => {
-        const layout = build_office(fleet(3), 'agent-01');
+        const layout = build_office(rack(3), 'agent-01');
         assert.deepEqual(
             desks(layout).filter(({ desk }) => desk.agent.focused).map(({ desk }) => desk.agent.session),
             ['agent-01'],

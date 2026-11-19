@@ -211,7 +211,7 @@ export function make_fixture(): BenchResults {
     commit: null,
     voters: VOTERS,
     sets,
-    fleet: {
+    rack: {
       from: '2026-10-14',
       to: '2026-11-12',
       days: 30,

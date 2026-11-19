@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { BenchFleet } from '@tldrack/schemas/bench-results.ts';
+import type { BenchRack } from '@tldrack/schemas/bench-results.ts';
 
 import { fmt_count, fmt_day_range, fmt_fixed, fmt_ms, fmt_share, read_less, type ReadLessPart } from './evals-model.ts';
 import { use_width } from './use-width.ts';
@@ -9,7 +9,7 @@ import { use_width } from './use-width.ts';
  * Panel 1. The rack's live window: of the turn ends judged on the operator's machine, how many
  * a ⚠️ put in front of the operator. One figure, then every judged turn end once in one bar.
  */
-const props = defineProps<{ fleet: BenchFleet }>();
+const props = defineProps<{ rack: BenchRack }>();
 
 /** The rack's own three marks (`@tldrack/schemas/laya-review.ts` REVIEW_BANDS), with ⚠️ split by whether it showed. */
 const PART_LABEL: Readonly<Record<ReadLessPart, string>> = {
@@ -23,7 +23,7 @@ const LABEL_MIN_PX = 58;
 
 const bar = ref<HTMLElement | null>(null);
 const bar_width = use_width(bar, 760);
-const view = computed(() => read_less(props.fleet));
+const view = computed(() => read_less(props.rack));
 const parts = computed(() => view.value.parts.filter((part) => part.n > 0).map((part) => ({ ...part, label: PART_LABEL[part.key], fits: part.share * bar_width.value >= LABEL_MIN_PX })));
 const spoken = computed(() => parts.value.map((part) => `${part.label}: ${fmt_count(part.n)}, ${fmt_share(part.share)}`).join('. '));
 </script>
@@ -59,25 +59,25 @@ const spoken = computed(() => parts.value.map((part) => `${part.label}: ${fmt_co
                     of {{ fmt_count(view.per_day.judged) }} turn ends judged a day
                 </dd>
             </div>
-            <div v-if="fleet.latency" class="ev-tile">
+            <div v-if="rack.latency" class="ev-tile">
                 <dt>Verdict latency</dt>
                 <dd>
-                    <b>{{ fmt_ms(fleet.latency.p50_ms) }}</b>
-                    median · {{ fmt_ms(fleet.latency.p90_ms) }} at p90
+                    <b>{{ fmt_ms(rack.latency.p50_ms) }}</b>
+                    median · {{ fmt_ms(rack.latency.p90_ms) }} at p90
                 </dd>
             </div>
-            <div v-if="fleet.next_step && view.taken_share !== null" class="ev-tile">
+            <div v-if="rack.next_step && view.taken_share !== null" class="ev-tile">
                 <dt>Next steps taken</dt>
                 <dd>
                     <b>{{ fmt_share(view.taken_share) }}</b>
-                    {{ fmt_count(fleet.next_step.taken) }} of {{ fmt_count(fleet.next_step.suggested) }} suggested
+                    {{ fmt_count(rack.next_step.taken) }} of {{ fmt_count(rack.next_step.suggested) }} suggested
                 </dd>
             </div>
             <div class="ev-tile">
                 <dt>Window</dt>
                 <dd>
-                    <b>{{ fmt_count(fleet.days) }} days</b>
-                    {{ fmt_day_range(fleet.from, fleet.to) }}
+                    <b>{{ fmt_count(rack.days) }} days</b>
+                    {{ fmt_day_range(rack.from, rack.to) }}
                 </dd>
             </div>
         </dl>

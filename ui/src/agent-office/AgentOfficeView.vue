@@ -1,16 +1,16 @@
 <script setup lang="ts">
-/** Shared office renderer. The window supplies a channel fleet; the Canvas supplies its own rack's fleet. */
+/** Shared office renderer. The window supplies the rack it hears on the channel; the Canvas supplies its own. */
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { PerspectiveCamera, Raycaster, Scene, Vector2, WebGLRenderer } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AgentOfficeScene } from '../engine/terminal/agent-office-scene.ts';
 import { build_office, type OfficeAgent, type OfficeLayout } from '../engine/terminal/agent-office-logic.ts';
-import type { OfficeFleet } from '../engine/terminal/agent-office-link.ts';
+import type { OfficeRack } from '../engine/terminal/agent-office-link.ts';
 import AgentActivityMap from '../agent-rack/AgentActivityMap.vue';
 import IslandMark from '../agent-rack/IslandMark.vue';
 import { island_status } from '../engine/terminal/island-status.ts';
 import { is_service_session } from '../engine/terminal/service-sessions.ts';
-import { state_label } from '../engine/terminal/fleet-board-logic.ts';
+import { state_label } from '../engine/terminal/rack-board-logic.ts';
 import { display_state_color_css } from '../config/terminal-status-flags.ts';
 import { office_pointer_gesture } from './office-pointer.ts';
 import { office_pixel_ratio } from './office-render-quality.ts';
@@ -18,23 +18,23 @@ import { office_pixel_ratio } from './office-render-quality.ts';
 /** The camera's default pitch above the floor, looking down over the office. */
 const OVERLOOK_PITCH_DEG = 52;
 
-const props = defineProps<{ fleet: OfficeFleet | null; stale?: boolean; embedded?: boolean }>();
+const props = defineProps<{ rack: OfficeRack | null; stale?: boolean; embedded?: boolean }>();
 const emit = defineEmits<{ (event: 'select', session: string): void }>();
-const fleet = computed(() => props.fleet);
+const rack = computed(() => props.rack);
 const stale = computed(() => props.stale === true);
 const layout = computed<OfficeLayout | null>(() =>
-    fleet.value ? build_office(fleet.value.sessions, fleet.value.focused) : null,
+    rack.value ? build_office(rack.value.sessions, rack.value.focused) : null,
 );
 const unavailable = ref(false);
 const hovered = shallowRef<OfficeAgent | null>(null);
 const tip = ref({ x: 0, y: 0 });
 const sent = ref<string | null>(null);
 const dismissed_map = ref<string | null>(null);
-const inspected_session = computed(() => hovered.value?.session ?? fleet.value?.focused ?? null);
+const inspected_session = computed(() => hovered.value?.session ?? rack.value?.focused ?? null);
 const inspected_agent = computed(() => {
     const session = inspected_session.value;
     if (!session || session === dismissed_map.value || is_service_session(session)) return null;
-    return fleet.value?.sessions.find(row => row.session === session && row.live) ?? null;
+    return rack.value?.sessions.find(row => row.session === session && row.live) ?? null;
 });
 watch(inspected_session, () => { dismissed_map.value = null; });
 
@@ -50,7 +50,7 @@ let stop_density_watch: (() => void) | null = null;
 let visibility: IntersectionObserver | null = null;
 let visible = false;
 let scene: Scene | null = null;
-/** Once the operator orbits, a growing fleet no longer re-frames the camera under them. */
+/** Once the operator orbits, a growing rack no longer re-frames the camera under them. */
 let user_moved = false;
 let framed_size = '';
 const raycaster = new Raycaster();
@@ -64,7 +64,7 @@ function update_labels(now: number): void {
     office.update_labels(camera, host.value.clientWidth, host.value.clientHeight);
 }
 function select_session(session: string | null): void {
-    if (!session || !fleet.value?.reachable || fleet.value.frozen || stale.value) return;
+    if (!session || !rack.value?.reachable || rack.value.frozen || stale.value) return;
     emit('select', session);
     sent.value = session;
     dismissed_map.value = null;
@@ -165,10 +165,10 @@ function update_office(next: OfficeLayout | null): void {
 watch(layout, update_office);
 function update_resources(): void {
     if (!office || !layout.value) return;
-    const resources = fleet.value?.resources;
-    office.update_resources(layout.value, resources ? { ...resources, stale: resources.stale || stale.value || !fleet.value?.reachable || !!fleet.value?.frozen } : undefined);
+    const resources = rack.value?.resources;
+    office.update_resources(layout.value, resources ? { ...resources, stale: resources.stale || stale.value || !rack.value?.reachable || !!rack.value?.frozen } : undefined);
 }
-watch(() => [fleet.value?.resources, stale.value], update_resources);
+watch(() => [rack.value?.resources, stale.value], update_resources);
 
 function loop(): void {
     frame = requestAnimationFrame(loop);
@@ -291,13 +291,13 @@ function state_color(agent: OfficeAgent): string {
 
         <button v-if="!unavailable && layout?.rooms.length" class="fui-btn office__fit" type="button"
             title="Frame the whole office · wheel or pinch to zoom" @click="on_fit">FIT</button>
-        <span v-if="stale || (fleet && !fleet.reachable)" class="fui-tag fui-tag--warn office__stale">{{ stale ? 'STALE' : 'BRIDGE' }}</span>
+        <span v-if="stale || (rack && !rack.reachable)" class="fui-tag fui-tag--warn office__stale">{{ stale ? 'STALE' : 'BRIDGE' }}</span>
 
         <section v-if="unavailable" class="fui-panel office__notice" role="status">3D unavailable · WebGL could not start</section>
-        <section v-else-if="!fleet || layout?.rooms.length === 0" class="fui-panel office__notice">
-            <p class="fui-techtext office__notice-head">{{ fleet ? 'NO AGENTS RUNNING' : 'WAITING FOR THE RACK' }}</p>
+        <section v-else-if="!rack || layout?.rooms.length === 0" class="fui-panel office__notice">
+            <p class="fui-techtext office__notice-head">{{ rack ? 'NO AGENTS RUNNING' : 'WAITING FOR THE RACK' }}</p>
             <p class="office__notice-body">
-                {{ fleet
+                {{ rack
                     ? 'Start one from the rack’s LAUNCH row — it takes a desk here.'
                     : 'Keep a rack page open. It feeds this window.' }}
             </p>
@@ -306,7 +306,7 @@ function state_color(agent: OfficeAgent): string {
         <aside v-if="!embedded && inspected_agent" class="fui-panel office__map" aria-label="Selected agent activity">
             <button class="fui-btn office__map-close" type="button" aria-label="Close activity map"
                 @click="dismissed_map = inspected_session">×</button>
-            <AgentActivityMap :agent="inspected_agent" :stale="stale || !fleet?.reachable || fleet?.frozen" />
+            <AgentActivityMap :agent="inspected_agent" :stale="stale || !rack?.reachable || rack?.frozen" />
         </aside>
 
         <div
@@ -327,7 +327,7 @@ function state_color(agent: OfficeAgent): string {
                 <span :style="{ color: island_status(hovered.island).color }">{{ island_status(hovered.island).label }}</span>
             </template>
             <span class="office__tip-hint">
-                {{ stale || !fleet?.reachable || fleet?.frozen
+                {{ stale || !rack?.reachable || rack?.frozen
                     ? 'the rack cannot take a click right now'
                     : sent === hovered.session ? 'in the rack’s pane' : 'click: open in the rack' }}
             </span>

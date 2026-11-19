@@ -134,7 +134,7 @@ def bridge(tmp_path, monkeypatch, labels):
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=SessionModelStore(tmp_path / "models.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1234, "started_at": 0},
         control=ShutdownControl("status-only"),
         auto_names=names,
@@ -238,7 +238,7 @@ def test_no_store_means_503(tmp_path):
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=SessionModelStore(tmp_path / "models.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1234, "started_at": 0},
         control=ShutdownControl("status-only"),
     )

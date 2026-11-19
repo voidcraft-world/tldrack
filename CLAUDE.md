@@ -52,10 +52,11 @@ A session here starts with no memory. What follows is everything durable it need
    hosted origin is allowed unless the operator configures it.
 7. **Commits use the GitHub noreply identity**, set in this repository only. The history is public.
 8. **The rack's words.** A session a LEAD starts is a **worker**; the sessions on the page are the
-   **rack**; a LEAD step is a **change** (it ends in a PR or a merge) or a **report**. Never crew, fleet,
-   captain, mate, or ship and scout for a step: that is another project's vocabulary. A few field names and
-   stored values keep the old words (`crew_session`, `crew_model`, the step tokens `ship` / `scout`) until
-   they are renamed with a read-old fallback before v0.1.0. Write the prose around them in the new words.
+   **rack**; a LEAD step is a **change** (it ends in a PR or a merge) or a **report**. Another project's
+   vocabulary for these is not ours, in code or prose: `docs/INSPIRATIONS.md` names its words, and
+   `tests/test_vocabulary.py` fails on one, and on the brand prefix step 6.8 retired. The few old names a reader still
+   takes for one release (step 6.8: wire messages, stored fields, step kinds, fine-tune names) each sit
+   beside a comment naming that step.
 
 ## Durable rack facts
 

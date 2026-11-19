@@ -6,7 +6,7 @@ from laya_lab import challenger, registry, retrain
 from laya_bridge import challenger as preflight, lab_files
 from conftest import SUITE, SURFACE, CHECKPOINT
 
-OTHER = "voidcraft-agent-open-work-20261101-120001"
+OTHER = "tldrack-agent-open-work-20261101-120001"
 
 
 def state():

@@ -42,8 +42,8 @@ function decision(overrides: Partial<Decision> = {}): Decision {
 
 function step(step_id: string, state: LeadRun['steps'][number]['state']): LeadRun['steps'][number] {
     return {
-        step_id, title: step_id, kind: 'ship', lane: 'claude', state, parked: false, crew_session: null,
-        crew_live: false, profile: null, branch: null, pr_url: null, ci: null,
+        step_id, title: step_id, kind: 'change', lane: 'claude', state, parked: false, worker_session: null,
+        worker_live: false, profile: null, branch: null, pr_url: null, ci: null,
     };
 }
 
@@ -315,7 +315,7 @@ describe('LAUNCH › LEAD', () => {
                 cancel: () => events.push('cancel'),
             },
             launch_notice: { show: (text: string) => events.push(`notice ${text}`), clear: () => events.push('clear') },
-            tick_fleet: () => events.push('tick rack'),
+            tick_rack: () => events.push('tick rack'),
             tick_lead: () => events.push('tick lead'),
         };
     }
@@ -345,12 +345,33 @@ describe('LAUNCH › LEAD', () => {
 
 describe('the snapshot row fields', () => {
     test('lead and worker are kept when well formed and dropped when not', () => {
-        const row = parse_session_row({ session: 'lead-1', state: 'free', lead: { run: 'R7', open_decisions: 2 }, crew: { run: 'R7', step: 'S2' } })!;
+        const row = parse_session_row({ session: 'lead-1', state: 'free', lead: { run: 'R7', open_decisions: 2 }, worker: { run: 'R7', step: 'S2' } })!;
         assert.deepEqual(row.lead, { run: 'R7', open_decisions: 2 });
-        assert.deepEqual(row.crew, { run: 'R7', step: 'S2' });
-        const bad = parse_session_row({ session: 'lead-1', state: 'free', lead: { run: 7 }, crew: 'S2' })!;
+        assert.deepEqual(row.worker, { run: 'R7', step: 'S2' });
+        const bad = parse_session_row({ session: 'lead-1', state: 'free', lead: { run: 7 }, worker: 'S2' })!;
         assert.equal('lead' in bad, false);
-        assert.equal('crew' in bad, false);
+        assert.equal('worker' in bad, false);
+    });
+
+    test('a bridge one release behind still names its workers and its runs the old way', () => {
+        // Legacy (step 6.8): `crew` on /snapshot, `crew_*` keys and `ship` / `scout` kinds on /lead/state.
+        const row = parse_session_row({ session: 'w-1', state: 'busy', crew: { run: 'R7', step: 'S2' } })!;
+        assert.deepEqual(row.worker, { run: 'R7', step: 'S2' });
+        assert.equal('crew' in row, false);
+        const legacy_step = { ...step('S1', 'working'), kind: 'scout', crew_session: 'w-1', crew_live: true } as Record<string, unknown>;
+        delete legacy_step.worker_session;
+        delete legacy_step.worker_live;
+        const state = parse_lead_state({
+            runs: [{ ...run({ steps: [] }), crew_model: 'opus', steps: [legacy_step] }],
+            // step 6.8: the models block's legacy key
+            models: { model: 'fable', crew_model: 'opus', families: ['opus', 'fable'] },
+        })!;
+        assert.deepEqual(
+            [state.runs[0].steps[0].kind, state.runs[0].steps[0].worker_session, state.runs[0].steps[0].worker_live],
+            ['report', 'w-1', true],
+        );
+        assert.equal(state.runs[0].worker_model, 'opus');
+        assert.equal(state.models?.worker_model, 'opus');
     });
 
     test('the payload carries the row’s lead and the run state; absent stays absent', () => {

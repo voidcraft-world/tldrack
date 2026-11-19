@@ -28,7 +28,7 @@ from tldrack import open_work
 
 SURFACE = "agent_open_work"
 SUITE = "agent-open-work"
-FINE_TUNE = "voidcraft-agent-open-work"
+FINE_TUNE = "tldrack-agent-open-work"
 #: An invented checkpoint folder: the served-name prefix is the wire convention, the stamp is made up.
 CHECKPOINT = f"{FINE_TUNE}-20261010-1000"
 SONNET = "claude-sonnet-5-5"

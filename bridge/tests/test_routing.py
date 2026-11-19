@@ -32,11 +32,17 @@ def test_the_quota_floor_skips_then_waits_never_downgrades():
 def test_tolerant_parse_and_no_model_pins():
     logs = []
     table = parse_routing(
-        '{"scout": {"any": {"profiles": ["b"], "model": "haiku"}, "claude": {"profiles": ["a"]}},'
+        '{"report": {"any": {"profiles": ["b"], "model": "haiku"}, "claude": {"profiles": ["a"]}},'
         ' "bogus": {}, "rank": {"claude": {"profiles": []}}}',
         logs.append,
     )
-    assert set(table) == {"scout"} and set(table["scout"]) == {"claude"}
+    assert set(table) == {"report"} and set(table["report"]) == {"claude"}
     assert any("profile's args" in line for line in logs), "a model pin is dropped, saying where it goes"
     assert parse_routing("not json") == {}
     assert quota_left({"usage": None}) == 100.0
+
+
+def test_a_routing_file_written_before_the_rename_still_routes_its_report_steps():
+    # Legacy (step 6.8): `scout` was the report kind's name.
+    table = parse_routing('{"scout": {"any": {"profiles": ["b"]}}}')
+    assert set(table) == {"report"} and table["report"]["any"].profiles == ("b",)

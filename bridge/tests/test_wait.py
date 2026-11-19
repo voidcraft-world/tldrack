@@ -14,8 +14,8 @@ def _sess(name, session_id):
 
 
 def test_parse_session_ids_maps_names_to_ids():
-    output = "\n".join([_sess("NOTES", "$0"), _sess("voidcraft", "$1")])
-    assert parse_session_ids(output) == {"NOTES": "$0", "voidcraft": "$1"}
+    output = "\n".join([_sess("NOTES", "$0"), _sess("tldrack", "$1")])
+    assert parse_session_ids(output) == {"NOTES": "$0", "tldrack": "$1"}
 
 
 def test_parse_session_ids_skips_malformed_ids():
