@@ -144,6 +144,8 @@ describe('reads', () => {
         assert.equal(calls[1].url, `${BASE}/review/queue?limit=50`);
         await load_review_queue('agent_open_work', 20, 'sample');
         assert.equal(calls[2].url, `${BASE}/review/queue?limit=20&surface=agent_open_work&stratum=sample`, 'DEAL narrows the queue');
+        await load_review_queue('agent_open_work', 20, null, 'reply');
+        assert.equal(calls[3].url, `${BASE}/review/queue?limit=20&surface=agent_open_work&band=reply`, 'the 💬 DEAL narrows by band');
     });
 
     it('a golden card keeps the request its case was written with, and an older bridge sends none', async () => {

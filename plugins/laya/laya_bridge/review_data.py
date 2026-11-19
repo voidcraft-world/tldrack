@@ -46,6 +46,14 @@ The deck: every reviewable key sits in exactly one stratum, taken in this order.
 - `rest`: every other Sonnet key, the backlog.
 Answered or skipped keys leave the queue. The queue is a weighted round robin (`ReviewSurface.weights`).
 
+THE BAND DEAL. A filter across the strata, never a stratum of its own: the strata stay a partition, which the κ
+sample and the deal weights rest on. `queue(band=...)` keeps the cards whose LIVE verdict (`Item.band`, a ledger p
+at the cuts it was judged at) falls in one of `BANDS`, from every lane but `BAND_NEVER`, in the UNCERTAIN lane's
+order (`_near_order`). The 💬 band is the reason: about a fifth of live verdicts land between the two cuts, and one
+in the middle of it is near no cut, so `uncertain` never deals it and it mostly sits in `recent`, which nothing
+deals. A grade on those rows is what a re-sweep and a retrain learn the band from. Each card still records its own
+stratum, so every per-stratum count reads as before.
+
 A WAVE is adjacent turn ends of one rack session (its conversation, else its rack name) that drew the same
 mark, each within `WAVE_GAP_S` of the last: an orchestrator ending a turn per child report. Never grouped by
 text: two turn ends of one wave share almost no words (Jaccard median 0.012). The deck deals a wave as ONE
@@ -160,6 +168,9 @@ RECENT_CURSOR = re.compile(
 )
 #: The three marks a turn end can draw on the rack (tldrack/open_work.py § Three bands).
 BANDS = ("done", "reply", "open")
+#: The lanes the band deal never takes from (the module doc: THE BAND DEAL): the uniform samples, whose order is a
+#: hash's so no signal sets which of them is graded first. Dealt nearest a cut, a half-graded sample would lean.
+BAND_NEVER = ("sample", "live_sample", "unflagged")
 UNLABELLED_CAP_BYTES = 16 * 1024 * 1024
 LABELS_CAP_BYTES = 8 * 1024 * 1024
 CARD_TEXT_MAX = 4_000
@@ -535,6 +546,9 @@ class Item:
     challenger: dict | None = None
     #: Which OPEN its newest verdict's landing points at (`needs_hint`): an order key, never shown and never a label.
     needs_hint: str | None = None
+    #: `band_of` on the card's LIVE verdict (a ledger p), at the cuts `edge` reads; None without one. What the band
+    #: deal filters on (the module doc: THE BAND DEAL).
+    band: str | None = None
 
 
 @dataclass(frozen=True)
@@ -720,15 +734,22 @@ def _build_items(base: Path, spec: ReviewSurface, loaded: Mapping[str, str] | No
             found = _scores_laya(current[key])
         return found
 
-    def edge_for(key: str, laya: Mapping[str, Any] | None) -> tuple[str, float] | None:
-        """`edge_of` at the cuts the p was judged at: a live verdict's own ✅ cut when it recorded one."""
-        if laya is None:
-            return None
-        done = spec.default_done_threshold
+    def done_for(key: str, laya: Mapping[str, Any]) -> float:
+        """The ✅ cut the p was judged at: a live verdict's own when it recorded one, else today's."""
         entry = newest.get(key)
         if laya["source"] == "ledger" and entry is not None and is_p(entry["decision"].get("done_threshold")):
-            done = float(entry["decision"]["done_threshold"])
-        return edge_of(laya["p"], laya["threshold"], done)
+            return float(entry["decision"]["done_threshold"])
+        return spec.default_done_threshold
+
+    def edge_for(key: str, laya: Mapping[str, Any] | None) -> tuple[str, float] | None:
+        """`edge_of` at the cuts the p was judged at."""
+        return None if laya is None else edge_of(laya["p"], laya["threshold"], done_for(key, laya))
+
+    def band_for(key: str, laya: Mapping[str, Any] | None) -> str | None:
+        """`band_of` on a live verdict at the same cuts as `edge_for`; None for a p that is not one (a score, an eval)."""
+        if laya is None or laya["source"] != "ledger":
+            return None
+        return band_of(laya["p"], laya["threshold"], done_for(key, laya))
 
     teacher_at: dict[str, tuple[str, bool, float]] = {}
     for row in scores:  # the surrogate reads text alone, so a row from any checkpoint serves, the newest winning
@@ -778,6 +799,7 @@ def _build_items(base: Path, spec: ReviewSurface, loaded: Mapping[str, str] | No
             edge=edge,
             challenger=rivals.get(key) if stratum == "challenger" else None,
             needs_hint=hint_for(entry),
+            band=band_for(key, laya),
         )
 
     facts = lab_files.golden_facts(report[1]) if report is not None else None
@@ -817,6 +839,7 @@ def _build_items(base: Path, spec: ReviewSurface, loaded: Mapping[str, str] | No
             golden=golden,
             underlying=frozenset(_case_keys(case)),
             edge=edge_for(text_key, found),
+            band=band_for(text_key, found),
         )
 
     cases = {case["id"]: case for case in (*public, *private)}
@@ -873,6 +896,7 @@ def _build_items(base: Path, spec: ReviewSurface, loaded: Mapping[str, str] | No
             edge=edge,
             challenger=rivals.get(key) if stratum == "challenger" else None,
             needs_hint=hint_for(entry),
+            band=band_for(key, found),
         )
 
     reactions = [
@@ -1170,9 +1194,16 @@ def _lane_order(item: Item, deficit: str | None, needs_short: str | None = None)
     short three-way class first (the module doc: THE THREE-WAY GRADE). `uncertain` is then: held-out texts first (a
     label on a trained one is never clean), that lean, the cut the short class sits behind (`class_deficit`), then
     nearest the cut."""
-    lean = 0 if needs_short is None or item.needs_hint == needs_short else 1
     if item.stratum != "uncertain" or item.edge is None:
+        lean = 0 if needs_short is None or item.needs_hint == needs_short else 1
         return (lean, *item.order) if item.stratum in NEEDS_LEAN_LANES else item.order
+    return _near_order(item, deficit, needs_short)
+
+
+def _near_order(item: Item, deficit: str | None, needs_short: str | None) -> tuple:
+    """The UNCERTAIN lane's order (`_lane_order` owns why), which the band deal reads too. `item.edge` is set."""
+    assert item.edge is not None
+    lean = 0 if needs_short is None or item.needs_hint == needs_short else 1
     cut, delta = item.edge
     return (0 if item.held_out is True else 1, lean, 0 if deficit in (None, cut) else 1, round(abs(delta), 6), item.key)
 
@@ -1355,8 +1386,25 @@ def laya_of(snap: Snapshot, key: str) -> dict | None:
     return {k: item.laya[k] for k in ("p", "threshold", "source", "checkpoint_path")}
 
 
-def queue(snap: Snapshot, limit: int, stratum: str | None = None) -> list[dict]:
-    """Up to `limit` cards: a weighted round robin over the strata; an empty stratum yields its turn."""
+def band_waiting(snap: Snapshot, band: str) -> list[str]:
+    """The unanswered keys whose live verdict sits in `band`, from every lane but `BAND_NEVER`, unordered (the module
+    doc: THE BAND DEAL). A wave's riders already left their lanes, so a wave counts once, as its lead."""
+    if band not in BANDS:
+        raise ValueError(f"band must be one of {', '.join(BANDS)}")
+    items = snap.items.items
+    return [key for name, keys in snap.remaining.items() if name not in BAND_NEVER for key in keys if items[key].band == band]
+
+
+def queue(snap: Snapshot, limit: int, stratum: str | None = None, band: str | None = None) -> list[dict]:
+    """Up to `limit` cards: a weighted round robin over the strata; an empty stratum yields its turn. With `band`, the
+    cards whose live verdict sits in it, in the UNCERTAIN lane's order (the module doc: THE BAND DEAL)."""
+    if band is not None:
+        if stratum is not None:  # review.py refuses the pair before here
+            raise ValueError("queue takes a stratum or a band, not both")
+        items = snap.items.items
+        ordered = sorted(band_waiting(snap, band), key=lambda key: _near_order(items[key], snap.deficit, snap.needs_short))
+        found = (card(snap, key) for key in ordered[:limit])
+        return [c for c in found if c is not None]
     lanes = {name: list(snap.remaining.get(name, ())) for name, _w in snap.spec.weights}
     weights = [(name, weight) for name, weight in snap.spec.weights if stratum is None or name == stratum]
 
@@ -1815,6 +1863,8 @@ def stats(snap: Snapshot, base: Path, *, loaded: Mapping[str, str] | None = None
         },
         "challenger": challenger_sides(snap),
         "door": {"waiting": door_waiting(snap), "min": DOOR_MIN},
+        # What each band deal would deal (`band_waiting`): the deck's 💬 button draws while `reply` holds any.
+        "band_waiting": {band: len(band_waiting(snap, band)) for band in BANDS},
         "last_answer_id": last["answer_id"] if last else None,
         "last_answer_at": last["at"] if last else None,
         # Whether that answer was one of a wave's, so the deck's UNDO after a reload takes the whole press back.

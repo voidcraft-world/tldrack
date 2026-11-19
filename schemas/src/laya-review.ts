@@ -271,6 +271,9 @@ export const reviewStatsSchema = z.object({
   // The daily phone door: cards waiting that the phone's RECENT list can grade, and how many make a push worth one
   // (`review_data.py` DOOR_STRATA / DOOR_MIN; sent by plugins/phone-link). Absent from an older bridge.
   door: z.object({ waiting: n, min: n }).optional(),
+  // The cards each band deal would deal (`review_data.py` `band_waiting`, THE BAND DEAL): the deck's 💬 button reads
+  // `reply`. Absent from an older bridge.
+  band_waiting: z.object({ done: n, reply: n, open: n }).optional(),
   last_answer_id: z.string().regex(REVIEW_ANSWER_ID).nullable(),
   last_answer_at: iso.nullable(),
   last_answer_wave: z.boolean().optional(), // that answer was one of a wave's; absent from an older bridge

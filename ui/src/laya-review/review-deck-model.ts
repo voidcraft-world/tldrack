@@ -10,6 +10,7 @@ import {
     type ReviewAgreement,
     type ReviewAnswer,
     type ReviewAnswerRequest,
+    type ReviewBand,
     type ReviewCard,
     type ReviewKappaInterval,
     type ReviewNeeds,
@@ -111,7 +112,7 @@ export function screen_after(now: DeckScreen, held: { retests: number; cards: nu
  * would otherwise run dry before the last counted card is asked for. `dry` is set when the last refill brought
  * nothing new, so a queue the plugin cannot serve past never loops.
  */
-export function needs_refill(held: number, stats: ReviewStats | null, dry: boolean, deal: DealStratum | null = null): boolean {
+export function needs_refill(held: number, stats: ReviewStats | null, dry: boolean, deal: Deal | null = null): boolean {
     return !dry && stats !== null && held <= REFILL_AT && deal_waiting(stats, deal) > held;
 }
 
@@ -136,31 +137,80 @@ export function stratum_from_search(search: string): DealStratum | null {
     return is_deal_stratum(raw) ? raw : null;
 }
 
-/** How many cards the deck can still deal: one stratum's remaining, or (ALL) everything counted plus the backlog. */
-export function deal_waiting(stats: ReviewStats, deal: DealStratum | null): number {
-    return deal === null ? stats.to_review + stats.backlog : (stats.by_stratum[deal]?.remaining ?? 0);
+/**
+ * The bands DEAL can narrow the deck to: a filter ACROSS the strata, never a stratum (`laya_bridge/review_data.py`
+ * owns why: THE BAND DEAL). The plugin's queue takes `?band=`; each card still carries its own stratum. Only the 💬 band
+ * is dealt: a ✅ or ⚠️ verdict near a cut is already UNCERTAIN's, and one far from it is the cheapest look there is.
+ */
+export const DEAL_BANDS = ['reply'] as const satisfies readonly ReviewBand[];
+export type DealBand = (typeof DEAL_BANDS)[number];
+/** One DEAL choice: a stratum or a band (the two name sets never overlap: pinned by the deck model's test). */
+export type Deal = DealStratum | DealBand;
+
+export function is_deal_band(raw: unknown): raw is DealBand {
+    return typeof raw === 'string' && (DEAL_BANDS as readonly string[]).includes(raw);
+}
+
+/** DEAL off the page's own URL: `?stratum=`, else `?band=`, each checked like any other input. */
+export function deal_from_search(search: string): Deal | null {
+    const raw = new URLSearchParams(search).get('band');
+    return stratum_from_search(search) ?? (is_deal_band(raw) ? raw : null);
+}
+
+/** What a DEAL choice asks the plugin (`load_review_queue`) and keeps in the address (`laya_review_href`). */
+export function deal_query(deal: Deal | null): { stratum: DealStratum | null; band: DealBand | null } {
+    return { stratum: is_deal_stratum(deal) ? deal : null, band: is_deal_band(deal) ? deal : null };
+}
+
+/** How many cards the deck can still deal: one stratum's remaining, one band's waiting (0 from a bridge that predates
+ *  the band deal, so its button never draws there), or (ALL) everything counted plus the backlog. */
+export function deal_waiting(stats: ReviewStats, deal: Deal | null): number {
+    if (deal === null) return stats.to_review + stats.backlog;
+    if (is_deal_band(deal)) return stats.band_waiting?.[deal] ?? 0;
+    return stats.by_stratum[deal]?.remaining ?? 0;
+}
+
+/** A band choice's mark and sentence, beside `REVIEW_STRATA`'s for the strata. */
+export const DEAL_BAND_LABELS: ReadonlyMap<DealBand, { label: string; why: string }> = new Map([
+    ['reply', { label: '💬', why: 'Live verdicts between the two cuts, the plain 💬 that still costs you a look, dealt nearest a cut first' }],
+]);
+
+/** The label and sentence of any DEAL choice: a band's, else its stratum's. */
+export function deal_label(deal: Deal): { label: string; why: string } {
+    return (is_deal_band(deal) ? DEAL_BAND_LABELS.get(deal) : undefined) ?? stratum_label(deal);
 }
 
 export interface DealOption {
-    deal: DealStratum | null;
+    deal: Deal | null;
     label: string;
     waiting: number;
     title: string;
 }
 
+/** The order DEAL's buttons draw in: the strata, with the 💬 band right after UNCERTAIN, the other near-cut deal. */
+const DEAL_ORDER: readonly Deal[] = DEAL_STRATA.flatMap((s): Deal[] => (s === 'uncertain' ? [s, ...DEAL_BANDS] : [s]));
+
 /**
- * DEAL's buttons: ALL, then each stratum with cards left. SAMPLE always draws (it is the one κ waits on, and an
- * empty one should say so), and so does the stratum on screen, so the way back out never disappears.
+ * DEAL's buttons: ALL, then each choice with cards left. SAMPLE always draws (it is the one κ waits on, and an
+ * empty one should say so), and so does the choice on screen, so the way back out never disappears.
  */
-export function deal_options(stats: ReviewStats, current: DealStratum | null): DealOption[] {
+export function deal_options(stats: ReviewStats, current: Deal | null): DealOption[] {
     const all: DealOption = { deal: null, label: 'ALL', waiting: deal_waiting(stats, null), title: 'Every kind of card, in turn' };
-    const narrowed = DEAL_STRATA.filter((s) => s === 'sample' || s === current || deal_waiting(stats, s) > 0).map((s) => ({
-        deal: s,
-        label: stratum_label(s).label,
-        waiting: deal_waiting(stats, s),
-        title: stratum_label(s).why,
+    const narrowed = DEAL_ORDER.filter((d) => d === 'sample' || d === current || deal_waiting(stats, d) > 0).map((d) => ({
+        deal: d,
+        label: deal_label(d).label,
+        waiting: deal_waiting(stats, d),
+        title: deal_label(d).why,
     }));
     return [all, ...narrowed];
+}
+
+/** DEAL's own empty state: the narrowed choice has nothing left, though other cards may. Null while it still deals. */
+export function deal_empty(stats: ReviewStats | null, deal: Deal | null): { head: string; why: string } | null {
+    if (deal === null || stats === null || deal_waiting(stats, deal) > 0) return null;
+    const others = `${deal_waiting(stats, null)} other cards wait`;
+    if (is_deal_band(deal)) return { head: `NO ${deal_label(deal).label} CARDS LEFT`, why: `every 💬 verdict is answered · ${others}` };
+    return { head: `NO ${stratum_label(deal).label} CARDS LEFT`, why: `${stats.by_stratum[deal]?.reviewed ?? 0} answered of this kind · ${others}` };
 }
 
 /** κ SONNET's progress toward its first value: SAMPLE answers (never a SKIP) so far, against the minimum. */
@@ -214,18 +264,19 @@ export function explain_stats(stats: ReviewStats): string[] {
 }
 
 /** DEAL's line: what the deck deals now, and what that does for κ. */
-export function explain_deal(stats: ReviewStats, deal: DealStratum | null): string {
+export function explain_deal(stats: ReviewStats, deal: Deal | null): string {
     const { n, min, left, ready } = kappa_progress(stats);
     const toward = ready ? `κ SONNET has its ${min}.` : `${n} of ${min} answered toward κ SONNET, ${left} to go.`;
     if (deal === null) return `ALL mixes every kind of card in turn. Pick SAMPLE to deal only the cards κ is measured on (${toward})`;
-    const why = stratum_label(deal).why;
+    const { label, why } = deal_label(deal);
     if (deal === 'sample') return `Only SAMPLE cards: ${why}. Every answer here counts toward κ; SKIP does not. ${toward}`;
-    return `Only ${stratum_label(deal).label} cards: ${why}. These do not count toward κ; ${DEAL_USE[deal] ?? 'they find where Laya and Sonnet go wrong.'}`;
+    return `Only ${label} cards: ${why}. These do not count toward κ; ${DEAL_USE[deal] ?? 'they find where Laya and Sonnet go wrong.'}`;
 }
 
 /** What a narrowed deal is FOR, where it is not finding Laya's and Sonnet's mistakes. */
-const DEAL_USE: Readonly<Partial<Record<DealStratum, string>>> = {
+const DEAL_USE: Readonly<Partial<Record<Deal, string>>> = {
     uncertain: 'a label on one moves a cut on RE-SWEEP, or teaches a fine-tune, more than any other.',
+    reply: 'they are what a RE-SWEEP and a retrain learn the 💬 band from, so each one graded is a look the rack can stop asking for.',
     live_sample: 'they measure how often the rack’s marks are right, so grade them as they come.',
     challenger: 'each label takes a side, and a promotion reads how often you sided with the challenger.',
 };

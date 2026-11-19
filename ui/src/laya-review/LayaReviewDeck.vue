@@ -31,7 +31,7 @@
             <a
                 v-if="embedded"
                 class="board-btn lr-standalone"
-                :href="laya_review_href(surface ?? undefined, view, { stratum: deal, order, session })"
+                :href="laya_review_href(surface ?? undefined, view, { ...deal_query(deal), order, session })"
                 :target="LAYA_REVIEW_TARGET"
                 rel="noopener"
                 title="Open Laya review as its own page"
@@ -98,7 +98,7 @@
                 <li v-for="line in explain_stats(stats)" :key="line">{{ line }}</li>
             </ul>
 
-            <!-- DEAL: narrow the deck to one kind of card. The plugin deals it (`?stratum=`); SAMPLE leads because κ waits on it. -->
+            <!-- DEAL: narrow the deck to one kind of card (`?stratum=`) or one band (`?band=`, the 💬). SAMPLE leads because κ waits on it. -->
             <nav v-if="stats" class="lr-deal" aria-label="Deal">
                 <span class="lr-label lr-deal__head">DEAL</span>
                 <button
@@ -387,6 +387,10 @@
                             <dt>{{ entry.label }}</dt>
                             <dd>{{ entry.why }}</dd>
                         </template>
+                        <template v-for="[key, entry] in DEAL_BAND_LABELS" :key="key">
+                            <dt>{{ entry.label }}</dt>
+                            <dd>{{ entry.why }} (any kind of card)</dd>
+                        </template>
                     </dl>
                     <p>
                         <strong>Keys:</strong> {{ three_way ? 'D done · B read · R running · N needs you' : 'A agree · F flip' }} · S skip · U
@@ -452,6 +456,7 @@ import { card_source, turn_head, type FoundHead, type JoinState } from './thread
 import { NO_THREADS, freshen_threads, load_threads, merge_threads } from './turn-context.ts';
 import { use_laya_view } from './view-state.ts';
 import {
+    DEAL_BAND_LABELS,
     PAGE,
     RETEST_NOTE,
     REVIEW_STRATA,
@@ -459,7 +464,10 @@ import {
     card_edge,
     card_title,
     compact_stats,
+    deal_empty as deal_empty_state,
+    deal_from_search,
     deal_options,
+    deal_query,
     deal_waiting,
     deck_down,
     deficit_readout,
@@ -483,7 +491,6 @@ import {
     self_kappa,
     short_key,
     show_switcher,
-    stratum_from_search,
     stratum_label,
     stratum_tag_text,
     surface_from_search,
@@ -497,7 +504,7 @@ import {
     verdict_request,
     verdict_word,
     wave_tag,
-    type DealStratum,
+    type Deal,
     type DeckScreen,
     type RetestChoice,
     type UndoEntry,
@@ -534,8 +541,8 @@ const show_conversation = ref(true);
 const show_wave = ref(true);
 /** LIGHT and EXPLAIN, per device (`review-prefs.ts`); every change is stored as it happens. */
 const prefs = ref(load_review_prefs());
-/** DEAL: the one stratum the deck deals, or null for the plugin's mix. Standalone, the address bar keeps it. */
-const deal = ref<DealStratum | null>(props.embedded ? null : stratum_from_search(window.location.search));
+/** DEAL: the one stratum or band the deck deals, or null for the plugin's mix. Standalone, the address bar keeps it. */
+const deal = ref<Deal | null>(props.embedded ? null : deal_from_search(window.location.search));
 /** The RECENT list's order: owned here, beside DEAL, so the address bar keeps it too. */
 const order = ref<ReviewRecentOrder>(props.embedded ? 'newest' : order_from_search(window.location.search));
 /** The one rack session the RECENT list is narrowed to (the rack's LABEL button), kept in the address bar like `order`. */
@@ -566,16 +573,8 @@ const deficit = computed(() => (stats.value ? deficit_readout(stats.value) : nul
 const short_class = computed(() => (stats.value ? three_way_readout(stats.value) : null));
 const kappa_self = computed(() => (stats.value ? self_kappa(stats.value) : null));
 const deal_choices = computed(() => (stats.value ? deal_options(stats.value, deal.value) : []));
-/** DEAL's own empty state: the narrowed stratum has nothing left, though other cards may. */
-const deal_empty = computed(() => {
-    const at = deal.value;
-    const s = stats.value;
-    if (at === null || s === null || deal_waiting(s, at) > 0) return null;
-    return {
-        head: `NO ${stratum_label(at).label} CARDS LEFT`,
-        why: `${s.by_stratum[at]?.reviewed ?? 0} answered of this kind · ${deal_waiting(s, null)} other cards wait`,
-    };
-});
+/** DEAL's own empty state: the narrowed choice has nothing left, though other cards may. */
+const deal_empty = computed(() => deal_empty_state(stats.value, deal.value));
 const switch_surfaces = computed(() => surfaces.value.filter((s) => s.to_review > 0 || s.surface === surface.value));
 const sources_note = computed(() =>
     Object.entries(sources.value)
@@ -676,7 +675,7 @@ function take_queue(queue: ReviewQueue): void {
 /** Standalone, the address bar keeps the surface, the view, DEAL and the RECENT order, so a bookmark reopens exactly this page. */
 function keep_address(at: string | null, shown: LayaReviewView): void {
     if (!props.embedded) {
-        window.history.replaceState(null, '', laya_review_href(at ?? undefined, shown, { stratum: deal.value, order: order.value, session: session.value }));
+        window.history.replaceState(null, '', laya_review_href(at ?? undefined, shown, { ...deal_query(deal.value), order: order.value, session: session.value }));
     }
 }
 
@@ -712,8 +711,8 @@ function on_go(event: MessageEvent): void {
     keep_address(surface.value, view.value);
 }
 
-/** DEAL one stratum, or (null) the plugin's mix: a fresh hand from the plugin, never the old one filtered here. */
-function set_deal(next: DealStratum | null): void {
+/** DEAL one stratum or band, or (null) the plugin's mix: a fresh hand from the plugin, never the old one filtered here. */
+function set_deal(next: Deal | null): void {
     if (next === deal.value || in_flight.value) return;
     deal.value = next;
     cards.value = [];
@@ -733,11 +732,12 @@ let loads = 0;
 async function load(target: string | null): Promise<void> {
     const mine = ++loads;
     loading.value = true;
-    const got = await load_review_queue(target, PAGE, deal.value);
+    const { stratum: dealt, band } = deal_query(deal.value);
+    const got = await load_review_queue(target, PAGE, dealt, band);
     if (mine !== loads) return;
     loading.value = false;
     if (!got.ok) {
-        // A bookmarked surface or stratum the bridge no longer serves: fall back to the mix on the surface with the most work.
+        // A bookmarked surface, stratum or band the bridge does not serve: fall back to the mix on the surface with the most work.
         if ((target !== null || deal.value !== null) && got.code === 'bad_query') {
             deal.value = null;
             return load(null);
@@ -773,7 +773,8 @@ async function read_more(force: boolean): Promise<void> {
     const at = surface.value;
     const narrowed = deal.value;
     const since = writes;
-    const got = await load_review_queue(at, PAGE, narrowed);
+    const { stratum: dealt, band } = deal_query(narrowed);
+    const got = await load_review_queue(at, PAGE, dealt, band);
     if (!got.ok) {
         status_line.value = { ok: false, text: fail_text(got) };
         return;

@@ -1137,6 +1137,69 @@ def test_uncertain_deals_held_out_first_then_the_short_class_cut_then_nearest(tr
     assert order() == keys_of([b, d, a, c, trained])
 
 
+def test_the_reply_band_deals_live_verdicts_between_the_cuts_from_every_lane_but_the_samples(tree):
+    """THE BAND DEAL: a filter across the strata. A 💬 in the middle of the band sits in `recent`, which nothing else
+    deals; one near a cut is `uncertain`; a Sonnet key the rack judged live keeps its own lane. Each card keeps its
+    stratum, and the uniform samples are never taken: their order is a hash's."""
+    [sonnet] = pick_where("band sonnet", 1, sample=False)
+    [near_open, near_done, middle, trained, far_open, done] = pick_where("band", 6)
+    [live_member] = pick_where("band live", 1, live=True, unflagged=None)
+    [unflagged_member] = pick_where("band unflagged", 1, unflagged=True)
+    [sonnet_key] = tree.unlabelled([sonnet])
+    tree.labels({sonnet_key: True})
+    for text, p in [
+        (sonnet, 0.52),
+        (near_open, 0.66),
+        (near_done, 0.45),
+        (middle, 0.55),
+        (trained, 0.60),
+        (far_open, 0.95),
+        (done, 0.2),
+        (live_member, 0.55),
+        (unflagged_member, 0.55),
+    ]:
+        record(tree, text, p)
+    tree.register(train_texts=[trained])
+    view = snap(tree)
+    found = strata(view)
+    assert found[rows.state_key(middle)] == "recent" and found[sonnet_key] == "rest", "no near-cut lane deals these"
+    assert found[rows.state_key(live_member)] == "live_sample" and found[rows.state_key(unflagged_member)] == "unflagged"
+    cards = review_data.queue(view, 20, band="reply")
+    # Held out first; with no clean labels the ⚠️ cut leads (`class_deficit`: 0.55 ties to it), then nearest; 0.52 sits
+    # nearer the ✅ cut; the trained text last.
+    assert [c["key"] for c in cards] == keys_of([near_open, middle, near_done, sonnet, trained])
+    assert [c["stratum"] for c in cards] == ["uncertain", "recent", "uncertain", "rest", "uncertain"], "each keeps its stratum"
+    stats = review_data.stats(view, tree.base, now=NOW)
+    assert stats["band_waiting"] == {"done": 1, "reply": 5, "open": 1}
+    assert stats["by_stratum"]["recent"]["remaining"] == 2, "the strata count as before"
+    assert review_data.queue(view, 2, band="reply") == cards[:2]
+    operator(tree, rows.state_key(middle), "agree", against_open=False, stratum="recent", by="english")
+    assert [c["key"] for c in review_data.queue(snap(tree), 20, band="reply")] == keys_of([near_open, near_done, sonnet, trained])
+    assert review_data.stats(snap(tree), tree.base, now=NOW)["band_waiting"]["reply"] == 4
+
+
+def test_a_score_is_no_live_verdict_so_the_band_deal_skips_it(tree):
+    [text] = pick("band score", "review-sample", False, 1)
+    [key] = tree.unlabelled([text])
+    tree.labels({key: True})
+    tree.write_jsonl(
+        "data/agent-open-work-laya-p.jsonl", [lab_files.scores_row(key, 0.55, "english", None, 1, 0.7, "2026-10-27T00:00:00Z")]
+    )
+    view = snap(tree)
+    assert view.items.items[key].band is None and review_data.queue(view, 20, band="reply") == []
+
+
+@pytest.mark.parametrize("band", ["middle", "reply ", "REPLY", ""])
+def test_a_band_name_band_of_never_returns_is_refused(tree, band):
+    with pytest.raises(ValueError, match="band must be one of done, reply, open"):
+        review_data.queue(snap(tree), 20, band=band)
+
+
+def test_the_band_deal_takes_no_stratum_beside_it(tree):
+    with pytest.raises(ValueError, match="a stratum or a band"):
+        review_data.queue(snap(tree), 20, "rest", band="reply")
+
+
 @pytest.mark.parametrize(
     "n_open, n_done, short", [(2, 11, "open"), (12, 3, "done"), (10, 10, None), (0, 0, "open"), (9, 8, "done")]
 )
