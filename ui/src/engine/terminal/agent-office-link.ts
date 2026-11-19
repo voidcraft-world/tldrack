@@ -88,6 +88,7 @@ const session_island_schema = z.object({
     title: z.string().min(1).max(4096),
     pr: z.enum(['needed', 'handled', 'unknown']).optional(),
     pr_state: z.enum(['none', 'open', 'closed', 'merged']).optional(),
+    landed: z.literal(true).optional(),
 });
 
 /** One relayed session, or null when it is not one. */

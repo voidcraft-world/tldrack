@@ -163,6 +163,8 @@ export interface SessionIsland {
     pr?: 'needed' | 'handled' | 'unknown';
     /** Exact PR state, when known; older senders only provide the colour. */
     pr_state?: 'none' | 'open' | 'closed' | 'merged';
+    /** The branch's work is on the base (`rack-view.ts::work_landed`): its readout says LANDED, not a PR state. */
+    landed?: true;
 }
 
 /** How urgent a context-left reading is. `normal` draws in the row's own colour. */
