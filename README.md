@@ -11,6 +11,10 @@ reads finished turns for you and marks them ✅ done or ⚠️ needs you.
     <td align="center"><a href="docs/img/rack.webp"><img src="docs/img/thumbs/rack.webp" width="280" alt="TLDRack with the agent list, selected terminal, 3D office, activity board and artifact files."></a></td>
     <td align="center"><a href="docs/img/rack-annotated-v2.webp"><img src="docs/img/thumbs/rack-annotated-v2.webp" width="280" alt="Annotated TLDRack tour: launch agents or a LEAD/coordinator for big tasks, parallel agents and mixed models; find automatically named sessions, choose a coding mode, use common tools, jump between sessions, manage services, close sessions flagged as finished by a local model, connect compute, review code diffs in a resizable terminal, follow agent activity and open generated files and canvas drawings."></a></td>
   </tr>
+  <tr><th colspan="3">Live rack · a LEAD and its workers, the office map and an agent canvas</th></tr>
+  <tr>
+    <td align="center" colspan="3"><a href="docs/img/rack-lead.webp"><img src="docs/img/thumbs/rack-lead.webp" width="856" alt="The live rack with a LEAD at work: the agent list with a LEAD row and its six workers, each with a grade emoji; the selected agent's terminal; the 3D office map with each agent's zone tinted blue for a background job or green when done, and labels showing each worker's PR state; the agent's detail panel and files; and its canvas, a flow diagram with a table of what each board row shows."></a></td>
+  </tr>
   <tr><th colspan="2">Laya review · desktop</th><th>Laya review · Android</th></tr>
   <tr>
     <td align="center" colspan="2"><a href="docs/img/laya-review-desktop.webp"><img src="docs/img/thumbs/laya-review-desktop.webp" width="568" alt="Laya review on the desktop: one session's prompt and the closing message of its turn, Laya's score of 0.67 just under the cut, and one button per grade: DONE, READ, RUNNING, NEEDS YOU, SKIP. An annotation reads: I would mark it Done, so Laya gave the wrong answer; the bug is fixed and none of this ending text needed to be read by me."></a></td>
