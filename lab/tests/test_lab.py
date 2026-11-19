@@ -209,6 +209,7 @@ def test_every_command_tightens_the_store_first(tmp_path, monkeypatch, capsys):
         "settle": ["agent-open-work"],
         "export-open-work": [],
         "label-open-work": [],
+        "claude-vote": [],
         "review-open-work": [],
         "sweep": ["agent-open-work"],
         "promote": ["agent-open-work"],

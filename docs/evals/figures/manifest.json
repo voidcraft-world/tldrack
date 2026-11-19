@@ -1,9 +1,9 @@
 {
-  "source": "74551cfaae82b1821b502c063cff8276c84d374aec5f6bf8797d01e818d51b09",
+  "source": "dc6c85b62a1efa85dc0a50c023799faf160006d27878b5bb34cc62dfcf86c88a",
   "figures": {
-    "labels-buy.dark.png": "cb153fc837abe75c4bc1db1736a1c1b8f6464508d8f5c3a7e59e61b521519634",
-    "labels-buy.light.png": "b879c23b18b1251cfa03c0a41d088d6f3fbf9d58dc924c9f573536f74c79e3d9",
-    "roc.dark.png": "20f64d48b424f44fb9dd35c20e552bcd45dba3146e1d75b67bf0f407ec53b427",
-    "roc.light.png": "ef2eaf376b7e0121273a21d096efb8152fd7310a4955c3063f67d741280b7be9"
+    "labels-buy.dark.png": "a79ddc82f5956956d11a9ec80b37a77cea2e820cb06b0bf3e6fc137044f42165",
+    "labels-buy.light.png": "4790081e76e2f8bb7e68f06637859940b8ba360637d016f7d1b1f63dd7123620",
+    "roc.dark.png": "d4a86870a124d90637074b173023b4e1e35c92b6c1760ff6df991b9d734b772d",
+    "roc.light.png": "3efc12074598910f860f09e88a009443af3e73a93050c8868c006b56ce08aaaf"
   }
 }
