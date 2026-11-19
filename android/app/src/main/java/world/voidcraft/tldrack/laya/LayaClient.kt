@@ -39,13 +39,34 @@ class LayaClient(private val files_dir: File, private val base_url: HttpUrl = BA
 
     suspend fun health(): Call<Unit> = send(url("health"), null) { status, text -> read_ack("health", status, text) }
 
-    suspend fun recent(todo: Boolean): Call<RecentPage> {
+    /** One page of RECENT; `after` is the page before's `summary.next`, for the older page that follows it. */
+    suspend fun recent(todo: Boolean, after: String? = null): Call<RecentPage> {
         val url = url("plugin/laya/review/recent") {
             addQueryParameter("limit", LayaRules.RECENT_LIMIT.toString())
-            // The default is never sent: a bridge from before TO GRADE refuses a name it does not know.
+            // A default is never sent: a bridge from before TO GRADE, or before the cursor, refuses a name it does not know.
             if (todo) addQueryParameter("todo", "1")
+            if (after != null) addQueryParameter("after", after)
         }
         return send(url, null) { status, text -> read("review/recent", status, text, RecentPage.serializer()) }
+    }
+
+    /**
+     * The page's join: which conversation each verdict belongs to. One call per `LayaThreads.threads_queries` chunk,
+     * merged; any failed chunk fails the whole, because half a join would group half the page by thread and half by
+     * rack name. The ids' shapes are URL-safe, so they go on the wire as they are (`addEncodedQueryParameter`): a
+     * full page then fits phone-link's one target.
+     */
+    suspend fun threads(ask: ThreadsAsk): Call<HistoryThreads> {
+        var all = HistoryThreads()
+        for (query in LayaThreads.threads_queries(ask)) {
+            val url = url("ledger/threads") { for ((name, ids) in query) addEncodedQueryParameter(name, ids) }
+            val got = send(url, null) { status, text -> read("ledger/threads", status, text, HistoryThreads.serializer()) }
+            when (got) {
+                is Call.Ok -> all = LayaThreads.merge_threads(all, got.data)
+                is Fail -> return got
+            }
+        }
+        return Call.Ok(all)
     }
 
     override suspend fun answer(request: AnswerRequest): Call<ReviewResult> {

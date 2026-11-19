@@ -59,13 +59,20 @@ data class RecentRow(
     /** Null: no current card holds the text, so it cannot be answered. */
     val reference_open: Boolean? = null,
     val operator: AnswerRef? = null,
+    /** The agent conversation (its session id) the verdict was recorded in; absent on an old verdict. */
+    val conversation: String? = null,
 )
 
-/** GET /plugin/laya/review/recent. */
+/** The part of a page's `summary` this app reads: `next` is the cursor of the page after it (`?after=`), null at the end. */
+@Serializable
+data class RecentSummary(val next: String? = null)
+
+/** GET /plugin/laya/review/recent. `summary` is absent from a bridge that predates it. */
 @Serializable
 data class RecentPage(
     val surface: String? = null,
     val rows: List<RecentRow>,
+    val summary: RecentSummary? = null,
 )
 
 /** Every refusal's readable half: the laya envelope, the bridge's `{error}` and phone-link's `{ok:false, error}` alike. */
@@ -157,6 +164,61 @@ fun ledger_page(raw: JsonObject): LedgerPage {
     }
     return LedgerPage(page.session.title, page.session.cwd, page.messages, first_user, page.before)
 }
+
+// ── GET /ledger/threads: one join a page (schemas/src/agent-history.ts `history_threads_schema`) ──
+
+/** A message the join clipped: `chars` is its full length when `text` was cut. */
+@Serializable
+data class HistoryClip(
+    val seq: Int,
+    val ts: Double? = null,
+    val role: String = "",
+    val text: String,
+    val chars: Int? = null,
+)
+
+/** One verdict's turn. Every field past `status` is null unless `status` is `linked`. A status this app does not know
+ *  reads as not linked, so a newer bridge never fails the page's decode. */
+@Serializable
+data class HistoryTurn(
+    val status: String,
+    val thread: String? = null,
+    val conversation: String? = null,
+    val file_id: Long? = null,
+    val closing_seq: Int? = null,
+    val human_ordinal: Int? = null,
+    val woke_by: String? = null,
+    /** The turn's opening message, whoever wrote it. */
+    val request: HistoryClip? = null,
+    /** The operator's last prompt at or before this turn. */
+    val ask: HistoryClip? = null,
+    /** The closing message's end, cut at a line boundary. */
+    val closing_tail: String? = null,
+) {
+    val linked: Boolean get() = status == "linked"
+}
+
+/** One thread's header: the same for every turn in it. */
+@Serializable
+data class HistoryThread(
+    val thread: String,
+    val title: String? = null,
+    val first_user: HistoryClip? = null,
+    val started_at: Double? = null,
+    val cwd: String? = null,
+    val branch: String? = null,
+    val human_turns: Int? = null,
+    val resumed: Int = 0,
+)
+
+@Serializable
+data class HistoryThreads(
+    /** By Laya decision id (`d=`). */
+    val decisions: Map<String, HistoryTurn> = emptyMap(),
+    /** Raw conversation id (`c=`) → its thread; null while the ledger has not indexed it. */
+    val conversations: Map<String, String?> = emptyMap(),
+    val threads: Map<String, HistoryThread> = emptyMap(),
+)
 
 @Serializable
 data class TopicNamed(

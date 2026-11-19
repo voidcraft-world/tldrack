@@ -133,6 +133,7 @@ connection, so `/nonce` and the request are two connections. Owner of the bounds
 | POST | `/plugin/laya/review/undo` | take a grade back |
 | GET | `/ledger/search` | find a row's conversation, as `ui/src/laya-review/turn-context.ts` does |
 | GET | `/ledger/conversation` | read it |
+| GET | `/ledger/threads` | the page's join: each verdict's conversation, its title and first message, so the app shows one conversation at a time |
 | POST | `/ledger/ingest` | REFRESH INDEX |
 | GET | `/topic-labels` | the rack's display name for a session |
 

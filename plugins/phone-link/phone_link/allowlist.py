@@ -25,6 +25,7 @@ FORWARDED: dict[str, str] = {
     "/plugin/laya/review/undo": "POST",
     "/ledger/search": "GET",  # conversation lookup (ui/src/laya-review/turn-context.ts)
     "/ledger/conversation": "GET",
+    "/ledger/threads": "GET",  # which conversation each verdict belongs to: one join a page (thread-model.ts)
     "/ledger/ingest": "POST",  # REFRESH INDEX
     "/topic-labels": "GET",  # the rack's display name for a session
 }

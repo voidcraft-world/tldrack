@@ -29,10 +29,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val BODY = 14.sp
-private val BODY_LINE = 20.sp
-private val SMALL = 13.sp
-private val SMALL_LINE = 18.sp
+// Reading sizes: a conversation fills the screen, so its text is sized to be read, not scanned.
+private val BODY = 16.sp
+private val BODY_LINE = 24.sp
+private val SMALL = 14.sp
+private val SMALL_LINE = 20.sp
 private val CODE_WASH = RackColors.mint.copy(alpha = 0.10f)
 // A table column is as wide as its longest cell, between these, so a wide table scrolls sideways and a long cell wraps.
 private const val COLUMN_MIN_CHARS = 4
@@ -51,8 +52,8 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                 is MdBlock.Heading -> Text(
                     styled(block.spans),
                     color = RackColors.accent,
-                    fontSize = if (block.level <= 2) 16.sp else 15.sp,
-                    lineHeight = 22.sp,
+                    fontSize = if (block.level <= 2) 18.sp else 17.sp,
+                    lineHeight = 26.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(top = 2.dp),
                 )

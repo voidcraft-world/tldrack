@@ -109,9 +109,19 @@ def test_the_allowlist_is_the_contract():
         "/plugin/laya/review/undo": "POST",
         "/ledger/search": "GET",
         "/ledger/conversation": "GET",
+        "/ledger/threads": "GET",
         "/ledger/ingest": "POST",
         "/topic-labels": "GET",
     }
+
+
+def test_a_full_page_of_the_join_fits_one_target():
+    # The app asks for a whole RECENT page at once: 100 ids, the longest kind (a conversation id), comma-joined raw.
+    ids = ",".join(f"{i:08x}-0000-4000-8000-{i:012x}" for i in range(100))
+    target = f"/ledger/threads?c={ids}"
+    assert len(target) <= allowlist.MAX_TARGET_CHARS
+    route = allowlist.route_for("GET", target)
+    assert route is not None and route.kind == "forward" and route.path == "/ledger/threads"
 
 
 def test_health_is_local_and_get_only():

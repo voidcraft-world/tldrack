@@ -188,14 +188,11 @@ class LayaRulesTest {
     // ── the list ─────────────────────────────────────────────────────────────
 
     @Test
-    fun `the list narrows by band and to the ungraded, and moves to the next ungraded row`() {
+    fun `the list narrows by band and to the ungraded`() {
         val rows = listOf(row(band = Band.done, operator = said(false)), row(band = Band.open), row(band = Band.done))
         assertEquals(2, LayaRules.visible_rows(rows, Band.done, false).size)
         assertEquals(2, LayaRules.visible_rows(rows, null, true).size)
         assertEquals(1, LayaRules.visible_rows(rows, Band.done, true).size)
-        assertEquals(1, LayaRules.next_unanswered(rows, 0))
-        assertEquals("nothing below: stay", 2, LayaRules.next_unanswered(rows, 2))
-        assertEquals(1, LayaRules.next_unanswered(rows, -1))
     }
 
     @Test
@@ -250,14 +247,6 @@ class LayaRulesTest {
         assertEquals("0.72", LayaRules.score_text(0.725))
         assertEquals("0.13", LayaRules.score_text(0.125))
         assertEquals("1.00", LayaRules.score_text(1.0))
-    }
-
-    @Test
-    fun `the heading uses the rack's display name, then an indexed title, then the technical identity`() {
-        assertEquals("get the branch ready, please", LayaRules.review_title("vc-7", "get the branch ready, please", "Older title"))
-        assertEquals("PR #12", LayaRules.review_title("vc-7", null, "PR #12"))
-        assertEquals("vc-7", LayaRules.review_title("vc-7", "  ", null))
-        assertEquals("Conversation", LayaRules.review_title(null, null, null))
     }
 
     @Test
@@ -605,19 +594,10 @@ class LayaRulesTest {
     }
 
     @Test
-    fun `a load keeps the row being read, else lands on the first ungraded one`() {
-        val rows = listOf(row(band = Band.done, operator = said(false)), row(band = Band.open), row(band = Band.done))
-        assertEquals(Landing(null, rows[2].decision_id, same = true), LayaRules.landing(rows, null, rows[2].decision_id))
-        assertEquals(Landing(null, rows[1].decision_id, same = false), LayaRules.landing(rows, null, "gone"))
-        assertEquals("under a band, its first ungraded row", Landing(Band.done, rows[2].decision_id, same = false), LayaRules.landing(rows, Band.done, null))
-        assertEquals(Landing(Band.reply, null, same = false), LayaRules.landing(rows, Band.reply, null))
-    }
-
-    @Test
     fun `UNDO lands back on its text's row, widening a band that hides it, and says when the page has none`() {
         val rows = listOf(row(band = Band.done), row(band = Band.open))
-        assertEquals(Landing(Band.open, rows[1].decision_id, same = false), LayaRules.return_to(rows, Band.open, rows[1].key))
-        assertEquals(Landing(null, rows[1].decision_id, same = false), LayaRules.return_to(rows, Band.done, rows[1].key))
+        assertEquals(Landing(Band.open, rows[1].decision_id), LayaRules.return_to(rows, Band.open, rows[1].key))
+        assertEquals(Landing(null, rows[1].decision_id), LayaRules.return_to(rows, Band.done, rows[1].key))
         assertNull(LayaRules.return_to(rows, null, "ffffffffffffffff"))
     }
 
