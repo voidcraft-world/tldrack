@@ -18,7 +18,7 @@ uv run laya-lab settle agent-open-work      # a signed-off batch loses `provisio
 uv run laya-lab unregister coordinator      # back to the base checkpoint (and the code's cut)
 uv run laya-lab compare agent-open-work --voter laya:served --voter other=http://127.0.0.1:8010
                                             # voters side by side: any loopback /v1/systemone server beside Laya,
-                                            # plus their mean (compare.py)
+                                            # plus their mean and their out-of-fold stack (compare.py)
 uv run laya-lab gate agent-open-work        # the promotion gate train runs: the newest unserved checkpoint vs
                                             # the served model, paired (gate.py); --prospective after a registration;
                                             # --fixture PATH also writes its evidence trimmed to numbers
@@ -178,6 +178,21 @@ once. The answers land in `data/agent-open-work-votes.jsonl`, and a `votes:<mode
 file. Two arms: `question` asks Laya's own one-line question, `rubric` the teacher's rubric. The model
 labels are Sonnet's and were made on that rubric, so score a rubric vote against the operator's labels
 (`--labels operator`). Why a file and what a row holds: owned by `laya_lab/claude_voter.py` — see the note there.
+
+## Do two voters make different mistakes? (`compare`'s `stack`)
+
+With two voters or more, `compare` adds a `stack` row beside `mean`: one logistic regression over the voters'
+logits, with the same columns as every voter. It is fitted and scored out of fold on the very set it is measured on
+(folds by a stable hash of the row id), so no row is scored by a stack that saw its label. Under each set's table:
+
+- `stack vs <voter>`: the paired ΔAUC against the best single voter and its bootstrap interval
+  (`bench.paired_auc_delta`). A **win only when the interval sits above zero**; a positive point inside a straddling
+  interval is no win.
+- `<a> wrong N → <b> right K`: at each voter's own live cut, of the rows `a` gets wrong, how many `b` gets right.
+
+Measurement only: nothing registers, serves or saves a stack, and its cut is the code's, as `mean`'s is. A set too
+small to fold (fewer than ten rows, or a fold that leaves one class) prints `stack skipped` with the reason. Owned
+by `laya_lab/stack.py` — see the note there.
 
 ## The resource lease (optional)
 

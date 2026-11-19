@@ -79,7 +79,7 @@ ISO_MAX_CHARS = 40
 #: `env_names.read`, so a runner that still sets the older name is heard too.
 EVAL_RUN_ENV = "TLDRACK_EVAL_RUN"
 EVAL_RUN = re.compile(r"[0-9a-f]{12}")
-#: A compare voter's name: `laya:<model>`, an endpoint's `<name>` (laya-lab `compare.NAME`), or `mean`.
+#: A compare voter's name: `laya:<model>`, an endpoint's `<name>` (laya-lab `compare.NAME`), `mean` or `stack`.
 VOTER_NAME = re.compile(r"(?:laya:)?[a-z0-9][a-z0-9_.-]{0,79}")
 COMPARE_SETS = ("golden", "heldout")
 COMPARE_VOTERS_MAX = 8

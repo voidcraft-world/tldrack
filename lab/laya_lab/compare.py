@@ -11,7 +11,10 @@ report's `notes`, while no fine-tune is served). Every voter answers the SAME qu
 surface serves (`golden.SUITES`), on two sets:
 - golden: the public cases, plus the private ones the served fine-tune never trained on;
 - held-out: labelled turn ends the served fine-tune never trained on (`heldout.labelled_rows`, `--labels`).
-With two voters or more, a `mean` voter (the average p) answers whether one more voter helps.
+With two voters or more, a `mean` voter (the average p) answers whether one more voter helps, and a `stack` voter (a
+logistic regression over the voters' logits, scored out of fold on the set itself: `stack.py`) whether they make
+different mistakes: its paired ΔAUC against the best single voter, and per pair of voters, of the rows one gets wrong
+at its own cut, how many the other gets right. Measurement only: nothing registers or serves a stack.
 
 Per voter and set: AUC (ranking at no cut — THE number between voters calibrated differently),
 Brier, ECE, the result at its live cut (a Laya voter's served cut, else the code's), the cost-rule
@@ -38,6 +41,7 @@ from laya_lab import siblings  # noqa: F401  (puts laya_bridge on sys.path)
 from laya_lab import claude_voter
 from laya_lab import floor as floor_voter
 from laya_lab import infer
+from laya_lab import stack as stack_voter
 from laya_lab.data import atomic_write_text
 from laya_lab.golden import SUITES, Suite, counted_public, dataset_version, load_suites
 from laya_lab.heldout import labelled_rows, resolve_labels
@@ -51,6 +55,7 @@ from laya_bridge.review_data import CleanRows
 REFUSED = 3
 LAYA = "laya:"
 MEAN = "mean"
+STACK = stack_voter.NAME
 FLOOR = "floor"
 DEFAULT_VOTERS = ("laya:served", "laya:english")
 #: Wider than the sweep's 0.30–0.90: a voter that runs hot (Mica) only separates near 0.95.
@@ -109,8 +114,8 @@ def parse_spec(spec: str) -> tuple[str, str]:
             raise Refused(f"{spec!r}: laya:<served|english|checkpoint folder>")
         return "laya", model
     name, sep, url = spec.partition("=")
-    if not sep or not NAME.fullmatch(name) or name in (MEAN, FLOOR) or name.startswith("laya"):
-        raise Refused(f"{spec!r}: <name>=<url>, name in [a-z0-9_.-], not 'mean', 'floor' or 'laya…'")
+    if not sep or not NAME.fullmatch(name) or name in (MEAN, STACK, FLOOR) or name.startswith("laya"):
+        raise Refused(f"{spec!r}: <name>=<url>, name in [a-z0-9_.-], not 'mean', 'stack', 'floor' or 'laya…'")
     if url.startswith(claude_voter.VOTES):
         try:
             claude_voter.parse_votes(url)
@@ -290,9 +295,27 @@ def agreement(probabilities: dict[str, list[float]], cuts: dict[str, float]) -> 
     return out
 
 
+def stack_of(
+    ids: list[str], expected: list[bool], singles: dict[str, list[float]], cuts: dict[str, float]
+) -> tuple[list[float] | None, dict[str, Any]]:
+    """`(the stack's out-of-fold p, its block)` over `singles`, or `(None, block with why it was skipped)`. The block
+    carries what the stack learned on every row (`weights`, voters then bias), its ΔAUC against the best single voter,
+    and the mistakes each voter rescues of the others' (`stack.mistakes`)."""
+    block: dict[str, Any] = {"over": list(singles), "mistakes": stack_voter.mistakes(singles, expected, cuts)}
+    try:
+        stacked = stack_voter.out_of_fold(list(singles.values()), expected, ids)
+    except ValueError as error:
+        return None, block | {"skipped": str(error)}
+    return stacked.probabilities, block | {
+        "weights": stacked.weights,
+        "vs_best": stack_voter.verdict(stacked.probabilities, singles, expected),
+    }
+
+
 def score_set(set_name: str, data: list[tuple[str, Any, bool]], voters: list[Voter], suite: Suite) -> dict[str, Any]:
     states = [state for _id, state, _e in data]
     expected = [e for _id, _state, e in data]
+    stack_block: dict[str, Any] | None = None
     for voter in voters:
         infer.predict_noul(voter.router, voter.model, states[:1], suite.question)  # warm: a cold start is not latency
         voter.router.ms.clear()
@@ -305,7 +328,13 @@ def score_set(set_name: str, data: list[tuple[str, Any, bool]], voters: list[Vot
         probabilities[MEAN] = [statistics.fmean(ps) for ps in zip(*(voter.probabilities[set_name] for voter in voters))]
         cuts[MEAN] = suite.threshold
         latency[MEAN] = []
-    return {
+        singles = {voter.name: voter.probabilities[set_name] for voter in voters}
+        stacked, stack_block = stack_of([row_id for row_id, _s, _e in data], expected, singles, cuts)
+        if stacked is not None:
+            probabilities[STACK] = stacked
+            cuts[STACK] = suite.threshold  # the code's, as mean's: stack.py owns why
+            latency[STACK] = []
+    out = {
         "rows": len(data),
         "open": sum(expected),
         "done": len(expected) - sum(expected),
@@ -313,10 +342,13 @@ def score_set(set_name: str, data: list[tuple[str, Any, bool]], voters: list[Vot
             name: voter_scores(ps, expected, cuts[name], suite.false_warning_cost, latency[name])
             for name, ps in probabilities.items()
         },
-        "agreement": agreement({name: ps for name, ps in probabilities.items() if name != MEAN}, cuts),
+        "agreement": agreement({name: ps for name, ps in probabilities.items() if name not in (MEAN, STACK)}, cuts),
         # ids and keys only: a text never enters a report
         "p": {row_id: {name: round(ps[i], 4) for name, ps in probabilities.items()} for i, (row_id, _s, _e) in enumerate(data)},
     }
+    if stack_block is not None:
+        out["stack"] = stack_block
+    return out
 
 
 def evaluate(
@@ -421,8 +453,29 @@ def report_lines(report: dict[str, Any]) -> list[str]:
             lines.append(
                 f"    {pair['a']} ~ {pair['b']}: same verdict {fmt_num(pair['same_verdict'], 3)} · r {fmt_num(pair['pearson'], 3)}"
             )
+        lines.extend(stack_lines(block.get("stack")))
     if report["heldout_note"]:
         lines.append(f"  held-out skipped: {report['heldout_note']}")
     for voter, why in (report.get("notes") or {}).items():
         lines.append(f"  {voter} left out: {why}")
+    return lines
+
+
+def stack_lines(block: dict[str, Any] | None) -> list[str]:
+    """The stack's verdict and the mistakes question, under a set's table."""
+    if block is None:
+        return []
+    lines = []
+    best = block.get("vs_best")
+    if "skipped" in block:
+        lines.append(f"    stack skipped: {block['skipped']}")
+    elif best is not None:
+        lines.append(
+            f"    stack vs {best['best_single']}: ΔAUC {best['delta_auc']:+.4f} [{best['lo']:+.4f}, {best['hi']:+.4f}]"
+            f" · {'WIN' if best['win'] else 'no win'} · weights {block['weights']}"
+        )
+    for pair in block["mistakes"]:
+        lines.append(
+            f"    {pair['a']} wrong {pair['a_wrong']} → {pair['b']} right {pair['b_right']} ({fmt_num(pair['share'], 3)})"
+        )
     return lines
