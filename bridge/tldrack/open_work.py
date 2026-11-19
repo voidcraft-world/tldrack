@@ -28,6 +28,8 @@ A turn that ANSWERS a question is done by the question above: the agent owes not
 draws ✅. But the operator still owes the answer a read, and ✅ alone says "nothing to look at".
 So a ✅ whose turn was opened by a question carries a second, separate signal: `answer_to_read`.
 The rack draws it as 📖 in the ✅'s place (`ui/src/config/terminal-status-flags.ts`).
+LAYA REVIEW's list draws the same 📖 on a ✅ the operator asked for, from the joined turn's `asked`
+(`ledger/reader.py` `turn_asked`), and keeps it after the read: that list records what a turn was.
 It is not a label and not a band; Laya's question, cuts, golden set and labels do not move.
   · The rule (`asks_question`): the prompt that opened the turn (`turn_request`) is a question,
     its last non-empty line ending in `?` (the `ends_on_question` rule the landing trace already
@@ -215,11 +217,20 @@ def turn_request(entry: dict) -> str | None:
     text = claude_fold.block_text(message.get("content") if isinstance(message, dict) else None).strip()
     if not text or text.startswith((claude_fold.INTERRUPT_PREFIX, *claude_fold._LOCAL_OUTPUT)):
         return None
-    command = claude_fold._COMMAND_NAME.search(text[:500])
-    if command:
-        args = claude_fold._COMMAND_ARGS.search(text)
-        return f"{command.group(1)} {args.group(1) if args else ''}".strip()
+    command = command_request(text)
+    if command is not None:
+        return command
     return text if claude_fold.origin_of(entry, text, "main") == "human" else None
+
+
+def command_request(text: str) -> str | None:
+    """A slash command's prompt read as the request it carries, `name args`; None when the text is
+    not a command. Pure. The session ledger keeps the raw text, so its reader asks this too."""
+    command = claude_fold._COMMAND_NAME.search(text[:500])
+    if not command:
+        return None
+    args = claude_fold._COMMAND_ARGS.search(text)
+    return f"{command.group(1)} {args.group(1) if args else ''}".strip()
 
 
 def fold_turn_request(prior: str | None, entries: Iterable[dict]) -> str | None:

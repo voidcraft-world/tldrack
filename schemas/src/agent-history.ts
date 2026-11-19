@@ -70,6 +70,9 @@ export const history_turn_schema = z.object({
     /** What opened the turn (`turns.origin`): `human`, `command`, `task`, `peer`, `relay`, … */
     woke_by: z.string().max(32).nullable(),
     request: history_clip_schema.nullable(), // the turn's opening message, whoever wrote it
+    /** The operator opened the turn with a question (the bridge's whole-prompt reading; the clip may have lost the `?`).
+     *  Null unless linked; absent from an older bridge. A done turn with it is an answer: the review list draws 📖. */
+    asked: z.boolean().nullable().optional(),
     ask: history_clip_schema.nullable(), // the operator's last prompt at or before this turn
     closing_tail: z.string().nullable(), // the closing message's end, cut at a line boundary
     closing_chars: z.number().int().nonnegative().nullable(),

@@ -11,7 +11,7 @@
  */
 import type { ReviewAnswer, ReviewAnswerRequest, ReviewBand, ReviewNeeds, ReviewRecentOrder, ReviewRecentRow } from '@tldrack/schemas/laya-review.ts';
 
-import { OPEN_WORK_BADGE, WORK_DONE_EMOJI, display_state_emoji } from '../config/terminal-status-flags.ts';
+import { ANSWER_TO_READ_EMOJI, OPEN_WORK_BADGE, WORK_DONE_EMOJI, display_state_emoji } from '../config/terminal-status-flags.ts';
 
 /** The rack's own marks, from their owner — the list must draw exactly what the operator saw. */
 export const BAND_MARK: Readonly<Record<ReviewBand, string>> = {
@@ -25,6 +25,21 @@ export const BAND_WORDS: Readonly<Record<ReviewBand, string>> = {
     reply: 'Laya: unsure — the plain reply mark',
     open: 'Laya: planned work still open',
 };
+
+/**
+ * The mark a row draws: the band's, except that a ✅ on a turn the operator opened with a question draws 📖, as the
+ * rack does for an answer to read (`config/terminal-status-flags.ts` owns the mark). `asked` is the bridge's reading
+ * of the whole prompt (`bridge/tldrack/ledger/reader.py` `turn_asked`). Here 📖 stays once read: the list records what
+ * each turn was, and this one was an answer.
+ */
+export function row_mark(band: ReviewBand, asked: boolean | null | undefined): string {
+    return band === 'done' && asked === true ? ANSWER_TO_READ_EMOJI : BAND_MARK[band];
+}
+
+/** The row mark's words, for its accessible name: the band's, or the answer's. */
+export function row_mark_words(band: ReviewBand, asked: boolean | null | undefined): string {
+    return band === 'done' && asked === true ? 'Laya: the work looks done · it answered your question' : BAND_WORDS[band];
+}
 
 /** What the operator says a turn was, by press. `skip` leaves it out of every count, as on the deck. */
 export type RecentVerdict = 'done' | 'running' | 'you' | 'skip';

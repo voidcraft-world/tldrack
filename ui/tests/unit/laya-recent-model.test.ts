@@ -23,9 +23,12 @@ import {
     scrolls_itself,
     recent_tally,
     review_title,
+    row_mark,
+    row_mark_words,
     visible_rows,
     with_answer,
 } from '../../src/laya-review/recent-model.ts';
+import { ANSWER_TO_READ_EMOJI } from '../../src/config/terminal-status-flags.ts';
 import { laya_review_href, session_from_search, view_from_search } from '../../src/laya-review/open.ts';
 
 // The RECENT list: grade the newest live verdicts DONE / OPEN.
@@ -303,5 +306,20 @@ describe('the graded chip and the grade buttons', () => {
         assert.equal(ts_age_text(null, now), null);
         assert.equal(ts_age_text(undefined, now), null);
         assert.equal(ts_age_text(Number.NaN, now), null);
+    });
+});
+
+describe('row_mark: 📖 for a done turn that answered a question', () => {
+    it('a ✅ the operator asked for draws 📖, as the rack does', () => {
+        assert.equal(row_mark('done', true), ANSWER_TO_READ_EMOJI);
+        assert.match(row_mark_words('done', true), /answered your question/);
+    });
+    it('only on the done band, and only when the bridge says asked', () => {
+        assert.equal(row_mark('done', false), BAND_MARK.done);
+        assert.equal(row_mark('done', null), BAND_MARK.done); // not linked yet
+        assert.equal(row_mark('done', undefined), BAND_MARK.done); // an older bridge
+        assert.equal(row_mark('reply', true), BAND_MARK.reply);
+        assert.equal(row_mark('open', true), BAND_MARK.open);
+        assert.equal(row_mark_words('open', true), row_mark_words('open', false));
     });
 });
