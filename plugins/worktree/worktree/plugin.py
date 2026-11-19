@@ -2391,7 +2391,7 @@ class WorktreePlugin:
             return refusal
         # A group worker whose landed branch goes now keeps its delivery: the
         # runner's next landing sweep would no longer find the branch.
-        if row.get("landed") is True:
+        if row is not None and row.get("landed") is True:
             self._groups.reconcile_landing(own_landings({branch: {"landed": True, "landing": row.get("landing")}}))
 
         # A forced delete of work nothing PROVED safe pins its tip first, and

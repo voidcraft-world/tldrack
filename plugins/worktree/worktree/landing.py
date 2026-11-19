@@ -833,7 +833,7 @@ class ContentTier(BackgroundTier):
         clock test). `unwalked` asks a pass for the walk; a row too far behind
         is never walked and names no PR."""
         tip, behind = row.get("oid"), row.get("behind")
-        if not is_full_oid(tip) or not isinstance(behind, int) or behind > ANCESTRY_PATH_MAX_BEHIND:
+        if not isinstance(tip, str) or not is_full_oid(tip) or not isinstance(behind, int) or behind > ANCESTRY_PATH_MAX_BEHIND:
             return None, False
         with self._lock:
             side = self._introducers.get(tip)
