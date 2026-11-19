@@ -25,8 +25,11 @@ import {
     rename_failure_message,
     new_tracker,
     UNKNOWN_MODEL_LABEL,
+    parse_plugin_names,
     parse_profile_id,
+    parse_profile_standing,
     parse_profiles,
+    standing_reason,
     AUTO_PROFILE_ID,
     parse_launch_pick,
     parse_session_row,
@@ -584,6 +587,30 @@ test('a taken name tells the user to pick another, not that something broke', ()
 });
 
 // ── launch profiles ─────────────────────────────────────────────────────────
+
+test('parse_plugin_names reads the names off the plugins object, and null is "this bridge did not say"', () => {
+    assert.deepEqual(parse_plugin_names({ worktree: { routes: [] }, devices: {}, 'BAD NAME': {} }), ['devices', 'worktree']);
+    assert.deepEqual(parse_plugin_names({}), []);
+    for (const absent of [undefined, null, 'devices', ['devices']]) assert.equal(parse_plugin_names(absent), null);
+});
+
+test('a profile carries its account standing: OUT when the bridge says so, null for anything else', () => {
+    const out = { state: 'out', error: 'billing_error', message: ' Your plan has ended ', since: 1795118400 };
+    const [lapsed, fine, older] = parse_profiles([
+        { id: 'a', kind: 'claude', standing: out },
+        { id: 'b', kind: 'claude', standing: null },
+        { id: 'c', kind: 'claude' },
+    ])!;
+    assert.deepEqual(lapsed.standing, { state: 'out', error: 'billing_error', message: 'Your plan has ended', since: 1795118400 });
+    assert.equal(fine.standing, null);
+    assert.equal(older.standing, null, 'a bridge that does not say reads as fine');
+    for (const not_out of [{ state: 'ok' }, 'out', [], 7]) assert.equal(parse_profile_standing(not_out), null);
+    assert.deepEqual(parse_profile_standing({ state: 'out', error: 'Bad Token!', since: -1 }),
+        { state: 'out', error: 'unknown', message: null, since: null });
+    assert.equal(standing_reason(lapsed.standing!), 'plan ended');
+    assert.equal(standing_reason({ ...lapsed.standing!, error: 'authentication_failed' }), 'signed out');
+    assert.equal(standing_reason({ ...lapsed.standing!, error: 'unknown' }), 'account out');
+});
 
 test('parse_profiles is null when the key is absent — an older bridge, not an empty one', () => {
     assert.equal(parse_profiles(undefined), null);

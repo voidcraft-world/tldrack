@@ -430,7 +430,21 @@ def _stop_failure_of(entry: dict) -> dict | None:
         if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool) and resets_at > 0
         else None,
         "message": text[:STOP_FAILURE_MESSAGE_MAX_CHARS] or None,
+        # When the turn was cut off: what orders it against the account's later turns
+        # (account_standing.py). None for an entry with no readable timestamp.
+        "at": _entry_epoch(entry.get("timestamp")),
     }
+
+
+def _entry_epoch(value: object) -> float | None:
+    """A transcript entry's ISO-8601 `timestamp` as epoch seconds, or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp.timestamp() if stamp.tzinfo is not None else None
 
 
 def fold_closing_text(prior: tuple[str | None, str], entries: Iterable[dict]) -> tuple[str | None, str]:

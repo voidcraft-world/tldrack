@@ -49,6 +49,11 @@ EVERY candidate is spent the pick is the one whose blocking window resets
 first, flagged `spent`, so AUTO still says where the wait is shortest. SPENT
 reads the window at face value, never paced: 3% left an hour from the reset is
 still a cap a new agent would hit mid-task.
+
+OUT accounts are never picked while any other can launch: an account whose plan lapsed or
+whose login died (`account_standing.py`, the profile's `standing`) has no reset to wait for,
+whatever its last usage reading says. Only when EVERY candidate is out does AUTO name one,
+flagged `spent`, with a reason that says so.
 """
 
 from __future__ import annotations
@@ -114,6 +119,8 @@ class Candidate:
     #: When the week resets, where that reset is why it scores well
     #: (`PACE_NOTE_FACTOR`); else None.
     paced_reset: float | None = None
+    #: The account cannot run a turn at all (module docstring § OUT).
+    out: bool = False
 
 
 @dataclass(frozen=True)
@@ -142,6 +149,7 @@ class LaunchPick:
                     "headroom": round(c.headroom, 4),
                     "load": c.load,
                     "spent": c.spent,
+                    "out": c.out,
                 }
                 for c in self.ranking
             ],
@@ -227,7 +235,9 @@ def score_profile(summary: Mapping, rows: list[Mapping], capacity: float, now: f
     paced = week_left > 0 and rates["seven_day"] >= PACE_NOTE_FACTOR * week_left
     load, engaged = session_load(rows, now)
     cut_off = _cut_off_until(rows, now)
-    spent = left < SPENT_BELOW or cut_off is not None
+    standing = summary.get("standing")
+    out = isinstance(standing, Mapping) and standing.get("state") == "out"
+    spent = out or left < SPENT_BELOW or cut_off is not None
     resets_at = binding_reset if left < SPENT_BELOW else None
     if cut_off is not None:
         resets_at = cut_off if resets_at is None else max(resets_at, cut_off)
@@ -246,6 +256,7 @@ def score_profile(summary: Mapping, rows: list[Mapping], capacity: float, now: f
         spent=spent,
         resets_at=resets_at,
         paced_reset=week_reset if paced else None,
+        out=out,
     )
 
 
@@ -260,6 +271,8 @@ def _until(seconds: float) -> str:
 
 def reason_for(pick: Candidate, now: float) -> str:
     """The short mono line the clients print as AUTO's tooltip."""
+    if pick.out:
+        return f"{pick.label} · every account is out"
     if pick.spent:
         return f"{pick.label} · all spent · resets first"
     busy = f"{pick.engaged} busy" if pick.engaged else "idle"
@@ -291,7 +304,8 @@ def pick_launch_profile(
     if open_:
         best = open_[0]
     elif ranking:
-        best = min(ranking, key=lambda c: math.inf if c.resets_at is None else c.resets_at)
+        # An out account has no reset to wait for: last, whatever its stale windows say.
+        best = min(ranking, key=lambda c: (c.out, math.inf if c.resets_at is None else c.resets_at))
     else:
         return LaunchPick(None, None, "no agent CLI found", False, ())
     return LaunchPick(best.id, best.label, reason_for(best, now), best.spent, ranking)

@@ -423,9 +423,15 @@ export interface RackPayload {
     pane_loading?: string;
     /**
      * The DEVICES section: CPU and memory per machine, built by `device-readout.ts::device_rows`.
-     * Absent means no `devices` plugin answered (yet), and absent grows no section — the same
+     * Absent means this bridge has no `devices` plugin, and absent grows no section — the same
      * structural gating as `worktrees`. Present but stale while closed: the poller stops, so
      * the last rows stay for the head's count.
+     *
+     * EMPTY means the plugin is there and has not been read: the section draws its head alone.
+     * The rows come from a poll that runs only while the section is open and on screen
+     * (`agent-rack/devices-client.ts`), so a section that waited for an answer before it drew
+     * could never be opened again once a page loaded with it closed. Whether the plugin is
+     * there is therefore `RackPayloadInput.devices_mounted`, never the poll.
      */
     devices?: DeviceRow[];
     office_resources?: OfficeResources;
@@ -686,6 +692,12 @@ export interface RackViewInput {
     /** `GET /plugin/devices/state`; omit where it did not answer — see `RackPayload.devices`. */
     devices?: DevicesState;
     devices_open?: boolean;
+    /**
+     * Does the bridge mount the `devices` plugin (`PortSnapshot.plugins`)? Omit where the owner
+     * cannot say. Then a section this device CLOSED keeps its head: the stored flag is proof the
+     * section was once on this page, and opening it asks. See `RackPayload.devices`.
+     */
+    devices_mounted?: boolean;
     /** Omit while there is nothing to reopen — see `RackPayload.closed`. */
     closed?: ClosedView;
     /** Omit while the search box is empty — see `RackPayload.chat_search`. */
@@ -904,6 +916,10 @@ export function build_rack_payload(input: RackViewInput): RackPayload {
         payload.devices = device_rows(input.devices, labels);
         payload.devices_open = input.devices_open ?? true;
         payload.office_resources = office_resources(input.devices, payload.devices_open);
+    } else if (input.devices_mounted ?? input.devices_open === false) {
+        // Unread, not absent: owned by `RackPayload.devices` — see the note there.
+        payload.devices = [];
+        payload.devices_open = input.devices_open ?? true;
     }
     if (input.closed !== undefined) payload.closed = input.closed;
     if (input.chat_search !== undefined) payload.chat_search = input.chat_search;

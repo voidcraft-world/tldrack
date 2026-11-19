@@ -12,8 +12,10 @@ export const MULTI_TERMINAL_FLAGS = {
     /** Sessions a surface that CANNOT scroll lists before collapsing the rest into `+N MORE`.
      *  Overflow is always explicit; the count is never silently truncated. */
     max_sessions: 8,
-    /** The same cap for the DOM rack, whose list scrolls. Capping it at `max_sessions` hid every
-     *  agent past the eighth behind a `+N MORE` row with room to spare and nothing to click. */
+    /** What a payload owner sends as `RackPayload.max_sessions`. The DOM rack no longer reads it:
+     *  its list scrolls, so it lists every session (`AgentRackComponent.vue` `rows`). A cap there
+     *  hid the agents past it behind a `+N MORE` row with nothing to click. Kept for a host that
+     *  draws the payload on a surface with a longer budget than `max_sessions`. */
     scroll_max_sessions: 32,
     /** Idle cadence of the rack's worktree-plugin `/state` poll, ms. A create in flight drops it
      *  to `CREATE_POLL_INTERVAL_MS` (`agent-rack/worktree-client.ts`). */
