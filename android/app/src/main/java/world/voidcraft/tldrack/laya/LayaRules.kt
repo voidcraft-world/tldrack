@@ -156,8 +156,18 @@ object LayaRules {
     fun is_review_link(action: String?, scheme: String?, host: String?): Boolean =
         action == "android.intent.action.VIEW" && scheme == LINK_SCHEME && host == LINK_HOST
 
-    const val UNLINKED_FIX = "Plug into the Mac — or pair Wireless debugging once"
+    /** Wireless debugging first: it is the nightly way in, and Android switches it off whenever the phone leaves its
+     *  Wi-Fi (plugins/phone-link/README.md § Wireless debugging owns the steps). */
+    const val UNLINKED_FIX = "Turn on Wireless debugging (its tile), on the Mac's Wi-Fi — or plug into the Mac"
     const val BRIDGE_DOWN_FIX = "Start the bridge on the Mac"
+
+    /** While the link is down the screen asks again by itself, this often: quick for the minute after it was last
+     *  seen (the operator just flipped the tile, or plugged in), then slow, so an open screen does not spin all night. */
+    const val POLL_QUICK_MS = 3_000L
+    const val POLL_SLOW_MS = 10_000L
+    const val POLL_QUICK_FOR_MS = 60_000L
+
+    fun poll_delay_ms(down_for_ms: Long): Long = if (down_for_ms < POLL_QUICK_FOR_MS) POLL_QUICK_MS else POLL_SLOW_MS
 
     /** The rack's own marks, from their owner (`ui/src/config/terminal-status-flags.ts`): the list draws what the operator saw. */
     val BAND_MARK: Map<Band, String> = mapOf(Band.done to "✅", Band.reply to "💬", Band.open to "⚠️")
