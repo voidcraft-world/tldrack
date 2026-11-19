@@ -3,7 +3,7 @@
 The Laya review app's door to this Mac. It lets the operator grade Laya's agent-rack marks (✅ / 💬 / ⚠️, the
 RECENT view of `/laya-review.html`) from the phone, and once a day it says when grading there is worth it (§ The
 daily grade door). A listener of its own on `127.0.0.1:7683`, tunnelled to the phone with `adb reverse`, forwards
-seven allow-listed bridge routes to a caller that proves it holds a token only the app has. The token itself never
+eight allow-listed bridge routes to a caller that proves it holds a token only the app has. The token itself never
 crosses the wire.
 
 This file owns the contract. The Android half (`android/`, the app `world.voidcraft.tldrack`) and the code here
@@ -14,12 +14,15 @@ build against it.
 - **The link needs a debug build of the app.** The Mac writes the token into the app's private storage with
   `adb shell run-as`, and Android refuses `run-as` on a release build. Install with `./gradlew installDebug`. A
   release build reads `release` in the phone's row and never links.
-- **The Wi-Fi impersonation gap is open.** With Wireless debugging paired, adb names a phone by the instance name
+- **The token is written over USB only.** With Wireless debugging paired, adb names a phone by the instance name
   it advertises on mDNS, and that name is broadcast in the clear. The phone authenticates this Mac's key; as far as
   is known, adb does not pin the phone's TLS certificate in return. A device on the same Wi-Fi that copies the name
-  and answers as adbd would get the tunnel and, through `run-as`, the token. USB has no such gap. Pushing over USB
-  only would be a small change in `keeper.py` (`_reconcile_device`). It is not taken, because a phone that has only
-  ever paired over Wi-Fi would then never link: the operator's call.
+  and answers as adbd would be handed whatever adb is told to send that "phone". So over Wi-Fi the keeper only
+  reads the token back and arms the tunnel; it writes the token to a phone attached by USB and to no other
+  (`keeper.py` `_ensure_token`). An impersonator therefore gets a tunnel to a listener that still wants the
+  token's proof: the same nothing any app on the phone gets (§ What this does not stop). The cost: a phone links
+  the first time, and after a token rotation, only once it has been plugged in. Until then its row reads
+  `plug in over USB once: the token is only written over USB`.
 
 ## Why the bridge port is never tunnelled
 
@@ -104,7 +107,7 @@ three steps. Version 1 (`Bearer`) is gone: the link answers it 401 `unlinked`.
 
 | # | Check | Refusal |
 |---|---|---|
-| 1 | `Host` is absent or a loopback name (`localhost`, `127.0.0.1`, `[::1]`, any port). One `Host` only. This stops DNS rebinding | 403 `host_refused` |
+| 1 | `Host` is absent or a loopback name (`localhost`, `127.0.0.1`, `[::1]`, any port). One `Host` only. This stops DNS rebinding. (With the tailnet door on, its one configured name takes the door's own checks instead of 2 and 3: § The tailnet door) | 403 `host_refused` · 403 `tailnet_refused` |
 | 2 | No proxy header (`Forwarded`, `Via`, `X-Forwarded-*`, `X-Real-IP`, `Tailscale-*`) | 403 `proxy_refused` |
 | 3 | No `Origin` of any value, and no `Sec-Fetch-*` header, because those come from a browser | 403 `browser_refused` |
 | 4 | `GET /nonce?c=<c>` is answered here, before any proof: a nonce, signed over `c` | 400 `bad_challenge` |
@@ -152,8 +155,12 @@ sent, so the bridge reads the call as the native client it is. Owner: `phone_lin
 | State | When | The app says |
 |---|---|---|
 | LINKED | `/health` answers 200, signed | |
-| UNLINKED | connection refused, no token file, 401, or a reply without a valid `Phone-Link-Mac` | "Plug into the Mac — or pair Wireless debugging once" |
+| UNLINKED | connection refused, no token file, 401, or a reply without a valid `Phone-Link-Mac` | "Turn on Wireless debugging (its tile), on the Mac's Wi-Fi — or plug into the Mac" |
 | BRIDGE DOWN | a signed 502 `bridge_down` | the bridge is not answering on this Mac |
+
+While it is UNLINKED or BRIDGE DOWN and on screen, the app asks `/health` again by itself: every 3 s for the first
+minute, then every 10 s. The list arrives as soon as the link does, with no RETRY press. A refused connect on the
+phone's own loopback costs nothing, and something else on that port only ever sees a random challenge.
 
 ## The token
 
@@ -182,7 +189,8 @@ Two daemon threads in the bridge's process. The why of each rule: `phone_link/ke
 - `adb track-devices -l` is a long-lived stream of whole device lists. It ends when the adb server restarts,
   which also drops every reverse tunnel. It is restarted with backoff, from 1 s up to 60 s. A run that ends before
   its first list is a failure, and `adb_error` names its exit status and adb's last stderr line.
-- On every new list, and every 30 s while a phone is attached, each phone in adb's `device` state gets three
+- On every new list, and every 30 s while a phone is attached (every 15 s while a paired phone is not attached
+  over Wi-Fi: it may have just switched Wireless debugging on), each phone in adb's `device` state gets three
   steps, in order. 1. Every tunnel whose Mac side could reach the bridge is removed: a bridge port on any host
   (`tcp:7682`, `tcp:localhost:7682`, `tcp:[::1]:7682`), a TCP spec that does not parse, and any Mac side that is
   not TCP (`localfilesystem:` and friends are unix sockets, and tmux's server socket is one). 2. The phone's
@@ -190,7 +198,7 @@ Two daemon threads in the bridge's process. The why of each rule: `phone_link/ke
   owner: `phone_link/link_server.py`). While that bridge also holds the port, `reverse tcp:7683 tcp:7683` is
   armed. While a stranger holds the port, the tunnel is removed. A bridge without the lock, a second one or one
   still starting, leaves the tunnel alone. 3. The lock's holder reads the token back, and pushes it when it is
-  missing or stale.
+  missing or stale, to a phone on USB only (§ Two limits).
 - No app installed: the token field reads `no_app`, and the next check tries again. A phone that is
   `unauthorized` or `offline` gets a row that says what to do.
 - No `adb`: the `adb` field reads `missing`, and nothing crashes. The binary is looked for every 60 s on `PATH`,
@@ -198,21 +206,36 @@ Two daemon threads in the bridge's process. The why of each rule: `phone_link/ke
   on its `PATH`.
 - Every adb call has a timeout. A failure is a row's `error`, never an exception.
 
-## Wireless debugging, once
+## Wireless debugging: the phone unplugged
 
-1. On the phone: Settings › Developer options › Wireless debugging → on, then **Pair device with pairing code**.
-   It shows an `ip:port` and a six-digit code.
-2. On this Mac: `adb pair <ip:port> <code>`.
+This is how the app is used away from the cable. The tunnel is the same `adb reverse`; adb carries it over Wi-Fi.
 
-After that, while the phone has Wireless debugging on and is on the same network, adb connects it through mDNS
-(`_adb-tls-connect._tcp`). The keeper also connects a paired phone that it sees advertised but not connected, at
-most once per 5 minutes per address. It connects an advertiser only when its instance name is **exactly** a GUID
-in adb's pairing record (`~/.android/adb_known_hosts.pb`, read as the protobuf it is), the check adb's own
-auto-connect makes. A substring would not do: every GUID starts with `adb-`.
+**Once:**
+
+1. Plug the phone in once, with the app installed, so it holds the token (§ Two limits).
+2. On the phone: Settings › Developer options › Wireless debugging → on, tick **Always allow on this network**,
+   then **Pair device with pairing code**. It shows an `ip:port` and a six-digit code.
+3. On this Mac: `adb pair <ip:port> <code>`. `wireless.paired` in § State turns 1.
+4. Add the tile: Developer options › Quick settings developer tiles › Wireless debugging.
+
+**Each time:** make sure the Wireless debugging tile is on, and open the app. Android may switch it off when the
+phone leaves that Wi-Fi (through Android 16 it always does, and it stays off after a restart), which is why the
+tile is worth a place in the shade.
+
+What happens then: adb connects a paired phone it sees advertised on mDNS (`_adb-tls-connect._tcp`), the keeper
+arms the tunnel on the device list that follows, and the app, which has been asking every 3 s, links. As a
+backstop for when adb's own auto-connect does not fire, the keeper looks for the advertisement every 15 s and
+connects it: 5 s after a first try that did not attach, then 15 s, a minute, and every 5 minutes, starting over
+whenever the phone attaches or stops advertising (a newly switched-on Wireless debugging has a new port, so it is
+always tried at once). It connects an advertiser only when its instance name is **exactly** a GUID in adb's
+pairing record (`~/.android/adb_known_hosts.pb`, read as the protobuf it is), the check adb's own auto-connect
+makes. A substring would not do: every GUID starts with `adb-`.
 
 ## What this does not stop
 
-- **A device that impersonates a paired phone on the same Wi-Fi** (§ Two limits).
+- **A device that impersonates a paired phone on the same Wi-Fi** still gets a tunnel, and with it what any app
+  on the phone has: the `/nonce` step, 401s, and a share of the 16 slots. It does not get the token (§ Two limits),
+  so it gets no route and no signature on anything it did not choose.
 - **Root on the phone** reads the app's private storage, and the token with it.
 - **A local app denying service.** Any app on the phone, or any process on this Mac, can keep the 16 slots
   busy by reconnecting, or churn `/nonce` until the app's nonce is evicted. The deadlines make it keep working at
@@ -236,7 +259,9 @@ pass request headers gets 403 `host_too_old`. The shape only gains keys, and it 
               "reverse": true, "token": "pushed", "error": null,
               "checked_at": "2026-11-07T21:04:10Z", "bridge_reverse_removed_at": null}],
  "requests": {"n": 12, "last_at": "2026-11-07T21:04:31Z", "refused": 0},
- "door": {"date": "2026-11-09", "at": "2026-11-09T12:10:00-06:00", "waiting": 7, "sent": true, "reason": "sent"}}
+ "door": {"date": "2026-11-09", "at": "2026-11-09T12:10:00-06:00", "waiting": 7, "sent": true, "reason": "sent"},
+ "wireless": {"paired": 1},
+ "tailnet": {"on": false, "host": null, "port": null, "error": null}}
 ```
 
 | field | meaning |
@@ -247,9 +272,11 @@ pass request headers gets 403 `host_too_old`. The shape only gains keys, and it 
 | `devices[].transport` | `usb` or `wifi` |
 | `devices[].state` | adb's word: `device`, `unauthorized`, `offline`, … |
 | `devices[].reverse` | `tcp:7683 tcp:7683` is armed |
-| `devices[].token` | `pushed` (it read back), `no_app`, `error`. `error` says why, or `checking` before the first check |
+| `devices[].token` | `pushed` (it read back), `no_app`, `error`. `error` says why, or `checking` before the first check. A phone on Wi-Fi that does not hold the token yet reads `error`, and says to plug in once |
 | `devices[].bridge_reverse_removed_at` | the last time a tunnel that could reach the bridge was found on this phone and removed |
 | `requests` | `n`, the requests that proved the token; `last_at`; `refused`, the requests turned away by the checks above |
+| `wireless.paired` | phones in adb's Wireless debugging pairing record on this Mac; 0 means none was ever paired |
+| `tailnet` | the tailnet door as configured: `on`, its `host` and `port`, and `error` naming a configured door that was refused (it stays off) |
 | `door` | the daily grade door's last attempt (below), or `null` before the first: its local `date`, how many cards waited, whether the push went out, and the bridge's `reason` when it did not |
 
 ## The daily grade door
@@ -287,3 +314,76 @@ Restart the bridge after either. `/state`'s `app` reads what took effect.
 executable runs through real subprocesses, to prove that the token travels on stdin and never in argv, and a
 second proves that closing the keeper kills a live `track-devices`. `tests/link_client.py` drives the handshake
 end to end, and a squatter on a loopback port proves the client never shows it the token or the request.
+
+## The tailnet door (experimental, off)
+
+A second way in for the same app, for when the phone is not on the Mac's Wi-Fi at all. It is **off unless
+configured**, the app never mentions it, and Wireless debugging (above) is the way this README recommends. It was
+built from `tailscale serve`'s source and documentation and has **not yet been run against a live `serve`**: do the
+smoke test below before relying on it.
+
+What it is: `tailscale serve` on this Mac terminates HTTPS for the machine's own tailnet name and proxies to
+`127.0.0.1:7683`. The listener's bind does not change, and the bridge's port is still never exposed (serve is
+pointed at 7683, the link, and at nothing else). Every request still runs the whole handshake: a tailnet caller
+without the token gets `/nonce`, 401s and a share of the 16 slots, as any app on the phone does today.
+
+### Turning it on
+
+1. Tailscale running on this Mac and on the phone, signed in as the same user. In the tailnet's admin console:
+   MagicDNS on, and HTTPS certificates on (the machine's name then appears in the public Certificate Transparency
+   log, as for any certificate).
+2. `tailscale serve --bg --https=7683 http://127.0.0.1:7683`. Never `tailscale funnel`.
+3. In `~/.config/tldrack/phone-link.json`:
+   ```json
+   {"tailnet": {"host": "<machine>.<tailnet>.ts.net", "port": 7683, "login": "<your tailnet login>"}}
+   ```
+4. Restart the bridge. `tailnet.on` in § State turns true; a door that was refused says why in `tailnet.error`.
+5. Open the app once while it is linked over adb. Its next signed `/health` reply carries the door's address
+   (`"remote": "https://<machine>.<tailnet>.ts.net:7683/"`), and the app keeps it in its private storage.
+
+Turning it off: remove `tailnet` from the file, restart the bridge, `tailscale serve --https=7683 off`. The next
+signed `/health` reply has no `remote`, and the app forgets the address.
+
+### What the door checks, and what that is worth
+
+A request whose `Host` is exactly the configured `host:port` (compared whole, never by suffix) is the door's. It
+must then be what serve sends for the configured login, or it is refused 403 `tailnet_refused`:
+
+- no `Tailscale-Funnel-Request` (serve sets it on a request from the public internet);
+- exactly one `Tailscale-User-Login`, equal to the configured `login`. A tagged device has none, so it is refused;
+- serve's `X-Forwarded-For`, `X-Forwarded-Proto: https` and `X-Forwarded-Host` (the door's own name), one each;
+- no other `X-Forwarded-*`, `Tailscale-*`, `Forwarded`, `Via` or `X-Real-IP` header. A header serve gains in a
+  later release is refused until it is read and listed in `gate.py`;
+- no browser (`Origin`, `Sec-Fetch-*`), as on loopback.
+
+**These headers are not proof.** Serve overwrites them on what it proxies, so a tailnet caller cannot forge them,
+but anything on this Mac's own loopback can send them with the door's `Host`. That buys such a caller nothing: it
+could already reach the listener on loopback, and either way it meets the handshake. The checks are there to
+narrow who reaches the handshake FROM THE TAILNET to the operator's own signed-in devices, and to refuse Funnel.
+The token is the proof, here as everywhere.
+
+The reverse holds too: a tailnet caller cannot pass as local. Serve always adds its `X-Forwarded-*`, and a
+loopback `Host` takes the loopback checks, which refuse every proxy header.
+
+The port may not be 443, 8443 or 10000: those are the only ports Funnel can publish, so a `funnel` typed by
+mistake finds no door of ours behind it.
+
+### How the app uses it
+
+Every call goes to the phone's own loopback first. When nothing there proves itself the link (nobody listening, or
+something that cannot sign the challenge), the app tries the door's address, over HTTPS, with the same handshake.
+The request is the same one: the handshake signs the method, the target and the body, never the host. A door that
+does not answer leaves the loopback's verdict on screen, so the app still says UNLINKED and names the fix in reach.
+The address itself needs no trust: it arrived in a reply only this Mac can sign, it is dialled only when it is one
+machine's `https://….ts.net:<port>/`, and whatever answers there is believed only once it signs a fresh challenge.
+
+Not carried by the door: the token (still written over USB only, § Two limits) and the daily grade door, which
+fires only for a phone linked over adb.
+
+### Smoke test, before relying on it
+
+With the door on and the phone on the tailnet but off adb (Wireless debugging off, unplugged), open the app: it
+should list. Then check that serve passes the request through byte for byte, which the MAC depends on: open a turn
+whose closing text has spaces, `&` and `;` in its first line (the search target carries them). A turn that opens
+proves the target survived. A door that reads UNLINKED there, while `/state` shows `requests.refused` rising, means
+serve sent a header this README does not list: read the bridge log, then `gate.py`.

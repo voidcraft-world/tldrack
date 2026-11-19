@@ -13,8 +13,9 @@ Package `world.voidcraft.tldrack`. The link `tldrack://review` opens it; the bri
 
 - **The link needs a debug build.** The Mac pushes the link's token into the app's private storage with
   `adb shell run-as`, and Android refuses `run-as` on a release build. Install with `./gradlew installDebug`.
-- **The Wi-Fi impersonation gap is open.** Over Wireless debugging, a device on the same network that copies your
-  phone's advertised name could receive the token. Over USB there is no such gap.
+- **The first link needs the cable.** The Mac writes the token to a phone on USB only, because the name a phone
+  goes by over Wi-Fi can be copied by another device on the network. After that one plug-in the app works unplugged
+  (below).
 
 The why of both, and the whole contract between the app and the Mac:
 [`plugins/phone-link/README.md`](../plugins/phone-link/README.md).
@@ -38,8 +39,15 @@ export ANDROID_HOME=~/Library/Android/sdk        # or write sdk.dir=… into loc
    `adb reverse tcp:7683 tcp:7683`, and pushes the token.
 2. Open the app. The light turns mint and reads LINKED, then the list arrives.
 
-Amber means it is not linked, and the screen names the fix: UNLINKED (plug in, or pair Wireless debugging once),
-BRIDGE DOWN (start the bridge), or REFUSED (the bridge said no, and why).
+Amber means it is not linked, and the screen names the fix: UNLINKED (turn Wireless debugging on, or plug in),
+BRIDGE DOWN (start the bridge), or REFUSED (the bridge said no, and why). It asks again by itself every few
+seconds, so the list arrives as soon as the link does.
+
+## Unplugged
+
+Pair Wireless debugging with the Mac once (`adb pair`) and add its Quick Settings tile. From then on: tile on, open
+the app. Android may switch Wireless debugging off when the phone leaves your Wi-Fi, so check the tile first. The
+steps, and what the Mac does to link quickly: [`plugins/phone-link/README.md` § Wireless debugging](../plugins/phone-link/README.md#wireless-debugging-the-phone-unplugged).
 
 ## Layout
 

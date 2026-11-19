@@ -41,6 +41,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from phone_link import allowlist, gate, proof, upstream
+from phone_link.config import TailnetDoor
 from phone_link.logs import guarded
 from phone_link.paths import PHONE_LINK_PORT
 from phone_link.state import LinkState
@@ -151,11 +152,14 @@ class LinkApp:
         upstream_port: int,
         forward: Forward = upstream.forward,
         nonces: proof.NonceBook | None = None,
+        tailnet: TailnetDoor | None = None,
     ) -> None:
         self._tokens = tokens
         self._state = state
         self._upstream_port = upstream_port
         self._forward = forward
+        #: The tailnet door, or None: off (gate.py owns what it admits).
+        self._tailnet = tailnet
         self._nonces = nonces if nonces is not None else proof.NonceBook()  # an empty book is falsy
 
     def respond(
@@ -168,7 +172,7 @@ class LinkApp:
         proven: Callable[[], None] = _nothing,
     ) -> Answer:
         """`proven` is called once the caller has proved the token (the watchdog then grants the full deadline)."""
-        refused = gate.refusal(headers)
+        refused = gate.refusal(headers, self._tailnet)
         if refused is not None:
             return self._refuse(refused.status, refused.error)
         parsed = allowlist.parse_target(target)
@@ -214,7 +218,12 @@ class LinkApp:
         if route is None:
             return 404, error_body("not_allowed")
         if route.kind == "health":
-            return 200, json_bytes(HEALTH_BODY)
+            # With the tailnet door on, the signed health reply is how the app learns its address: a caller that
+            # proved the token, and a reply only this Mac can sign.
+            health: dict[str, object] = dict(HEALTH_BODY)
+            if self._tailnet is not None:
+                health["remote"] = self._tailnet.url
+            return 200, json_bytes(health)
         body = None
         if method == "POST":
             try:

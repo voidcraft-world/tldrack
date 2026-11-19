@@ -11,7 +11,7 @@ import pytest
 
 from fakes import FakePhone, FakeRunner
 from phone_link.adb import PUSH_COMMAND, Result, Runner, parse_devices
-from phone_link.keeper import Keeper
+from phone_link.keeper import CHECK_SECONDS, MDNS_SECONDS, USB_ONLY, Keeper
 from phone_link.link_server import HELD_ELSEWHERE
 from phone_link.state import LinkState
 from phone_link.token_store import TokenStore
@@ -313,13 +313,41 @@ def test_no_adb_is_a_state_not_a_crash(tmp_path):
     assert world.state.to_json()["adb"] == "ok"
 
 
-def test_a_wifi_phone(tmp_path):
-    serial = "adb-0123456789A-x1Yz._adb-tls-connect._tcp"
-    world = World(tmp_path, FakePhone(serial, usb=False))
+WIFI_SERIAL = "adb-0123456789A-x1Yz._adb-tls-connect._tcp"
+
+
+def test_a_wifi_phone_is_tunnelled_and_never_written_to(tmp_path):
+    # The name a Wi-Fi phone goes by is broadcast in the clear, so whatever answers to it gets the tunnel (which
+    # leads to a listener that still wants the token's proof) and never the token itself.
+    phone = FakePhone(WIFI_SERIAL, usb=False)
+    world = World(tmp_path, phone)
     world.attach()
     world.keeper.reconcile_once()
-    row = world.row(serial)
-    assert row["transport"] == "wifi" and row["reverse"] and row["token"] == "pushed"
+    row = world.row(WIFI_SERIAL)
+    assert row["transport"] == "wifi" and row["reverse"]
+    assert (row["token"], row["error"]) == ("error", USB_ONLY)
+    assert phone.token_file is None
+    assert not any(call.stdin for call in world.runner.calls), "nothing was pushed"
+
+
+def test_a_wifi_phone_that_already_holds_the_token_is_linked(tmp_path):
+    # It was plugged in once: the token it got over USB reads back over Wi-Fi, and that is the whole nightly path.
+    world = World(tmp_path, FakePhone(WIFI_SERIAL, usb=False))
+    world.runner.phones[WIFI_SERIAL].token_file = world.token
+    world.attach()
+    world.keeper.reconcile_once()
+    row = world.row(WIFI_SERIAL)
+    assert row["reverse"] and (row["token"], row["error"]) == ("pushed", None)
+    assert world.state.linked()
+
+
+def test_a_stale_token_on_a_wifi_phone_waits_for_usb(tmp_path):
+    phone = FakePhone(WIFI_SERIAL, usb=False, token_file="an-older-token")
+    world = World(tmp_path, phone)
+    world.attach()
+    world.keeper.reconcile_once()
+    assert world.row(WIFI_SERIAL)["error"] == USB_ONLY
+    assert phone.token_file == "an-older-token"
 
 
 # -- Wireless debugging ---------------------------------------------------------------------------------
@@ -336,18 +364,58 @@ def test_a_paired_phone_on_the_network_is_connected_and_a_stranger_is_not(tmp_pa
     world = World(tmp_path, mdns=MDNS, paired=PAIRED)
     world.keeper.reconcile_once()
     assert world.runner.connected == ["192.168.0.2:40101"]
+    assert world.state.to_json()["wireless"] == {"paired": 1}
     world.keeper.reconcile_once()  # inside MDNS_SECONDS: not asked again
-    world.clock[0] += 61
-    world.keeper.reconcile_once()  # past it, but inside the per-address quiet period
     assert world.runner.connected == ["192.168.0.2:40101"]
-    world.clock[0] += 300
+
+
+def test_an_address_that_does_not_attach_is_asked_again_quickly_at_first_then_slowly(tmp_path):
+    world = World(tmp_path, mdns=MDNS, paired=PAIRED)
+    asked = []
+    for _ in range(400):  # 400 polls, one every MDNS_SECONDS
+        before = len(world.runner.connected)
+        world.keeper.reconcile_once()
+        if len(world.runner.connected) > before:
+            asked.append(world.clock[0] - 1000.0)
+        world.clock[0] += MDNS_SECONDS
+    gaps = [later - earlier for earlier, later in zip(asked, asked[1:])]
+    # The ladder is 5, 15, 60, 300 s, seen through a poll every MDNS_SECONDS: quick, quick, a minute, then 5 minutes.
+    assert gaps[:3] == [MDNS_SECONDS, MDNS_SECONDS, 60.0]
+    assert set(gaps[3:]) == {300.0}
+
+
+def test_a_new_port_is_connected_at_once_and_an_attached_address_starts_over(tmp_path):
+    # Wireless debugging takes a new port every time it is switched on: the old address's waits never delay it.
+    world = World(tmp_path, mdns=MDNS, paired=PAIRED)
+    for _ in range(4):
+        world.keeper.reconcile_once()
+        world.clock[0] += 400
+    world.runner.mdns = MDNS.replace(":40101", ":40999")
     world.keeper.reconcile_once()
-    assert world.runner.connected == ["192.168.0.2:40101"] * 2
+    assert world.runner.connected[-1] == "192.168.0.2:40999"
+    # The first address came back after going away: it is quick again, not at the end of its old ladder.
+    world.clock[0] += MDNS_SECONDS
+    world.runner.mdns = MDNS
+    world.keeper.reconcile_once()
+    assert world.runner.connected[-1] == "192.168.0.2:40101"
+    world.clock[0] += MDNS_SECONDS
+    world.keeper.reconcile_once()
+    assert world.runner.connected[-2:] == ["192.168.0.2:40101"] * 2
+
+
+def test_the_wait_is_short_only_while_a_paired_phone_is_not_here_over_wifi(tmp_path):
+    assert World(tmp_path / "a").keeper._next_wait() is None
+    assert World(tmp_path / "b", mdns=MDNS, paired=PAIRED).keeper._next_wait() == MDNS_SECONDS
+    usb = World(tmp_path / "c", FakePhone(SERIAL), paired=PAIRED)
+    usb.attach()
+    assert usb.keeper._next_wait() == MDNS_SECONDS, "plugged in, but it may be unplugged and switched to Wi-Fi next"
+    wifi = World(tmp_path / "d", FakePhone(WIFI_SERIAL, usb=False), paired=PAIRED)
+    wifi.attach()
+    assert wifi.keeper._next_wait() == CHECK_SECONDS
 
 
 def test_a_connected_paired_phone_is_left_alone(tmp_path):
-    serial = "adb-0123456789A-x1Yz._adb-tls-connect._tcp"
-    world = World(tmp_path, FakePhone(serial, usb=False), mdns=MDNS, paired=PAIRED)
+    world = World(tmp_path, FakePhone(WIFI_SERIAL, usb=False), mdns=MDNS, paired=PAIRED)
     world.attach()
     world.keeper.reconcile_once()
     assert world.runner.connected == []

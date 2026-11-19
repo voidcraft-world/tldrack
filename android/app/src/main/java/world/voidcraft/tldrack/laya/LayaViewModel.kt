@@ -109,6 +109,7 @@ class LayaViewModel(app: Application, private val saved: SavedStateHandle) : And
 
     private var load_job: Job? = null
     private var names_job: Job? = null
+    private var watch_job: Job? = null
     private var join_job: Job? = null
 
     /** Bumped by every full load: an older page or a join that lands after one belongs to the page it replaced. */
@@ -217,6 +218,36 @@ class LayaViewModel(app: Application, private val saved: SavedStateHandle) : And
         val s = state.value
         if (s.link == Link.linked && s.loaded && SystemClock.elapsedRealtime() - loaded_at_ms < RETURN_FRESH_MS) return
         load()
+    }
+
+    /**
+     * While the screen is visible and the link is down, ask quietly until the Mac answers, then load: the operator
+     * turns Wireless debugging on (or plugs in) and the list arrives without a RETRY press. Quiet: the probe never
+     * touches `loading`, so the down pane does not flicker. A refusal is not asked again: the bridge said no, and
+     * why. Costs nothing while unlinked (a refused connect on loopback), and a squatter on the port only ever sees a
+     * random challenge (`LayaClient.send`).
+     */
+    fun watch_link() {
+        if (watch_job?.isActive == true) return
+        watch_job = viewModelScope.launch {
+            var down_ms = 0L
+            while (true) {
+                val link = state.value.link
+                val down = link == Link.unlinked || link == Link.bridge_down
+                if (!down) down_ms = 0L
+                val wait = LayaRules.poll_delay_ms(down_ms)
+                delay(wait)
+                if (!down) continue
+                down_ms += wait
+                if (load_job?.isActive != true && client.health() is Call.Ok) load()
+            }
+        }
+    }
+
+    /** The screen left the foreground: nothing is asked of a Mac nobody is looking at. */
+    fun stop_watching() {
+        watch_job?.cancel()
+        watch_job = null
     }
 
     fun set_to_grade(on: Boolean) {
