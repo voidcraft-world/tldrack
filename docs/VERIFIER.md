@@ -2,16 +2,16 @@
 
 Laya reads the content of an agent turn to help a person judge whether work remains. Process-state multiplexers report whether a process is running; this card measures the content judgement. It does not certify task completion.
 
-Measured 2026-11-14T19:13:05Z; public golden suite: 200 cases; live warning cut: 0.700.
+Measured 2026-11-19T04:54:35Z; public golden suite: 200 cases; live warning cut: 0.700.
 Operator/Sonnet agreement on the uniform sample: κ 0.822 ± 0.377 (95% CI 0.445, 0.941; n=24).
 
 ## The headline
 
-Area under the ROC curve, with a bootstrap 95% interval. Every voter answered the same rows: `bench/results/2026-11-14.json`, protocol `agent-open-work.q2.g7fada07abf88.h164-6dfc51a5`.[^earlier]
+Area under the ROC curve, with a bootstrap 95% interval. Every voter answered the same rows: `bench/results/2026-11-18.json`, protocol `agent-open-work.q2.g7fada07abf88.h168-698b6350`.[^earlier]
 
 | Set | Rows | Served fine-tune | Base model | TF-IDF floor |
 |---|---|---|---|---|
-| Held-out: operator-graded turn ends no fine-tune trained on | 164 (96 open / 68 done) | 0.850 [0.788, 0.909] | 0.674 [0.588, 0.752] | 0.844 [0.782, 0.902] |
+| Held-out: operator-graded turn ends no fine-tune trained on | 168 (97 open / 71 done) | 0.833 [0.769, 0.894] | 0.665 [0.580, 0.748] | 0.834 [0.770, 0.892] |
 | Public golden suite | 200 (100 open / 100 done) | 0.857 [0.805, 0.906] | 0.824 [0.761, 0.883] | 0.750 [0.680, 0.816] |
 
 ## Live sample, at each recorded cut
