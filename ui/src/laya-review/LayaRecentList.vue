@@ -172,8 +172,8 @@
                                         </span>
                                         <span v-if="drawn_note(row)" class="fui-tag" title="The rack drew this before the ✅ band existed">{{ drawn_note(row) }}</span>
                                         <span class="lr-grow"></span>
-                                        <span class="lr-turn__laya" role="img" :title="score_title(row)" :aria-label="`${BAND_WORDS[row.band]} · open-work score ${row.p.toFixed(2)}`">
-                                            {{ BAND_MARK[row.band] }} {{ row.p.toFixed(2) }}<span v-if="edge_note(row)" class="lr-turn__edge"> · near cut {{ edge_note(row)?.cut.toFixed(2) }}</span>
+                                        <span class="lr-turn__laya" role="img" :title="score_title(row)" :aria-label="`${row_mark_words(row.band, turn_of(row)?.asked)} · open-work score ${row.p.toFixed(2)}`">
+                                            {{ row_mark(row.band, turn_of(row)?.asked) }} {{ row.p.toFixed(2) }}<span v-if="edge_note(row)" class="lr-turn__edge"> · near cut {{ edge_note(row)?.cut.toFixed(2) }}</span>
                                         </span>
                                     </div>
                                     <p v-if="wakes.get(row.decision_id)" class="lr-wake" :title="wakes.get(row.decision_id)?.title">
@@ -274,7 +274,6 @@ import { deck_down } from './review-deck-model.ts';
 import { load_topic_labels } from './topic-labels-client.ts';
 import { use_laya_view } from './view-state.ts';
 import {
-    BAND_MARK,
     BAND_WORDS,
     RECENT_VERDICTS,
     age_text,
@@ -289,6 +288,8 @@ import {
     recent_key,
     recent_tally,
     review_title,
+    row_mark,
+    row_mark_words,
     scrolls_itself,
     ts_age_text,
     verdict_chip,

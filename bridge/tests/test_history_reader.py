@@ -9,7 +9,7 @@ import time
 import pytest
 
 from tldrack.ledger.laya_links import link_laya_decisions
-from tldrack.ledger.reader import MESSAGE_PAGE, SEARCH_PAGE, read_history
+from tldrack.ledger.reader import MESSAGE_PAGE, SEARCH_PAGE, read_history, turn_asked
 from tldrack.ledger.store import connect
 from tldrack.ledger import reader
 from tldrack.open_work import decide_state
@@ -207,6 +207,7 @@ TURN_FIELDS = {
     "human_ordinal",
     "woke_by",
     "request",
+    "asked",
     "ask",
     "closing_tail",
     "closing_chars",
@@ -262,6 +263,7 @@ def test_threads_join_a_task_woken_turn(linked):
     # The turn's request is what opened it (the task notification); the ask is the operator's last prompt.
     assert turn["request"]["seq"] == 2 and turn["request"]["role"] == "machine"
     assert turn["request"]["text"].startswith("<task-notification>") and "chars" not in turn["request"]
+    assert turn["asked"] is False  # a task opened it: nobody asked anything
     assert turn["ask"]["seq"] == 0 and turn["ask"]["role"] == "human" and turn["ask"]["chars"] == len(PROMPT)
     assert len(turn["ask"]["text"]) <= 1_200 and PROMPT.startswith(turn["ask"]["text"])
     tail = turn["closing_tail"]
@@ -281,6 +283,38 @@ def test_threads_join_a_task_woken_turn(linked):
     assert header["first_user"]["seq"] == 0 and header["first_user"]["chars"] == len(PROMPT)
     assert len(header["first_user"]["text"]) <= 600
     assert body["indexed_at"] == NOW + 400
+
+
+def test_a_turn_the_operator_opened_with_a_question_is_asked_from_the_whole_prompt(linked):
+    """The page's clip keeps the prompt's head; the `?` lives at its end. `asked` reads the whole text."""
+    root, decision, _ = linked
+    question = PROMPT + "\nWhich band should the ✅ cut move to?"
+    conn = connect(root)
+    conn.execute("UPDATE turns SET origin = 'human' WHERE file_id = 10 AND idx = 1")
+    conn.execute("UPDATE messages SET role = 'human', text = ? WHERE file_id = 10 AND seq = 2", (question,))
+    conn.commit()
+    conn.close()
+    _, body = read_history(root, "threads", {"d": [decision]})
+    turn = body["decisions"][decision]
+    assert turn["asked"] is True
+    assert turn["request"]["chars"] == len(question) and not turn["request"]["text"].endswith("?")
+
+
+@pytest.mark.parametrize(
+    ("text", "woke_by", "asked"),
+    [
+        ("Is the bridge up?", "human", True),
+        ("**Ship it?**", "human", True),
+        ("Is it up?\nfix it", "human", False),  # only the last line asks
+        ("Is it up?", "task", False),  # nobody typed it
+        ("Is it up?", "relay", False),
+        ("<command-name>/review</command-name>\n<command-args>is this safe?</command-args>", "command", True),
+        ("<command-name>/review</command-name>\n<command-args>main</command-args>", "command", False),
+        (None, "human", False),
+    ],
+)
+def test_turn_asked(text, woke_by, asked):
+    assert turn_asked(text, woke_by) is asked
 
 
 def test_first_user_is_the_operators_never_a_rack_typed_prompt(linked):

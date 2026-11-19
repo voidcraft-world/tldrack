@@ -25,7 +25,7 @@ from pathlib import Path
 
 from tldrack.ledger.laya_links import LINKED_SOURCES, RETRY_SECONDS, thread_files
 from tldrack.ledger.store import DB_NAME, connect
-from tldrack.open_work import DECISION_ID
+from tldrack.open_work import DECISION_ID, asks_question, command_request
 from tldrack.profiles import AGENT_SESSION_ID_RE
 
 SEARCH_PAGE = 30
@@ -191,6 +191,15 @@ def _clip(row: sqlite3.Row | None, limit: int = CLIP_CHARS) -> dict | None:
     return clipped
 
 
+def turn_asked(text: str | None, woke_by: str | None) -> bool:
+    """Did the operator open this turn with a question? Pure. The rack's rule for an answer to read
+    (`open_work.py` § An answer to read: the operator's own prompt, its last line ending in `?`), read
+    from the ledger's whole prompt, never the page's clip, whose head-cut drops the `?`."""
+    if not text or woke_by not in HUMAN_ORIGINS:
+        return False
+    return asks_question(command_request(text) or text)
+
+
 def _first_line(text: str | None) -> str | None:
     line = next((part.strip() for part in (text or "").splitlines() if part.strip()), None)
     return clip_head(line, TITLE_CHARS)[0] if line else None
@@ -206,6 +215,7 @@ _UNLINKED = dict.fromkeys(
         "human_ordinal",
         "woke_by",
         "request",
+        "asked",
         "ask",
         "closing_tail",
         "closing_chars",
@@ -319,6 +329,7 @@ class _ThreadJoin:
             "human_ordinal": ordinal,
             "woke_by": woke_by,
             "request": _clip(request),
+            "asked": turn_asked(request["text"] if request is not None else None, woke_by),
             "ask": _clip(ask),
             "closing_tail": tail_at_line(closing["text"], CLIP_CHARS),
             "closing_chars": len(closing["text"]),
