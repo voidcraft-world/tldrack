@@ -60,13 +60,16 @@ THE RACK'S DOOR. The ⚠️'s own menu on the agent rack answers the verdict it 
 records `RACK_STRATUM`: a door, never a lane, so no key is ever placed in it and nothing deals it. The text is
 then answered like any other (the deck and RECENT show the grade, and UNDO takes it back).
 
-THE THREE-WAY GRADE. On a surface with `ReviewSurface.needs` an OPEN answer says which OPEN: RUNNING (the agent
-was waiting on its own work) or NEEDS YOU. With DONE that is three classes (`grade_of`), and the NEEDS-YOU mark
-can only be evaluated once each holds `needs_min_per_class` grades. Until both OPEN halves hold it the deck leans
+THE FOUR-WAY GRADE. On a surface with `ReviewSurface.needs` an OPEN answer says which OPEN: RUNNING (the agent
+was waiting on its own work) or NEEDS YOU; a DONE answer may say READ (📖: the agent owes nothing, but its answer
+owes the operator a read, where a bare DONE is closed unread). That is four classes (`grade_of`), and the challenger
+can only be evaluated once each holds `needs_min_per_class` grades. A DONE recorded before READ existed
+(`READ_SINCE`) is no class: it could not say which DONE it was. Until both OPEN halves hold it the deck leans
 toward the half shortest of it, whatever DONE holds (`three_way`, its `lean`): a live card whose verdict LANDED the
 way that half does (`needs_hint`, from `landing.py`'s record) leads `uncertain` and `flagged`, and `flagged` deals
-up to `NEEDS_BOOST_WEIGHT` of them a round instead of its one. DONE has no hint and no lean of its own: a short DONE
-is the open/done deficit's to chase (`class_deficit`). The hint orders cards and nothing else: it is never a label,
+up to `NEEDS_BOOST_WEIGHT` of them a round instead of its one. DONE and READ have no hint and no lean of their own:
+a short DONE is the open/done deficit's to chase (`class_deficit`), and READ's candidates are the 📖 rows on the
+RECENT list. The hint orders cards and nothing else: it is never a label,
 and no card shows it. The samples are never reordered: their order is a hash's, so no signal sets which of them is
 graded first.
 
@@ -131,9 +134,12 @@ WAVE_LEAD = ("uncertain", "suspect", "disagree", "flagged", "rest", "recent")
 #: Strata whose grades estimate something, so a member is graded on its own and never joins a wave: the uniform samples
 #: (`unflagged` is recall's unflagged side), the challenger's disagreements (each grade takes a side) and the golden misses.
 WAVE_NEVER = ("sample", "live_sample", "challenger", "unflagged", "golden")
-#: The three-way grade's classes, in the order a readout prints them (`grade_of`).
-THREE_WAY = ("done", "running", "you")
-#: The live lanes the needs lean reorders (the module doc: THE THREE-WAY GRADE), and how many hinted cards the first
+#: The four-way grade's classes, in the order a readout prints them (`grade_of`). TS twin: REVIEW_GRADES.
+GRADES = ("done", "read", "running", "you")
+#: When READ became a grade: a DONE before it is no class (the module doc: THE FOUR-WAY GRADE). TS twin:
+#: schemas/src/laya-review.ts REVIEW_READ_SINCE, pinned by tests/test_contract.py.
+READ_SINCE = "2026-11-19T00:00:00Z"
+#: The live lanes the needs lean reorders (the module doc: THE FOUR-WAY GRADE), and how many hinted cards the first
 #: of them may deal a round (`queue`): `uncertain`'s own weight.
 NEEDS_LEAN_LANES = ("flagged", "uncertain")
 NEEDS_BOOST_LANE = "flagged"
@@ -1171,40 +1177,47 @@ def _lane_order(item: Item, deficit: str | None, needs_short: str | None = None)
     return (0 if item.held_out is True else 1, lean, 0 if deficit in (None, cut) else 1, round(abs(delta), 6), item.key)
 
 
-# ── the three-way grade ───────────────────────────────────────────────────────
+# ── the four-way grade ────────────────────────────────────────────────────────
 
 
 def grade_of(row: Mapping[str, Any]) -> str | None:
-    """An operator row's three-way class (an answer's or a retest's): `done`, or which OPEN (`running`, `you`). None
-    for a skip, and for an OPEN nobody split: that one says open and nothing more."""
-    if row.get("open") is False:
-        return "done"
-    return row["needs"] if row.get("open") is True and row.get("needs") in review_log.NEEDS else None
+    """An operator row's four-way class (an answer's or a retest's): `read` or `done`, or which OPEN (`running`,
+    `you`). None for a skip, for an OPEN nobody split (that one says open and nothing more), and for a bare DONE from
+    before `READ_SINCE` (it could not say whether the answer owed a read). ISO stamps in UTC compare as text."""
+    needs = row.get("needs")
+    if not isinstance(row.get("open"), bool) or not review_log.needs_ok(needs, row["open"]):
+        return None
+    if row["open"]:
+        return needs
+    if needs == "read":
+        return "read"
+    at = row.get("at")
+    return "done" if isinstance(at, str) and at >= READ_SINCE else None
 
 
 def three_way(fold: OperatorFold, spec: ReviewSurface) -> dict | None:
-    """`reviewStatsSchema.three_way`: the live labels per class, the floor, and two readings of who is short of it.
-    `deficit` is the GATE's: the class furthest under the floor of all three, None once every class holds it. `lean`
-    is the DECK's: the OPEN half furthest under it, None once both halves hold it. They differ when DONE is the
-    shortest class while a half is still short (done 1, running 3, you 2): the gate waits on DONE, and the live lanes
-    still lean toward `you`, since only the halves have a hint to lean on (`needs_hint`). None on a surface without
+    """`reviewStatsSchema.three_way` (the name predates READ): the live labels per class, the floor, and two readings of
+    who is short of it. `deficit` is the GATE's: the class furthest under the floor of all four, None once every class
+    holds it. `lean` is the DECK's: the OPEN half furthest under it, None once both OPEN halves hold it. They differ
+    when DONE or READ is the shortest class while a half is still short (done 1, running 3, you 2): the gate waits on
+    DONE, and the live lanes still lean toward `you`, since only the OPEN halves have a hint to lean on (`needs_hint`). None on a surface without
     `needs`. A tie goes to `you`, then `running`: the rarer halves in every grading so far (2 'needs: you' labels in
     all on 2026-11-09)."""
     if not spec.needs:
         return None
-    counts = dict.fromkeys(THREE_WAY, 0)
+    counts = dict.fromkeys(GRADES, 0)
     for row in fold.labels.values():
         grade = grade_of(row)
         if grade in counts:
             counts[grade] += 1
-    short = {name: spec.needs_min_per_class - counts[name] for name in THREE_WAY}
+    short = {name: spec.needs_min_per_class - counts[name] for name in GRADES}
 
     def shortest(names: tuple[str, ...]) -> str | None:
         worst = max(short[name] for name in names)
         return None if worst <= 0 else next(name for name in reversed(names) if short[name] == worst)
 
-    halves = tuple(name for name in THREE_WAY if name in spec.needs)
-    return {**counts, "min": spec.needs_min_per_class, "deficit": shortest(THREE_WAY), "lean": shortest(halves)}
+    halves = tuple(name for name in GRADES if name in spec.needs and name in review_log.NEEDS_OPEN)
+    return {**counts, "min": spec.needs_min_per_class, "deficit": shortest(GRADES), "lean": shortest(halves)}
 
 
 def needs_hint(landed: Mapping[str, Any] | None) -> str | None:
@@ -1428,8 +1441,8 @@ def intra_rater(snap: Snapshot) -> dict:
 
     A pair is a live retest that said OPEN or DONE and the label it re-tests, while that label still stands for its
     key: an undone or replaced label takes its retest out with it. `open` is κ on OPEN against DONE over every pair.
-    `needs` is one κ per OPEN half (that class against the other two) over the pairs where BOTH looks drew a
-    three-way class, since an OPEN nobody split has no half to agree on. Nothing else reads a retest: not the
+    `needs` is one κ per half (that class against the other three) over the pairs where BOTH looks drew a four-way
+    class, since an OPEN nobody split, or a DONE from before READ, has no half to agree on. Nothing else reads a retest: not the
     labels, not a count, not any other κ (`review_log.py` owns why)."""
     fold = snap.fold
     latest = {row["of"]: row for row in fold.retests.values()}  # the last live retest per answer, as `retest_of`

@@ -3,11 +3,11 @@
  * `LayaRecentList.vue` owns only the fetches and the DOM; the wire is `schemas/src/laya-review.ts`
  * (`reviewRecentSchema`).
  *
- * The deck asks "agree with this reference?"; the list asks the plainer question the rack poses: was this turn DONE,
- * still RUNNING on its own, or did it NEED YOU? A button names a verdict, never AGREE or FLIP, so `answer_request` maps
- * it onto the reference the plugin holds — and a reference that moved meanwhile maps again without changing what the
- * operator said. RUNNING and NEEDS YOU both record OPEN; `needs` is the half that says which (schemas/src/laya-review.ts
- * `REVIEW_NEEDS` owns why).
+ * The deck asks "agree with this reference?"; the list asks the plainer question the rack poses: was this turn DONE
+ * (close it unread), DONE with an answer to READ, still RUNNING on its own, or did it NEED YOU? A button names a
+ * verdict, never AGREE or FLIP, so `answer_request` maps it onto the reference the plugin holds — and a reference that
+ * moved meanwhile maps again without changing what the operator said. DONE and READ record DONE, RUNNING and NEEDS YOU
+ * record OPEN; `needs` is the half that says which (schemas/src/laya-review.ts `REVIEW_NEEDS` owns why).
  */
 import type { ReviewAnswer, ReviewAnswerRequest, ReviewBand, ReviewNeeds, ReviewRecentOrder, ReviewRecentRow } from '@tldrack/schemas/laya-review.ts';
 
@@ -42,13 +42,23 @@ export function row_mark_words(band: ReviewBand, asked: boolean | null | undefin
 }
 
 /** What the operator says a turn was, by press. `skip` leaves it out of every count, as on the deck. */
-export type RecentVerdict = 'done' | 'running' | 'you' | 'skip';
+export type RecentVerdict = 'done' | 'read' | 'running' | 'you' | 'skip';
 /** What a live answer reads back as: a press, or `open` for an OPEN answer recorded without its half (the deck's). */
 export type OperatorVerdict = RecentVerdict | 'open';
 
-/** The four grades, as their buttons draw them: `title` is the tooltip, `caption` the line EXPLAIN prints under it. */
+/** The five grades, as their buttons draw them: `title` is the tooltip, `caption` the line EXPLAIN prints under it.
+ *  READ's key is B (📖, a book): R is RUNNING's. */
 export const RECENT_VERDICTS: readonly { verdict: RecentVerdict; label: string; key: string; title: string; caption: string }[] = [
-    { verdict: 'done', label: '✓ DONE', key: 'D', title: 'The turn finished what it set out to do', caption: 'It finished what it set out to do' },
+    {
+        verdict: 'done', label: '✓ DONE', key: 'D',
+        title: 'The turn finished what it set out to do, and you can close it without reading it',
+        caption: 'Finished: close it without reading',
+    },
+    {
+        verdict: 'read', label: `${ANSWER_TO_READ_EMOJI} READ`, key: 'B',
+        title: 'The agent is done, but its answer is for you to read: a question it answered, a finding, an explanation',
+        caption: 'Finished, but its answer is yours to read',
+    },
     {
         verdict: 'running', label: '⏳ RUNNING', key: 'R',
         title: 'Work still open, but the agent was only waiting on its own agents or jobs: you were not needed',
@@ -80,7 +90,7 @@ export function review_title(subject?: string | null, rack_title?: string | null
     return rack_title?.trim() || conversation_title?.trim() || subject?.trim() || 'Conversation';
 }
 
-const NEEDS_OF: Readonly<Partial<Record<RecentVerdict, ReviewNeeds>>> = { running: 'running', you: 'you' };
+const NEEDS_OF: Readonly<Partial<Record<RecentVerdict, ReviewNeeds>>> = { read: 'read', running: 'running', you: 'you' };
 
 export function is_open_verdict(verdict: OperatorVerdict | null): boolean {
     return verdict === 'running' || verdict === 'you' || verdict === 'open';
@@ -102,12 +112,12 @@ export function operator_verdict(row: Pick<ReviewRecentRow, 'operator'>): Operat
     const f = row.operator;
     if (!f) return null;
     if (f.answer === 'skip' || f.open === null) return 'skip';
-    if (!f.open) return 'done';
+    if (!f.open) return f.needs === 'read' ? 'read' : 'done';
     return f.needs === 'running' ? 'running' : f.needs === 'you' ? 'you' : 'open';
 }
 
 /** RIGHT or WRONG against the band; a 💬 row has no right answer (it said "unsure"), so it grades as null. The band
- *  only says open or done, so RUNNING and NEEDS YOU both grade as open. */
+ *  only says open or done, so RUNNING and NEEDS YOU both grade as open, and DONE and READ as done. */
 export function grade(row: Pick<ReviewRecentRow, 'band' | 'operator'>): 'right' | 'wrong' | null {
     const verdict = operator_verdict(row);
     if (verdict === null || verdict === 'skip' || row.band === 'reply') return null;
@@ -126,7 +136,8 @@ export interface RecentTally {
     reviewed: number;
     skipped: number;
     bands: Record<ReviewBand, BandTally>;
-    /** The OPEN answers split: who the turn was really waiting on (`review_data.py` summary `needs`). */
+    /** The answers' halves: who an OPEN turn was really waiting on, and the DONE turns that owed a read
+     *  (`review_data.py` summary `needs`). */
     needs: Record<ReviewNeeds, number>;
 }
 
@@ -135,7 +146,7 @@ export interface RecentTally {
 export function recent_tally(rows: readonly ReviewRecentRow[]): RecentTally {
     const blank = (): BandTally => ({ n: 0, reviewed: 0, right: 0, open: 0 });
     const bands: Record<ReviewBand, BandTally> = { done: blank(), reply: blank(), open: blank() };
-    const needs: Record<ReviewNeeds, number> = { you: 0, running: 0 };
+    const needs: Record<ReviewNeeds, number> = { you: 0, running: 0, read: 0 };
     let reviewed = 0;
     let skipped = 0;
     for (const row of rows) {
@@ -150,7 +161,7 @@ export function recent_tally(rows: readonly ReviewRecentRow[]): RecentTally {
         reviewed += 1;
         t.reviewed += 1;
         if (is_open_verdict(verdict)) t.open += 1;
-        if (verdict === 'running' || verdict === 'you') needs[verdict] += 1;
+        if (verdict === 'running' || verdict === 'you' || verdict === 'read') needs[verdict] += 1;
         if (grade(row) === 'right') t.right += 1;
     }
     return { n: rows.length, reviewed, skipped, bands, needs };
@@ -274,6 +285,7 @@ export type RecentAction = RecentVerdict | 'undo' | 'next' | 'prev' | 'next_conv
 
 const RECENT_KEYS: ReadonlyMap<string, RecentAction> = new Map([
     ['KeyD', 'done'],
+    ['KeyB', 'read'],
     ['KeyR', 'running'],
     ['KeyN', 'you'],
     ['KeyS', 'skip'],

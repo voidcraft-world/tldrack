@@ -57,7 +57,7 @@ function row(over: Partial<ReviewRecentRow> = {}): ReviewRecentRow {
     return reviewRecentRowSchema.parse({ ...base, ...over });
 }
 
-const said = (open: boolean | null, answer: 'agree' | 'flip' | 'skip' = 'agree', needs?: 'you' | 'running') =>
+const said = (open: boolean | null, answer: 'agree' | 'flip' | 'skip' = 'agree', needs?: 'you' | 'running' | 'read') =>
     ({ answer_id: `a_${'0'.repeat(15)}${open ? 1 : 2}`, key: '0'.repeat(16), answer, open, ...(needs ? { needs } : {}) });
 
 describe('answer_request', () => {
@@ -67,7 +67,9 @@ describe('answer_request', () => {
         assert.deepEqual(answer_request(done_ref, 'agent_open_work', 'you', false), { surface: 'agent_open_work', key: done_ref.key, answer: 'flip', reference_open: false, needs: 'you' });
         assert.equal(answer_request(done_ref, 'agent_open_work', 'running', false)?.needs, 'running');
         assert.equal(answer_request(done_ref, 'agent_open_work', 'running', true)?.answer, 'agree', 'a moved reference re-maps the same verdict');
-        assert.equal(answer_request(done_ref, 'agent_open_work', 'done', false)?.needs, undefined, 'needs rides only on an OPEN answer');
+        assert.equal(answer_request(done_ref, 'agent_open_work', 'done', false)?.needs, undefined, 'a bare DONE has no half');
+        assert.deepEqual(answer_request(done_ref, 'agent_open_work', 'read', false), { surface: 'agent_open_work', key: done_ref.key, answer: 'agree', reference_open: false, needs: 'read' });
+        assert.equal(answer_request(done_ref, 'agent_open_work', 'read', true)?.answer, 'flip', 'READ records DONE');
         assert.equal(answer_request(done_ref, 'agent_open_work', 'skip', true)?.answer, 'skip');
         assert.equal(answer_request(done_ref, 'agent_open_work', 'done', null), null);
     });
@@ -79,6 +81,9 @@ describe('grading', () => {
         assert.equal(operator_verdict(row({ operator: said(true) })), 'open', 'an OPEN answer with no half (the deck)');
         assert.equal(operator_verdict(row({ operator: said(true, 'agree', 'you') })), 'you');
         assert.equal(operator_verdict(row({ operator: said(true, 'agree', 'running') })), 'running');
+        assert.equal(operator_verdict(row({ operator: said(false, 'agree', 'read') })), 'read');
+        assert.equal(grade(row({ band: 'done', operator: said(false, 'agree', 'read') })), 'right', 'READ is done work');
+        assert.equal(grade(row({ band: 'open', operator: said(false, 'agree', 'read') })), 'wrong');
         assert.equal(grade(row({ band: 'open', operator: said(true, 'agree', 'running') })), 'right', 'RUNNING is still open work');
         assert.equal(grade(row({ band: 'done', operator: said(true, 'agree', 'you') })), 'wrong');
         assert.equal(operator_verdict(row({ operator: said(null, 'skip') })), 'skip');
@@ -110,7 +115,7 @@ describe('grading', () => {
         assert.equal(done.mark, '✅');
         assert.equal(reply.text, '1 done · 0 open');
         assert.equal(open.text, '1/1');
-        assert.deepEqual(t.needs, { you: 0, running: 0 });
+        assert.deepEqual(t.needs, { you: 0, running: 0, read: 0 });
         assert.equal(needs_readout(t), null, 'nothing split yet');
     });
 
@@ -121,7 +126,7 @@ describe('grading', () => {
             row({ band: 'open', operator: said(true, 'agree', 'running') }),
             row({ band: 'open', operator: said(true) }),
         ]);
-        assert.deepEqual(t.needs, { you: 1, running: 2 });
+        assert.deepEqual(t.needs, { you: 1, running: 2, read: 0 });
         assert.equal(t.bands.open.open, 4);
         assert.equal(needs_readout(t)?.text, '1/3');
     });
@@ -175,6 +180,7 @@ describe('recent_key', () => {
     it('D R N S U grade, J K and the arrows move, Enter expands', () => {
         assert.equal(key('KeyD'), 'done');
         assert.equal(key('KeyR'), 'running');
+        assert.equal(key('KeyB'), 'read');
         assert.equal(key('KeyN'), 'you');
         assert.equal(key('KeyO'), null);
         assert.equal(key('KeyS'), 'skip');
@@ -283,8 +289,9 @@ describe('review_title', () => {
 
 describe('the graded chip and the grade buttons', () => {
     it('draws one button per verdict, each with its key, tooltip and EXPLAIN caption', () => {
-        assert.deepEqual(RECENT_VERDICTS.map((v) => v.verdict), ['done', 'running', 'you', 'skip']);
-        assert.deepEqual(RECENT_VERDICTS.map((v) => v.key), ['D', 'R', 'N', 'S'], 'the keys recent_key reads');
+        assert.deepEqual(RECENT_VERDICTS.map((v) => v.verdict), ['done', 'read', 'running', 'you', 'skip']);
+        assert.deepEqual(RECENT_VERDICTS.map((v) => v.key), ['D', 'B', 'R', 'N', 'S'], 'the keys recent_key reads');
+        assert.equal(RECENT_VERDICTS[1]?.label, '📖 READ', 'the mark the rack and the list already draw');
         for (const v of RECENT_VERDICTS) assert.ok(v.title && v.caption && v.caption !== v.title);
     });
 

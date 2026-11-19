@@ -1486,22 +1486,25 @@ def test_promote_offers_the_train_half_and_never_a_reserve_flip(tree):
     assert review_data.reserved_flips(tree.base, "no-such-suite") == []
 
 
-# -- the three-way grade and the blind retest ----------------------------
+# -- the four-way grade and the blind retest -----------------------------
+
+#: A stamp after READ became a grade, so a bare DONE counts as DONE (review_data.py READ_SINCE).
+AFTER_READ = "2026-11-20T01:02:03Z"
 
 
-def three_way_labels(tree, done=0, running=0, you=0, unsplit=0):
-    """Operator labels on keys no card holds: the three-way counts read the fold, not the deck."""
+def three_way_labels(tree, done=0, running=0, you=0, unsplit=0, read=0, at=AFTER_READ):
+    """Operator labels on keys no card holds: the four-way counts read the fold, not the deck."""
     made = []
-    for needs, n in ((False, done), ("running", running), ("you", you), (None, unsplit)):
+    for needs, n in ((False, done), ("read", read), ("running", running), ("you", you), (None, unsplit)):
         for _ in range(n):
             key = review_log.new_answer_id()[2:]
             row = review_log.answer_row(
                 answer_id=review_log.new_answer_id(),
-                at="2026-10-27T01:02:03Z",
+                at=at,
                 surface=SURFACE,
                 key=key,
                 stratum="recent",
-                answer="flip" if needs is False else "agree",
+                answer="flip" if needs in (False, "read") else "agree",
                 against={"by": "english", "open": True},
                 laya=None,
                 decision_id=None,
@@ -1520,23 +1523,36 @@ def three_way_now(tree):
 
 def test_three_way_counts_the_live_labels_per_class_and_names_the_shortest(tree):
     tree.path("data/x")
-    empty = {"done": 0, "running": 0, "you": 0, "min": 20, "deficit": "you", "lean": "you"}
+    empty = {"done": 0, "read": 0, "running": 0, "you": 0, "min": 20, "deficit": "you", "lean": "you"}
     assert three_way_now(tree) == empty, "a tie goes to you"
-    three_way_labels(tree, done=30, running=5, you=5, unsplit=9)
-    short = {"done": 30, "running": 5, "you": 5, "min": 20, "deficit": "you", "lean": "you"}
+    three_way_labels(tree, done=30, read=25, running=5, you=5, unsplit=9)
+    short = {"done": 30, "read": 25, "running": 5, "you": 5, "min": 20, "deficit": "you", "lean": "you"}
     assert three_way_now(tree) == short, "an unsplit OPEN is no class"
     three_way_labels(tree, you=1)
     assert three_way_now(tree)["deficit"] == "running" and three_way_now(tree)["lean"] == "running"
     three_way_labels(tree, running=15, you=14)
-    assert three_way_now(tree) == {"done": 30, "running": 20, "you": 20, "min": 20, "deficit": None, "lean": None}
+    full = {"done": 30, "read": 25, "running": 20, "you": 20, "min": 20, "deficit": None, "lean": None}
+    assert three_way_now(tree) == full
+
+
+def test_a_done_from_before_read_is_no_class_and_read_is_a_done_of_its_own(tree):
+    """READ_SINCE: a bare DONE recorded before READ existed could not say which DONE it was. A READ is a DONE to the
+    open/done label (its `open` is false) and its own class to the four-way grade."""
+    old = three_way_labels(tree, done=4, at="2026-11-18T23:59:59Z")
+    three_way_labels(tree, done=1, read=21, running=20, you=20)
+    assert three_way_now(tree) == {"done": 1, "read": 21, "running": 20, "you": 20, "min": 20, "deficit": "done", "lean": None}
+    assert all(snap(tree).fold.labels[row["key"]]["open"] is False for row in old), "the open/done label keeps them"
+    assert review_data.grade_of({"open": True, "needs": "read", "at": AFTER_READ}) is None, "READ rides only beside DONE"
+    assert review_data.grade_of({"open": False, "needs": "you", "at": AFTER_READ}) is None, "NEEDS YOU only beside OPEN"
 
 
 def test_the_gate_names_the_shortest_class_and_the_lean_the_shortest_open_half(tree):
-    three_way_labels(tree, done=1, running=3, you=2)
-    mixed = {"done": 1, "running": 3, "you": 2, "min": 20, "deficit": "done", "lean": "you"}
+    three_way_labels(tree, done=1, read=2, running=3, you=2)
+    mixed = {"done": 1, "read": 2, "running": 3, "you": 2, "min": 20, "deficit": "done", "lean": "you"}
     assert three_way_now(tree) == mixed, "DONE is the gate's shortest; the deck leans toward a half"
     three_way_labels(tree, running=17, you=18)
-    assert three_way_now(tree) == {"done": 1, "running": 20, "you": 20, "min": 20, "deficit": "done", "lean": None}
+    after = {"done": 1, "read": 2, "running": 20, "you": 20, "min": 20, "deficit": "done", "lean": None}
+    assert three_way_now(tree) == after
 
 
 def test_the_needs_hint_reads_where_a_verdict_landed_and_nothing_else():
@@ -1573,7 +1589,7 @@ def test_the_live_lanes_lean_toward_the_short_three_way_class_until_each_holds_i
     backlog = snap(tree).remaining["rest"]
     assert [c["key"] for c in review_data.queue(snap(tree), 5)] == [you_new, you_old, backlog[0], plain, backlog[1]]
     # DONE the single shortest class (done 1, running 3, you 2): the halves are still under the floor, so it leans on.
-    three_way_labels(tree, done=1, running=3, you=2)
+    three_way_labels(tree, done=1, read=2, running=3, you=2)
     assert snap(tree).grades["deficit"] == "done" and snap(tree).needs_short == "you"
     assert snap(tree).remaining["flagged"] == [you_new, you_old, plain, running], "the hinted NEEDS YOU cards lead"
     assert [c["key"] for c in review_data.queue(snap(tree), 5)] == [you_new, you_old, backlog[0], plain, backlog[1]]
@@ -1620,10 +1636,10 @@ def old_label(tree, key, is_open=True, needs=None, days=10, stratum="rest", wave
     return row
 
 
-def second_look(tree, label, said, needs=None):
+def second_look(tree, label, said, needs=None, at=None):
     row = review_log.retest_row(
         answer_id=review_log.new_answer_id(),
-        at=rows.utc_stamp(NOW),
+        at=at or rows.utc_stamp(NOW),
         surface=SURFACE,
         key=label["key"],
         of=label["answer_id"],
@@ -1669,7 +1685,7 @@ def test_a_retest_card_is_blind(tree):
     assert review_data.retest_cards(snap(tree), 0, NOW) == [], "a stats-only read deals nothing"
     [card] = cards[:1]
     assert set(card) == {"item_id", "key", "surface", "of", "text", "text_chars", "truncated", "at", "needs"}
-    assert card["of"] == labels[0]["answer_id"] and card["needs"] == ["you", "running"] and card["at"] is None
+    assert card["of"] == labels[0]["answer_id"] and card["needs"] == ["you", "running", "read"] and card["at"] is None
     told = json.dumps(card)
     assert "sonnet" not in told and "why " not in told and "stratum" not in told, "the key set is the proof; this is the belt"
 
@@ -1683,17 +1699,17 @@ def test_intra_rater_kappa_pairs_each_retest_with_the_label_it_re_tests(tree):
     done, running, you, unsplit = made[:12], made[12:18], made[18:24], made[24:]
     before = review_data.stats(snap(tree), tree.base, now=NOW)
     for row in done[:10]:
-        second_look(tree, row, False)
+        second_look(tree, row, False, at=AFTER_READ)
     for row in done[10:]:
-        second_look(tree, row, True, "running")  # two DONE the operator now calls RUNNING
+        second_look(tree, row, True, "running", at=AFTER_READ)  # two DONE the operator now calls RUNNING
     for row in running:
-        second_look(tree, row, True, "running")
+        second_look(tree, row, True, "running", at=AFTER_READ)
     for row in you[:4]:
-        second_look(tree, row, True, "you")
+        second_look(tree, row, True, "you", at=AFTER_READ)
     for row in you[4:]:
-        second_look(tree, row, True, "running")  # two NEEDS YOU the operator now calls RUNNING
+        second_look(tree, row, True, "running", at=AFTER_READ)  # two NEEDS YOU the operator now calls RUNNING
     for row in unsplit:
-        second_look(tree, row, True, "you")  # OPEN both times: a pair for `open`, none for a half
+        second_look(tree, row, True, "you", at=AFTER_READ)  # OPEN both times: a pair for `open`, none for a half
     found = kappa_of_retests(tree)
     assert found["pairs"] == 26 and found["open"]["n"] == 26 and found["open"]["basis"] == "retest"
     assert found["open"]["agree_rate"] == round(24 / 26, 3) and found["open"]["kappa_ci"] is not None
@@ -1703,6 +1719,7 @@ def test_intra_rater_kappa_pairs_each_retest_with_the_label_it_re_tests(tree):
         [(True, True)] * 4 + [(False, True)] * 2 + [(False, False)] * 18
     )
     assert found["needs"]["running"]["agree_rate"] == round(20 / 24, 3)
+    assert found["needs"]["read"]["n"] == 24 and found["needs"]["read"]["agree_rate"] == 1.0, "nobody said READ"
     # Nothing but `retest` moved: the labels, the counts and every other κ are the first look's.
     after = review_data.stats(snap(tree), tree.base, now=NOW)
     assert {k: v for k, v in after.items() if k != "retest"} == {k: v for k, v in before.items() if k != "retest"}

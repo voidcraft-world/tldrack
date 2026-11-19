@@ -1,4 +1,4 @@
-"""The three-way challenger (done · running · needs you). Local, gated, and never registered as a served model.
+"""The four-way challenger (done · read · running · needs you). Local, gated, and never registered as a served model.
 
 The ordinary checkpoint basename keeps training provenance in the existing label-budget union;
 only this module's manifest selects the choice head. The training record uses the unchanged
@@ -24,17 +24,25 @@ from tldrack import open_work
 
 SURFACE = "agent_open_work"
 SUITE = "agent-open-work"
-CLASSES = ("done", "running", "you")
+CLASSES = ("done", "read", "running", "you")
 QUESTION = {
     "type": "choice",
     "question": "What does this agent hand-off require next?",
     "criteria": {
-        "done": "The requested work is complete; routine review, restart, deploy or optional offers do not count.",
+        "done": (
+            "The requested work is complete and the developer can close it unread; routine review, restart, deploy "
+            "or optional offers do not count."
+        ),
+        "read": (
+            "The requested work is complete, but the hand-off carries an answer, finding or explanation the developer "
+            "asked for and still has to read."
+        ),
         "running": "Requested work remains and the agent can continue without an answer or action from the developer.",
         "you": "The agent cannot continue until the developer supplies an answer, decision, access or other action.",
     },
 }
-VERSION = 1
+#: 2: READ joined the classes (schemas/src/laya-review.ts REVIEW_NEEDS owns why).
+VERSION = 2
 CAP = 8 * 1024 * 1024
 #: The reason of every refusal while the lease's night window is closed (`lease.night_window_open`).
 OUTSIDE_WINDOW = "outside the lease's night window"

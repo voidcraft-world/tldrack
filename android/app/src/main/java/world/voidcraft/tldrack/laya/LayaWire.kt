@@ -13,9 +13,11 @@ import world.voidcraft.tldrack.APP_JSON
 @Serializable
 enum class Band { done, reply, open }
 
-/** An OPEN answer's second half: the turn waited on the operator, or only on its own work. */
+/** An answer's second half. Beside OPEN: the turn waited on the operator (`you`), or only on its own work (`running`).
+ *  Beside DONE: `read`, the agent is done but its answer is the operator's to read (schemas/src/laya-review.ts
+ *  `REVIEW_NEEDS` owns why). A name missing here fails the whole page's decode, so this list follows the wire's. */
 @Serializable
-enum class Needs { you, running }
+enum class Needs { you, running, read }
 
 @Serializable
 enum class ReviewAnswer { agree, flip, skip }

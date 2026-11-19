@@ -89,7 +89,7 @@ A session here starts with no memory. What follows is everything durable it need
   ships is the operator's decision; until then the purity test fails on checkpoint files. Public numbers
   come from one protocol; a figure from another protocol is a footnote, never a headline.
 - **The Laya review app needs a debug build**: the bridge pushes its token with `adb run-as`. Grading is
-  tap-only: DONE, RUNNING, NEEDS YOU, SKIP.
+  tap-only: DONE, READ, RUNNING, NEEDS YOU, SKIP.
 - **A release is a git tag** with two tarballs on a GitHub release, `@tldrack/schemas` and `@tldrack/ui`
   (`scripts/release.py tag X.Y.Z`). There is no PyPI release of tldrack yet: it installs from a clone,
   `uv tool install --editable ./bridge` (README § Quickstart owns the steps; the bridge serves `ui/` and

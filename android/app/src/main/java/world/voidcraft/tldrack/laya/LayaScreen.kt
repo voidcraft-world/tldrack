@@ -574,7 +574,8 @@ private data class Face(val verdict: Verdict, val glyph: String, val word: Strin
 // Text-presentation glyphs only, so a face takes its ink and dims with the bar: the web's ⏳ is an emoji wherever it
 // is drawn, and its ⚠ would read as the strip's ⚠️ band here (one mark, one meaning).
 private val FACES = listOf(
-    Face(Verdict.done, "✓", "DONE", "The turn finished what it set out to do"),
+    Face(Verdict.done, "✓", "DONE", "The turn finished what it set out to do, and you can close it without reading it"),
+    Face(Verdict.read, "¶", "READ", "The agent is done, but its answer is for you to read: a question it answered, a finding, an explanation"),
     Face(Verdict.running, "◔", "RUNNING", "Work still open, but the agent was only waiting on its own agents or jobs: you were not needed"),
     Face(Verdict.you, "△", "NEEDS YOU", "Work still open and waiting on you: a question, a decision, a go-ahead, or blocked"),
     Face(Verdict.skip, "»", "SKIP", "Ambiguous: no label, and it leaves training too"),

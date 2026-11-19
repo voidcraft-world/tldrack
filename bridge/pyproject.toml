@@ -1,6 +1,6 @@
 [project]
 name = "tldrack"
-version = "0.1.0"
+version = "0.1.1"
 description = "An agent rack: coding-agent sessions in tmux, and the local bridge that serves them to one browser page"
 requires-python = ">=3.10.1,<4"
 readme = "README.md"

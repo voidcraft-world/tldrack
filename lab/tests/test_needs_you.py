@@ -1,4 +1,4 @@
-"""Synthetic gates of the three-way challenger and its shadow-only persistence. No model or live data."""
+"""Synthetic gates of the four-way challenger and its shadow-only persistence. No model or live data."""
 
 from types import SimpleNamespace
 import json
@@ -11,12 +11,13 @@ from laya_bridge import files, label_budget, rows
 @pytest.mark.parametrize(
     "counts,kappa,ready",
     [
-        ((20, 20, 20), 0.6, True),
-        ((19, 30, 30), 0.8, False),
-        ((30, 19, 30), 0.8, False),
-        ((30, 30, 19), 0.8, False),
-        ((20, 20, 20), 0.59, False),
-        ((20, 20, 20), None, False),
+        ((20, 20, 20, 20), 0.6, True),
+        ((19, 30, 30, 30), 0.8, False),
+        ((30, 19, 30, 30), 0.8, False),
+        ((30, 30, 19, 30), 0.8, False),
+        ((30, 30, 30, 19), 0.8, False),
+        ((20, 20, 20, 20), 0.59, False),
+        ((20, 20, 20, 20), None, False),
     ],
 )
 def test_readiness(monkeypatch, tmp_path, counts, kappa, ready):
@@ -43,8 +44,11 @@ def test_reserve_never_trains(lab, public_golden):
     path = lab.path("data/agent-open-work-operator.jsonl")
     labels = [json.loads(line) for line in path.read_text().splitlines()]
     for i, label in enumerate(labels):
+        label["at"] = "2026-11-20T01:02:03Z"  # after READ, so a bare DONE is DONE (review_data.py READ_SINCE)
         if label["open"]:
             label["needs"] = "running" if i % 3 == 1 else "you"
+        elif i % 2:
+            label["needs"] = "read"
     path.write_text("".join(json.dumps(r) + "\n" for r in labels))
     fitted, held = n.dataset(lab.base)
     assert fitted and held
@@ -147,7 +151,7 @@ def test_aliases_of_reserve_and_conflicting_labels_cannot_train(monkeypatch, tmp
         labels={
             "aaa": {"open": True, "needs": "you"},
             "bbb": {"open": True, "needs": "you"},
-            "ccc": {"open": False},
+            "ccc": {"open": False, "at": "2026-11-20T00:00:00Z"},
             "ddd": {"open": True, "needs": "running"},
         }
     )

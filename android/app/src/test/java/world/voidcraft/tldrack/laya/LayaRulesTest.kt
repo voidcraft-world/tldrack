@@ -106,6 +106,26 @@ class LayaRulesTest {
     }
 
     @Test
+    fun `READ is a DONE that owes a read, sent and read back only beside DONE`() {
+        val key = "0123456789abcdef"
+        val read = LayaRules.answer_request(key, "agent_open_work", Verdict.read, reference_open = true)
+        assertEquals(AnswerRequest("agent_open_work", key, ReviewAnswer.flip, reference_open = true, needs = Needs.read), read)
+        assertTrue(LayaRules.sendable(read!!))
+        assertFalse("READ beside OPEN", LayaRules.sendable(AnswerRequest("agent_open_work", key, ReviewAnswer.agree, reference_open = true, needs = Needs.read)))
+        assertEquals(Verdict.read, LayaRules.operator_verdict(said(false, needs = Needs.read)))
+        assertEquals("READ is done work", Grade.right, LayaRules.grade(row(band = Band.done, operator = said(false, needs = Needs.read))))
+        assertEquals(Grade.wrong, LayaRules.grade(row(band = Band.open, operator = said(false, needs = Needs.read))))
+        val t = LayaRules.recent_tally(listOf(row(band = Band.done, operator = said(false, needs = Needs.read))))
+        assertEquals(1, t.needs.getValue(Needs.read))
+        // The wire value decodes: a name missing from `Needs` would fail the whole RECENT page.
+        val ref = APP_JSON.decodeFromString(
+            AnswerRef.serializer(),
+            """{"answer_id":"a_0123456789abcdef","key":"$key","answer":"flip","open":false,"needs":"read"}""",
+        )
+        assertEquals(Needs.read, ref.needs)
+    }
+
+    @Test
     fun `the tally counts per band, as review_data recent_rows does`() {
         val rows = listOf(
             row(band = Band.done, operator = said(false)),
@@ -127,7 +147,7 @@ class LayaRulesTest {
         assertEquals("✅", done.mark)
         assertEquals("1 done · 0 open", reply.text)
         assertEquals("1/1", open.text)
-        assertEquals(mapOf(Needs.you to 0, Needs.running to 0), t.needs)
+        assertEquals(mapOf(Needs.you to 0, Needs.running to 0, Needs.read to 0), t.needs)
         assertNull("nothing split yet", LayaRules.needs_readout(t))
     }
 
@@ -151,7 +171,7 @@ class LayaRulesTest {
                 row(band = Band.open, operator = said(true)),
             ),
         )
-        assertEquals(mapOf(Needs.you to 1, Needs.running to 2), t.needs)
+        assertEquals(mapOf(Needs.you to 1, Needs.running to 2, Needs.read to 0), t.needs)
         assertEquals(4, t.bands.getValue(Band.open).open)
         assertEquals("1/3", LayaRules.needs_readout(t)?.text)
     }

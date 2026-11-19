@@ -444,7 +444,8 @@
 }
 .nv-board.lr .lr-gradebar .lr-grades {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    /* One column per grade (`recent-model.ts` RECENT_VERDICTS): five across a phone still clears 44px each. */
+    grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 .nv-board.lr .lr-gradebar .lr-grade {
     --lr-btn-h: 46px;

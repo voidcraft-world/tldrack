@@ -13,7 +13,7 @@ RETEST. A blind second look at a text the operator already graded (`review_data.
 and when) is its own op, never an `answer`. The fold keeps the LAST live answer per key and the stats
 count every live `answer_id`, so a retest written as an answer would replace the label it re-tests and
 count twice in `by_stratum`, agree/flip and every κ. A `retest` row names the answer it re-tests (`of`)
-and what the operator said this time (`open`, with `needs` beside an OPEN; no `open` = could not say).
+and what the operator said this time (`open`, with `needs` on its side; no `open` = could not say).
 The fold holds it in `retests` only: never in `labels`, `skipped` or `live`. One reader pairs it with
 its answer, the intra-rater κ (`review_data.intra_rater`). It has its own `answer_id`, so UNDO takes it
 back like an answer.
@@ -60,8 +60,10 @@ REVIEW_KEY = re.compile(r"(?:[0-9a-f]{16}|golden:[a-z0-9][a-z0-9-]{0,63})")
 ANSWERS = ("agree", "flip", "skip")
 #: The longest version name an answer row's `challenger` block carries (a checkpoint folder's basename).
 CHALLENGER_NAME_MAX = 120
-#: copy of schemas/src/laya-review.ts REVIEW_NEEDS — pinned by tests/test_contract.py
-NEEDS = ("you", "running")
+#: copy of schemas/src/laya-review.ts REVIEW_NEEDS and REVIEW_NEEDS_OPEN — pinned by tests/test_contract.py. Why each
+#: half rides beside its own `open`: owned by schemas/src/laya-review.ts REVIEW_NEEDS — see the note there.
+NEEDS = ("you", "running", "read")
+NEEDS_OPEN = ("you", "running")
 
 
 def operator_path(base: Path, surface: str) -> Path:
@@ -130,7 +132,7 @@ def _row_ok(row: Mapping[str, Any]) -> bool:
     op = row.get("op")
     if op == "undo":
         return True
-    if not (isinstance(row.get("key"), str) and REVIEW_KEY.fullmatch(row["key"]) is not None and _needs_ok(row)):
+    if not (isinstance(row.get("key"), str) and REVIEW_KEY.fullmatch(row["key"]) is not None and _row_needs_ok(row)):
         return False
     if op == "retest":
         return (
@@ -150,9 +152,15 @@ def _row_ok(row: Mapping[str, Any]) -> bool:
     )
 
 
-def _needs_ok(row: Mapping[str, Any]) -> bool:
-    """`needs` rides only beside `open: true`, on an answer and on a retest alike."""
-    return "needs" not in row or (row["needs"] in NEEDS and row.get("open") is True)
+def _row_needs_ok(row: Mapping[str, Any]) -> bool:
+    """A stored row's `needs`: absent, or a half on its own side (a null one is no row this log writes)."""
+    return "needs" not in row or (row["needs"] is not None and needs_ok(row["needs"], row.get("open")))
+
+
+def needs_ok(needs: Any, open_: Any) -> bool:
+    """`needs` rides on its own side, on an answer and on a retest alike: `you` and `running` beside `open: true`,
+    `read` beside `open: false`. Absent always does. TS twin: schemas/src/laya-review.ts `needs_side_ok`."""
+    return needs is None or (needs in NEEDS and isinstance(open_, bool) and open_ == (needs in NEEDS_OPEN))
 
 
 def _challenger_ok(block: Any) -> bool:
@@ -243,7 +251,7 @@ def answer_row(
     challenger: Mapping[str, Any] | None = None,
 ) -> dict:
     """One `op: answer` row. `open` is `against.open` on agree, its negation on flip, and ABSENT on skip.
-    `needs` rides only beside `open: true`; the caller (review.py `answer`) refuses it anywhere else.
+    `needs` rides on its own side of `open` (`needs_ok`); the caller (review.py `answer`) refuses it anywhere else.
     `wave_id` names the one press that graded a wave; absent on an answer to one text.
     `challenger` (`{name, p, threshold}`) rides only on an answer to a `challenger` card: the @challenger's own
     answer the card showed, so the side the operator took reads off this row (`review_data.challenger_sides`)."""
@@ -275,8 +283,8 @@ def answer_row(
 
 def retest_row(*, answer_id: str, at: str, surface: str, key: str, of: str, said: bool | None, needs: str | None = None) -> dict:
     """One `op: retest` row (the module doc: RETEST). `of` is the answer it re-tests. `said` is the second look's
-    verdict, written as `open`, and ABSENT when the operator could not say (None); `needs` rides only beside
-    `open: true` (review.py `retest` refuses it anywhere else)."""
+    verdict, written as `open`, and ABSENT when the operator could not say (None); `needs` rides on its own side of
+    `open` (`needs_ok`; review.py `retest` refuses it anywhere else)."""
     row: dict[str, Any] = {
         "v": 1,
         "op": "retest",
