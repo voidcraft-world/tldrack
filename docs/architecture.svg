@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 832 392" width="832" height="392" role="img" aria-labelledby="t d">
   <title id="t">The tldrack loop</title>
-  <desc id="d">Your agents report through hooks to the bridge. The bridge hands each finished turn to Laya. A turn Laya reads as done stays quiet. A turn that needs you reaches you. Your label of that verdict fine-tunes Laya, on your machine.</desc>
+  <desc id="d">Automatically named agent sessions report through hooks to the bridge. A local model reviews each finished turn. A turn marked done stays quiet. A turn that needs you reaches you. Your grades fine-tune the review model on your machine.</desc>
   <style>
     .bg { fill: #fbfaf7; stroke: #d9d6cc; }
     .box { fill: #ffffff; stroke: #1c1c1a; stroke-width: 1.5; }
@@ -40,10 +40,10 @@
 
   <rect class="bg" x="0.5" y="0.5" width="831" height="391" rx="12"/>
 
-  <!-- Row 1: agents, bridge, Laya -->
+  <!-- Row 1: agents, bridge, local review model -->
   <rect class="box" x="24" y="92" width="148" height="72" rx="8"/>
   <text class="name" x="98" y="123" text-anchor="middle">Your agents</text>
-  <text class="sub" x="98" y="146" text-anchor="middle">Claude Code, Codex</text>
+  <text class="sub" x="98" y="146" text-anchor="middle">auto-named sessions</text>
 
   <path class="wire" d="M172 128H246" marker-end="url(#a)"/>
   <text class="edge" x="209" y="118" text-anchor="middle">hooks</text>
@@ -56,7 +56,7 @@
   <text class="edge" x="433" y="118" text-anchor="middle">turn end</text>
 
   <rect class="box" x="472" y="92" width="148" height="72" rx="8"/>
-  <text class="name" x="546" y="123" text-anchor="middle">Laya</text>
+  <text class="name" x="546" y="123" text-anchor="middle">Local model</text>
   <text class="sub" x="546" y="146" text-anchor="middle">reads it for you</text>
 
   <!-- The verdict forks -->
@@ -84,10 +84,10 @@
   <text class="sub" x="546" y="350" text-anchor="middle">on your machine</text>
 
   <path class="wire" d="M546 296V166" marker-end="url(#a)"/>
-  <text class="edge" x="534" y="236" text-anchor="end">a better Laya</text>
+  <text class="edge" x="534" y="236" text-anchor="end">your next fine-tune</text>
 
   <!-- What the loop means -->
-  <text class="lead" x="24" y="262">Agents work. Laya reads. You answer the ⚠️.</text>
-  <text class="line" x="24" y="294">Every verdict you grade trains the next Laya.</text>
-  <text class="line" x="24" y="320">The whole loop runs on your machine.</text>
+  <text class="lead" x="24" y="262">Agents work. You answer the ⚠️.</text>
+  <text class="line" x="24" y="294">Your grades tune the review model.</text>
+  <text class="line" x="24" y="320">Review and fine-tuning stay on your machine.</text>
 </svg>
