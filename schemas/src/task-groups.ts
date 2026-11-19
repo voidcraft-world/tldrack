@@ -32,6 +32,13 @@ export const task_group_schema = z.object({
         /** release `each` only: the PR's check rollup, and the head that rollup describes. */
         ci: z.enum(['pending', 'passing', 'failing', 'none']).optional(),
         ci_head: commit.optional(),
+        /** Its branch's work is on the base without its own PR merging: stamped once and final
+         * (`plugins/worktree/worktree/task_groups.py` § Delivered owns why). A malformed stamp reads as absent. */
+        landing: z.object({
+            how: z.enum(['ancestor', 'pr', 'squash', 'commits']),
+            pr: z.number().int().positive().nullable(),
+            branch: z.string(),
+        }).optional().catch(undefined),
     })).max(64),
 }).refine(g => g.total === g.workers.length && g.ready <= g.total && g.opened <= g.total && g.blockers <= g.total)
     .refine(g => g.membership === 'open' || (g.workers.length >= 1 && g.workers.length <= 32));

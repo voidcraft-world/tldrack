@@ -55,6 +55,19 @@ describe('worktree islands in the office', () => {
         }
     });
 
+    test('a landed island says LANDED, whatever its own PR reads', () => {
+        for (const state of ['none', 'closed', 'open', 'merged', undefined] as const) {
+            const tree: WorktreeIsland = { ...TREE, landing: { how: 'squash', pr: 41 },
+                ...(state ? { pr: { state, number: state === 'none' ? null : 12, url: null } } : {}) };
+            const projected = relay([with_island(AGENT, [tree])]);
+            const status = island_status(projected.sessions[0].island!);
+            assert.equal(status.label, 'LANDED');
+            assert.equal(status.color, '#2ea043');
+            assert.equal(status.merged, true);
+        }
+        assert.equal(island_status(island('open')).label, 'PR OPEN');
+    });
+
     test('a malformed island is dropped without dropping the agent', () => {
         for (const bad of [null, [], 'island', { ...island(), path: '' }, { ...island(), label: 4 },
             { ...island(), title: 'x'.repeat(4097) }, { ...island(), pr: 'merged' }, { ...island(), pr_state: 'maybe' }]) {

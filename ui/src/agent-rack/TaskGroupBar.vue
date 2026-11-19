@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import type { TaskGroup } from './task-groups.ts';
+import { worker_stage_word, type TaskGroup } from './task-groups.ts';
 const props = defineProps<{ group: TaskGroup; disabled?: boolean }>();
 const emit = defineEmits<{ control: [id: string, action: string] }>();
 const armed = ref<string | null>(null);
@@ -27,7 +27,7 @@ function control(action: string) {
         <details>
             <summary class="fui-techtext">{{ group.auto_pr ? 'Auto PR on' : 'Auto PR paused' }} · workers</summary>
             <div v-for="worker in group.workers" :key="worker.branch" class="task-group__worker">
-                <span>{{ worker.session }} · {{ worker.pr_state === 'merged' ? 'merged' : worker.stage }}</span>
+                <span>{{ worker.session }} · {{ worker_stage_word(worker) }}</span>
                 <a v-if="worker.pr_url" :href="worker.pr_url" target="_blank" rel="noopener noreferrer">PR ↗</a>
                 <span v-if="worker.error || worker.note">{{ worker.error || worker.note }}</span>
             </div>

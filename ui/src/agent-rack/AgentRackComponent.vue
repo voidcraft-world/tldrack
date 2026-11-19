@@ -111,14 +111,19 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:render_options': [TerminalRenderOptions] }>();
 
 const payload = ref<RackPayload | null>(null);
-import { mdiCheck, mdiClose, mdiCog, mdiOfficeBuildingOutline, mdiPause, mdiStar, mdiStarOutline, mdiThumbsUpDown } from '../config/icons.ts';
+import { mdiCheck, mdiClose, mdiCog, mdiOfficeBuildingOutline, mdiPause, mdiStar, mdiStarOutline, mdiThumbsUpDown, mdiUnfoldLessHorizontal, mdiUnfoldMoreHorizontal } from '../config/icons.ts';
 import { open_laya_review } from '../laya-review/open.ts';
 import { create_office_relay } from '../engine/terminal/agent-office-link.ts';
 import TaskGroupBar from './TaskGroupBar.vue';
+import FamilyFoldLine from './FamilyFoldLine.vue';
 import MissionBar from './MissionBar.vue';
 import { mission_row_title, type MissionRequest } from './missions-client.ts';
 import { closed_rows_view, restorable_rows_view, type ClosedRowView, type RestorableRowView } from './closed-client.ts';
 import { groups_for_parent } from './task-groups.ts';
+import {
+    FAMILY_FOLD_KEY, choose_fold, family_readout, fold_rows, folded_families, prune_fold_choices, read_fold_choices,
+    row_asks, write_fold_choices, type FamilyFoldReadout,
+} from './family-fold.ts';
 import IslandGlyph from './IslandGlyph.vue';
 import LaunchDirectorySettings from './LaunchDirectorySettings.vue';
 import IslandMark from './IslandMark.vue';
@@ -187,13 +192,6 @@ function open_diagram(): void {
 const office_relay = create_office_relay({ on_select: (session) => send('select', session) });
 function open_office(): void {
     window.open(new URL(OFFICE_PAGE, window.location.href).href, 'tldrack-office');
-}
-const collapsed_families = ref(new Set<string>());
-function toggle_family(id: string): void {
-    const next = new Set(collapsed_families.value);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    collapsed_families.value = next;
 }
 
 /**
@@ -841,11 +839,14 @@ function row_profile_label(row: RackRow): string | null {
 const KILL_ARM_MS = 4000;
 const complete_delete = useArmedAction(KILL_ARM_MS);
 const complete_delete_armed = complete_delete.armed;
+/** Every session's row, past the `+N MORE` budget: what CLOSE ALL and the fold's pruning read. */
+const all_rows = computed<RackRow[]>(() => {
+    const data = payload.value;
+    return data ? build_rack_rows({ ...data, max_sessions: data.sessions.length }) : [];
+});
 // Use the band's family classification before search, folds, and the row budget.
 const complete_sessions = computed(() => {
-    const data = payload.value;
-    if (!data) return [];
-    return build_rack_rows({ ...data, max_sessions: data.sessions.length })
+    return all_rows.value
         .flatMap((row) => row.kind === 'session' && row.complete && row.session ? [row.session] : [])
         .sort();
 });
@@ -1324,6 +1325,46 @@ function toggle_star(row: RackRow): void {
     if (row.session) send('star', row.session, star_value(row.starred !== true));
 }
 
+// ── family folds ──────────────────────────────────────────────────────────
+//
+// A family drawn as one row. What a fold is, and its four rules: owned by `family-fold.ts` — see the note there.
+const fold_choices = ref<Map<string, boolean>>(new Map());
+try {
+    fold_choices.value = read_fold_choices(localStorage.getItem(FAMILY_FOLD_KEY));
+} catch { /* Storage unavailable: the defaults only. */ }
+function save_fold_choices(next: Map<string, boolean>): void {
+    fold_choices.value = next;
+    try {
+        localStorage.setItem(FAMILY_FOLD_KEY, write_fold_choices(next));
+    } catch { /* The choice still lasts this page. */ }
+}
+/** FIND and ★ open every family (rule 4), so nothing reads as folded while either narrows the list. */
+const folded = computed<Set<string>>(() => session_search.value.trim() || starred_only.value
+    ? new Set() : folded_families(rows.value, payload.value?.task_groups, fold_choices.value));
+function is_folded(row: RackRow): boolean {
+    return !!row.node_id && folded.value.has(row.node_id);
+}
+function fold_word(row: RackRow): string {
+    return is_folded(row) ? 'Open workers' : 'Fold workers';
+}
+function toggle_family(row: RackRow): void {
+    if (row.node_id) save_fold_choices(choose_fold(fold_choices.value, row.node_id, !is_folded(row)));
+}
+function asks_now(row: RackRow): boolean {
+    return row_asks(row, payload.value?.task_groups);
+}
+const fold_readouts = computed<Map<string, FamilyFoldReadout>>(() => new Map(rows.value.flatMap((row) =>
+    row.kind === 'session' && row.node_id && folded.value.has(row.node_id)
+        ? [[row.node_id, family_readout(row, rows.value, payload.value?.task_groups, asks_now)] as const] : [])));
+// Forget a family's choice once it has been gone a while, read against every session (not the row budget) and
+// only from a bridge that answered: an unreachable one lists nothing, which is not every family closing.
+const fold_absent = new Map<string, number>();
+watch(all_rows, (list) => {
+    if (!payload.value?.reachable || !fold_choices.value.size) return;
+    const kept = prune_fold_choices(fold_choices.value, list, Date.now(), fold_absent);
+    if (kept) save_fold_choices(kept);
+});
+
 /** What the list renders: the live rows, in the held order while renaming. */
 const shown_rows = computed<RackRow[]>(() => {
     const ordered = held_order.value ? hold_row_order(held_order.value, rows.value) : rows.value;
@@ -1331,8 +1372,7 @@ const shown_rows = computed<RackRow[]>(() => {
     const base = starred_only.value ? starred_rack_rows(ordered) : ordered;
     if (session_search.value.trim()) return search_rack_rows(base, session_search.value, chat_matches.value);
     if (starred_only.value) return base;
-    return ordered
-        .filter((row) => !row.ancestors?.some((id) => collapsed_families.value.has(id)))
+    return fold_rows(ordered, folded.value, asks_now)
         .filter((row) => complete_open.value || !row.complete || row.kind === 'cohort');
 });
 // A suggested next step that reached the screen is reported `shown`, once per hash (§ suggested next step).
@@ -2000,11 +2040,20 @@ onUnmounted(() => {
                              with it. This spacer clears that step plus `--rack-depth-name-step`,
                              so a name keeps its family indent past its own mark. -->
                         <span v-if="row.depth" class="row__indent" aria-hidden="true" />
+                        <!-- The fold: one glyph button; its count lives in the folded line (`FamilyFoldLine.vue`).
+                             ← folds and → opens while it has focus, as in a tree. -->
                         <button v-if="row.node_id && row.child_count" type="button"
-                            class="fui-tag row__family-toggle" :aria-expanded="!collapsed_families.has(row.node_id)"
-                            :aria-label="`${collapsed_families.has(row.node_id) ? 'Expand' : 'Collapse'} ${row.auto_name || row.session}`"
-                            @click.stop="toggle_family(row.node_id)">{{ collapsed_families.has(row.node_id) ? '▸' : '▾' }} {{ row.child_count }}</button>
-                        <span v-if="row.child_count && row.attention_count" class="fui-tag"
+                            :class="['fui-btn', 'rack__icon', 'row__family-toggle', { 'row__family-toggle--folded': is_folded(row) }]"
+                            :aria-expanded="!is_folded(row)"
+                            :title="`${fold_word(row)} (${is_folded(row) ? '→' : '←'})`"
+                            :aria-label="`${fold_word(row)}: ${row.auto_name || row.session}`"
+                            aria-keyshortcuts="ArrowLeft ArrowRight"
+                            @click.stop="toggle_family(row)"
+                            @keydown.left.stop.prevent="!is_folded(row) && toggle_family(row)"
+                            @keydown.right.stop.prevent="is_folded(row) && toggle_family(row)"
+                        ><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="is_folded(row) ? mdiUnfoldMoreHorizontal : mdiUnfoldLessHorizontal" /></svg><kbd
+                            class="fui-key" aria-hidden="true">{{ is_folded(row) ? '→' : '←' }}</kbd></button>
+                        <span v-if="row.child_count && row.attention_count && !is_folded(row)" class="fui-tag"
                             :title="'Sessions in this family waiting for you'">{{ row.attention_count }} need you</span>
                         <span v-if="row.missing_parent" class="fui-tag">parent closed</span>
 
@@ -2270,9 +2319,13 @@ onUnmounted(() => {
                     >{{ complete_delete_armed ? `CLOSE ${complete_sessions.length}?` : 'CLOSE ALL' }}</button>
                 </div>
                 <span v-else class="row__text">{{ row.text }}</span>
-                <TaskGroupBar v-for="group in groups_for_parent(payload.task_groups, row.node_id)" :key="group.id"
-                    class="row__line2" :group="group" :disabled="frozen"
-                    @control="(id, action) => send('group_control', id, action)" />
+                <FamilyFoldLine v-if="row.kind === 'session' && row.node_id && fold_readouts.has(row.node_id)"
+                    class="row__line2" :readout="fold_readouts.get(row.node_id)!" />
+                <template v-else>
+                    <TaskGroupBar v-for="group in groups_for_parent(payload.task_groups, row.node_id)" :key="group.id"
+                        class="row__line2" :group="group" :disabled="frozen"
+                        @control="(id, action) => send('group_control', id, action)" />
+                </template>
             </li>
         </ul>
 
@@ -3234,7 +3287,10 @@ span.mark__open-work { cursor: default; }
 <style scoped>
 .row--child { background: color-mix(in srgb, var(--color-accent-green, #93ffd4) 4%, transparent); border-left: 2px solid color-mix(in srgb, var(--color-accent-green, #93ffd4) 18%, transparent); }
 .row--family { border-top: 1px solid color-mix(in srgb, var(--color-accent-green, #93ffd4) 12%, transparent); }
-.row__family-toggle { flex-shrink: 0; cursor: pointer; }
+.row__family-toggle { flex-shrink: 0; cursor: pointer; min-width: 28px; min-height: 28px; padding: 0 4px; gap: 2px; }
+.row__family-toggle .fui-key { margin-left: 0; }
+.row__family-toggle--folded { color: var(--color-accent-green, #93ffd4); }
+@media (pointer: coarse) { .row__family-toggle { min-width: 44px; min-height: 44px; } }
 .rack__head > [aria-pressed="true"] { border-color: var(--color-accent-green, #93ffd4); }
 .rack__icon { display: inline-flex; align-items: center; justify-content: center; }
 .rack__icon svg { width: 14px; height: 14px; fill: currentColor; }

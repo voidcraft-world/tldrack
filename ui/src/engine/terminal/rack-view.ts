@@ -844,6 +844,7 @@ export function session_island(
         label: said ? null : text,
         title: `Worktree: ${where}${pr_words} — this agent's edits land there, not in the main checkout`,
         pr,
+        ...(landed ? { landed: true as const } : {}),
         // A landed island whose own PR reads none or closed sends only its colour: `island-status.ts` reads an
         // exact state ahead of the colour, and that state is not its story any more. Open or merged still says it.
         ...(island.pr && !(landed && (island.pr.state === 'none' || island.pr.state === 'closed'))

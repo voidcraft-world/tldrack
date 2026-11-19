@@ -14,3 +14,17 @@ export function groups_for_parent(groups: readonly TaskGroup[] | undefined, node
     const id = node_id?.replace(/^missing:/, '');
     return id ? (groups ?? []).filter(group => group.parent_id === id) : [];
 }
+
+type GroupWorker = TaskGroup['workers'][number];
+
+/** Its own PR merged, or its branch landed: owned by `plugins/worktree/worktree/task_groups.py` § Delivered — see the note there. */
+export function worker_delivered(worker: GroupWorker): boolean {
+    return worker.pr_state === 'merged' || !!worker.landing;
+}
+
+/** A worker's word on its group bar: how it was delivered, else the stage it last reported. */
+export function worker_stage_word(worker: GroupWorker): string {
+    if (worker.pr_state === 'merged') return 'merged';
+    if (worker.landing) return worker.landing.pr === null ? 'landed' : `landed in #${worker.landing.pr}`;
+    return worker.stage;
+}
