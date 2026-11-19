@@ -157,6 +157,7 @@ class LeadRuns:
         parallel_max: object = DEFAULT_PARALLEL,
         lead_model: str | None = None,
         worker_model: str | None = None,
+        repo: str | None = None,
     ) -> dict:
         name = flat(title, 200)
         if not name:
@@ -182,8 +183,8 @@ class LeadRuns:
             digest = hashlib.sha256(plan_text.encode()).hexdigest()
             conn.execute(
                 "INSERT INTO lead_runs (id, title, plan_path, plan_sha256, lead_identity, lead_session, profile, "
-                "parallel_max, spawn_cap, state, created_at, lead_model, worker_model) "
-                "VALUES (?,?,?,?,?,?,?,?,?, 'open', ?,?,?)",
+                "parallel_max, spawn_cap, state, created_at, lead_model, worker_model, repo) "
+                "VALUES (?,?,?,?,?,?,?,?,?, 'open', ?,?,?,?)",
                 (
                     run_id,
                     name,
@@ -197,9 +198,11 @@ class LeadRuns:
                     now,
                     lead_model,
                     worker_model,
+                    repo,
                 ),
             )
-            self._event(conn, run_id, "started", None, {"plan": plan_path or str(copy), "sha256": digest[:12]})
+            started = {"plan": plan_path or str(copy), "sha256": digest[:12], **({"repo": repo} if repo else {})}
+            self._event(conn, run_id, "started", None, started)
         return self.run(run_id)
 
     def run(self, run_id: str) -> dict:

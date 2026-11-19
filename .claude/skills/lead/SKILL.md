@@ -31,7 +31,8 @@ Run `tldrack lead status`. Act on its **NEXT** list. End your turn.
 
 1. Ask the operator for the plan if they have not given one. A doc path is best; prose is fine —
    write it to a file outside the repo first (`$TMPDIR/plan.md`) and pass that.
-2. `tldrack lead start --plan <file> --title "<short title>" [--parallel 3]`.
+2. `tldrack lead start --plan <file> --title "<short title>" [--parallel 3] [--repo <key or path>]`.
+   The run leads the repository you work in (else the worktree plugin's first); `--repo` names another the plugin serves, and `lead status` prints which.
 3. Split the plan into steps. Prefer independent steps: each one is its own PR. Per step:
    `tldrack lead step add S1 --title "…" --brief-file <file> [--kind report] [--lane claude|codex|any] [--after S0]`.
    - The brief is the worker's whole world: the slice of the plan, the files it owns, what it must

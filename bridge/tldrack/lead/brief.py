@@ -186,6 +186,7 @@ def status_text(
     actions: list[Mapping[str, Any]],
     orphans: Iterable[Mapping[str, Any]] = (),
     worker_live: int = 0,
+    repo: str | None = None,
 ) -> str:
     lines = [ROLE, ""]
     if run is None:
@@ -200,6 +201,8 @@ def status_text(
             lines += [f"  {o['id']}  {o['title']}" for o in orphans]
         return "\n".join(lines)
     lines.append(f"RUN {run['id']} · {run['title']} · plan {run.get('plan_path')} (sha {str(run.get('plan_sha256'))[:12]})")
+    if repo:
+        lines.append(f"repo: {repo}")
     over = (
         f" (over the cap: no new spawn until {worker_live - run['parallel_max'] + 1} close)"
         if worker_live > run["parallel_max"]

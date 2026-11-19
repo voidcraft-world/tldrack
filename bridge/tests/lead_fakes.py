@@ -32,6 +32,9 @@ class Clock:
 
 
 class FakeWorktree:
+    """`repos` is what `/repos` lists (None: a plugin from before it, which 404s the route); `calls` is every
+    call as `(method, path, repo)`, the `repo` the router would have read (query for GET, body for POST)."""
+
     def __init__(self, root: Path) -> None:
         self.root = root
         self.group: dict | None = None
@@ -39,11 +42,16 @@ class FakeWorktree:
         self.creates: list[dict] = []
         self.reports: list[dict] = []
         self.launch_models = True
+        self.repos: list[dict] | None = [repo_row("repo-1", "/repo", default=True)]
+        self.calls: list[tuple[str, str, str | None]] = []
 
     def worker(self, branch: str) -> dict:
         return next(w for w in self.group["workers"] if w["branch"] == branch)
 
     def handle_get(self, path, query):
+        self.calls.append(("GET", path, (query.get("repo") or [None])[0]))
+        if path == "/repos":
+            return (404, {}) if self.repos is None else (200, {"repos": self.repos, "default": self.repos[0]["key"]})
         if path == "/groups":
             return 200, {"groups": [self.group] if self.group else []}
         if path == "/state":
@@ -60,6 +68,7 @@ class FakeWorktree:
         return 404, {}
 
     def handle_post(self, path, query, body):
+        self.calls.append(("POST", path, body.get("repo")))
         if path == "/group-create":
             self.group = {"id": str(uuid.uuid4()), "workers": [], **{k: body[k] for k in ("membership", "release")}}
             return 200, {"group": self.group}
@@ -96,10 +105,18 @@ class FakeWorktree:
         return 404, {}
 
 
+def repo_row(key: str, path: str, *, default: bool = False, label: str | None = None) -> dict:
+    """One `/repos` row, the fields the service reads."""
+    return {"key": key, "label": label or key, "path": path, "worktree_root": f"/trees/{key}", "default": default}
+
+
 class FakeGit:
-    """`clean`, the remote `tips` per branch, the `heads` per tree and which commits contain which."""
+    """`clean`, the remote `tips` per branch, the `heads` per tree and which commits contain which. `mains` is
+    origin/main per repository root (`git -C <root>`), MAIN for any other; `calls` is every argv."""
 
     def __init__(self) -> None:
+        self.mains: dict[str, str] = {}
+        self.calls: list[list[str]] = []
         self.clean = True
         self.tips: dict[str, str] = {}
         self.head = H1
@@ -107,6 +124,7 @@ class FakeGit:
         self.fail_status = False
 
     def __call__(self, argv: list[str]) -> tuple[int, str]:
+        self.calls.append(list(argv))
         args = argv[3:] if argv[:2] == ["git", "-C"] else argv[1:]
         if args[:2] == ["status", "--porcelain"]:
             return (1, "") if self.fail_status else (0, "" if self.clean else " M x.py")
@@ -122,7 +140,7 @@ class FakeGit:
             older, newer = args[2], args[3]
             return (0, "") if older == newer or (older, newer) in self.ancestry else (1, "")
         if args[:2] == ["rev-parse", "refs/remotes/origin/main"]:
-            return 0, MAIN
+            return 0, self.mains.get(argv[2], MAIN) if argv[:2] == ["git", "-C"] else MAIN
         return 0, ""
 
 
