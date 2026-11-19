@@ -66,7 +66,7 @@ Order: the env variable, then `<config>/paths.json`, then the default. `paths.js
 
 Also off by default, each with its own owner: phone pushes (`notify.json`, off until it names a topic) and the next-step suggester (default mode `off`; `tldrack next-step --mode shadow` turns it on). `tldrack doctor` lists every optional part, on or off.
 
-**Environment**: `TLDRACK_PORT` (7681, ttyd), `TLDRACK_STATUS_PORT` (port + 1, so 7682), `TLDRACK_SESSION` (default `voidcraft`: the page still hard-codes that name, so it is frozen for now), `TLDRACK_START_DIR`, `TLDRACK_PLUGINS` (colon-separated plugin dirs), `TLDRACK_UI_DIST`, `TLDRACK_NTFY_TOPIC` (a secret; under 24 characters is refused), `TLDRACK_LEAD_SKILL`, `TLDRACK_FIX_CAP_USD`. The `Host` allowlist is the core's variable, `VOIDCRAFT_BRIDGE_ALLOWED_HOSTS` (see Security posture).
+**Environment**: `TLDRACK_PORT` (7681, ttyd), `TLDRACK_STATUS_PORT` (port + 1, so 7682), `TLDRACK_SESSION` (default `tldrack`), `TLDRACK_START_DIR`, `TLDRACK_PLUGINS` (colon-separated plugin dirs), `TLDRACK_UI_DIST`, `TLDRACK_NTFY_TOPIC` (a secret; under 24 characters is refused), `TLDRACK_LEAD_SKILL`, `TLDRACK_FIX_CAP_USD`. The `Host` allowlist is the core's variable, `VOIDCRAFT_BRIDGE_ALLOWED_HOSTS` (see Security posture).
 
 **Server flags**: `--port`, `--status-port`, `--session`, `--start-dir`, `--cmd` (full command override), `--pinned`, `--font-size`, `--read-only`, `--no-status`, `--no-index-patch`, `--print-hooks`, `--print-statusline`.
 
@@ -136,7 +136,7 @@ Without the plugin a button shows the reason beside it and types nothing. The `p
 
 A stdlib `ThreadingHTTPServer` on a daemon thread, loopback only, that subclasses the core's handler. Its routes are the `GET_ROUTES` and `POST_ROUTES` tables of `StatusHandler` in `main.py`; a new route goes in those tables and inherits the Host and Origin guards. Access logs are silenced; only state transitions are echoed.
 
-**Frozen on the wire until the page moves**: every route path, the `/snapshot` shape, the default session name `voidcraft`, the three `voidcraft-terminal-*` message names, and ports 7681 and 7682. `/snapshot` is additive only: keys are added, never changed or made required.
+**On the wire**: every route path, the `/snapshot` shape, the three `tldrack-terminal-*` message names, and ports 7681 and 7682. `/snapshot` is additive only: keys are added, never changed or made required. A key renamed before 0.1.0 (step 6.8) is still written under its old name too, for one release, and every reader takes both.
 
 ### Hooks and session state
 
@@ -160,7 +160,7 @@ A stdlib `ThreadingHTTPServer` on a daemon thread, loopback only, that subclasse
 
 - `GET /snapshot` is every session in one answer: the union of `StatusStore.list()` and a live `tmux list-panes -a`, merged by `merge_snapshot` (pure functions in `tldrack/snapshot.py`; only `list_tmux_sessions` shells out). A tmux-only session reads `"unknown"`; a store-only session lists with `title: null, attached: false`.
 - **The tmux `-F` fields are joined with `\x1f`, not a tab**, and `#{pane_title}` is LAST because a title is arbitrary text. A new field goes BEFORE it.
-- Additive row keys include `profile`, `created_at`, `launch_permission_mode`, `launch_model`, `icon`, `tasks`, `fresh`, `stuck`, `stop_failure`, `persona`, `auto_name`, `lineage`, `context_left`, `open_work`, `lead` / `crew`, and `exited` + `exit_code` for a pane held open after its job ended (`snapshot.py` `TMUX_DEAD_FIELD`).
+- Additive row keys include `profile`, `created_at`, `launch_permission_mode`, `launch_model`, `icon`, `tasks`, `fresh`, `stuck`, `stop_failure`, `persona`, `auto_name`, `lineage`, `context_left`, `open_work`, `lead` / `worker` (`worker` is also written as `crew`, its name before step 6.8, for one release), and `exited` + `exit_code` for a pane held open after its job ended (`snapshot.py` `TMUX_DEAD_FIELD`).
 - Additive top-level keys: `bridge`, `plugins`, `profiles` (its presence is the client's capability signal for `/spawn`), `launch_pick`, `usage_limits`, `clients`, `state_sources`, `restorable`, `closed`, `next_step`. The counts are omitted at 0.
 - `GET /events` is SSE: a `snapshot` event at once and on every state-affecting change, an `activity` event per ticker entry, and a ping when idle. Broker: `tldrack/events.py`, one queue per client so a wedged client never blocks a hook POST, capped at `MAX_SSE_CLIENTS` (503 above). An overflowing queue drops its OLDEST chunk. Polling stays fully supported.
 - `GET /activity?limit=N` returns recent transitions newest first from a ring buffer (`tldrack/history.py`). Entries append only on a real state or activity change.
@@ -300,5 +300,5 @@ The plugin host, the Host and Origin guards, CORS and `/snapshot`'s `bridge` + `
 
 - The rack page appends the **full render query** to the ttyd URL: `fontSize`, `fontFamily`, `fontWeight`, `rendererType` and a JSON `theme`, built by `render_query()` in `ui/src/engine/terminal/terminal-render-options.ts`. The `-t` flags here are the defaults for a **plain browser visit** only: ttyd merges query options last, so the URL always wins and none of this needs a bridge restart.
 - ttyd coerces a query option by the default's type: numbers go through `parseInt`, so a fractional `lineHeight` cannot use this path, and an object option (`theme`) is **merged**, so a partial theme keeps the bridge's value for every key it omits.
-- The parent posts `{type:'voidcraft-terminal-config', font_size}` (device px) into the frame on every load and font change; the patched page resizes xterm in place with the socket intact. ⌘/Ctrl + = / − / 0 inside the terminal post `{type:'voidcraft-terminal-font-step', step}` to the parent, which clamps, persists and pushes the new size back (`ui/src/composables/useTtydFontStep.ts`). The remote rack's key bar posts `{type:'voidcraft-terminal-key', key: <token>}`. A raw ttyd ignores all three.
+- The parent posts `{type:'tldrack-terminal-config', font_size}` (device px) into the frame on every load and font change; the patched page resizes xterm in place with the socket intact. ⌘/Ctrl + = / − / 0 inside the terminal post `{type:'tldrack-terminal-font-step', step}` to the parent, which clamps, persists and pushes the new size back (`ui/src/composables/useTtydFontStep.ts`). The remote rack's key bar posts `{type:'tldrack-terminal-key', key: <token>}`. A raw ttyd ignores all three.
 - `DARK_THEME` in `main.py` is **not** the source of truth for terminal colours: `TERMINAL_THEME` in `terminal-render-options.ts` is, and it reaches ttyd on the URL. Keep the four keys here tracking its background, foreground, cursor and selection, and do not copy its ANSI colours.

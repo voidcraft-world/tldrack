@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    create_fleet_ingestor,
-    type FleetIngestorDeps,
-    type FleetNoticeSets,
+    create_rack_ingestor,
+    type RackIngestorDeps,
+    type RackNoticeSets,
     type IngestorFlags,
-} from '../../src/engine/terminal/fleet-ingestor.ts';
+} from '../../src/engine/terminal/rack-ingestor.ts';
 import type { PortSnapshot, SessionStatus } from '../../src/engine/terminal/terminal-status-logic.ts';
 
 const FLAGS: IngestorFlags = {
@@ -33,17 +33,17 @@ interface Route {
 function harness(options: {
     routes?: Record<string, Route | (() => Route)>;
     flags?: Partial<IngestorFlags>;
-    deps?: Partial<FleetIngestorDeps>;
+    deps?: Partial<RackIngestorDeps>;
 } = {}) {
     const calls: string[] = [];
     const snapshots: PortSnapshot[] = [];
-    const notices: FleetNoticeSets[] = [];
+    const notices: RackNoticeSets[] = [];
     let watching = new Set<string>();
     let tracked: string[] = [];
     const flags: IngestorFlags = { ...FLAGS, ...options.flags };
     let routes = options.routes ?? {};
 
-    const ingestor = create_fleet_ingestor({
+    const ingestor = create_rack_ingestor({
         base_url: (path) => `http://127.0.0.1:7682${path}`,
         flags: () => flags,
         is_watching: (session) => watching.has(session),

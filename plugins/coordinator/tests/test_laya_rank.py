@@ -130,7 +130,7 @@ def test_a_plugin_that_fails_its_status_is_a_visible_fallback():
     assert "/start" not in laya.paths
 
 
-@pytest.mark.parametrize("models", [("english",), (), ("english", "voidcraft-agent-open-work")])
+@pytest.mark.parametrize("models", [("english",), (), ("english", "tldrack-agent-open-work")])
 def test_without_the_coordinator_fine_tune_nothing_starts_and_nothing_is_said(models):
     """Research §05: without this gate, installing Laya would switch audits to the near-chance base model."""
     laya = FakeLaya(open_p=lambda _: 0.9, models=models)

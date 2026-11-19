@@ -20,7 +20,7 @@
  * not, whether the URL renavigates) — this only turns a keystroke into `apply`.
  */
 import { onBeforeUnmount, onMounted, type Ref } from 'vue';
-import { MESSAGE_TERMINAL_CONFIG, MESSAGE_TERMINAL_FONT_STEP } from '../events/messages.ts';
+import { MESSAGE_TERMINAL_CONFIG, MESSAGE_TERMINAL_FONT_STEP, message_is } from '../events/messages.ts';
 import {
     DEFAULT_TERMINAL_FONT_SIZE,
     TERMINAL_FONT_STEP_PX,
@@ -54,7 +54,7 @@ export function useTtydFontStep(opts: TtydFontStepOptions): TtydFontStep {
 
     function on_message(event: MessageEvent): void {
         if (event.source !== opts.frame.value?.contentWindow) return;
-        if (event.data?.type !== MESSAGE_TERMINAL_FONT_STEP) return;
+        if (!message_is(event.data, MESSAGE_TERMINAL_FONT_STEP)) return;
         const step = Number(event.data.step);
         const current = opts.get_options();
         if (step === 0) {

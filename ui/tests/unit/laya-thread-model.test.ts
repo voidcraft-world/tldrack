@@ -442,10 +442,10 @@ describe('turn_groups', () => {
     });
 
     it('a turn the rack opened, with no prompt of yours, anchors on its own opener; an unlinked turn has none', () => {
-        const crew = row({ conversation: A, at: at('10:00') });
+        const worker = row({ conversation: A, at: at('10:00') });
         const loose = row({ at: at('10:05') });
-        const j = join({ decisions: { [crew.decision_id]: turn({ ask: null, request: ask(0, 'brief from the lead'), human_ordinal: 0, woke_by: 'parent' }) } });
-        const [band] = thread_bands([crew], j, 'newest');
+        const j = join({ decisions: { [worker.decision_id]: turn({ ask: null, request: ask(0, 'brief from the lead'), human_ordinal: 0, woke_by: 'parent' }) } });
+        const [band] = thread_bands([worker], j, 'newest');
         const [g] = turn_groups(band, j);
         assert.equal(g.by, 'other');
         assert.equal(g.anchor?.text, 'brief from the lead');

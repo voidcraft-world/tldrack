@@ -11,7 +11,7 @@ from laya_bridge.ops import ops_state
 from laya_bridge.plugin import LayaPlugin
 from laya_bridge.wire import clean_request
 
-FINE_TUNE = "voidcraft-agent-open-work"
+FINE_TUNE = "tldrack-agent-open-work"
 NOW = datetime(2026, 10, 27, 12, 0, tzinfo=timezone.utc)
 SUITE = "agent-open-work"
 
@@ -35,7 +35,7 @@ def full_tree(tree):
         train_texts=["trained"],
         thresholds={
             "agent_open_work": lab_files.threshold_entry(
-                0.62, FINE_TUNE, "voidcraft-agent-open-work-20260102-0304", "2026-10-27T01:00:00Z", "operator", 48, 0.55, None
+                0.62, FINE_TUNE, "tldrack-agent-open-work-20260102-0304", "2026-10-27T01:00:00Z", "operator", 48, 0.55, None
             )
         },
         extra_models={"example-news-gate": {"path": "checkpoints/example-news-gate-1", "surface": "news_gate"}},
@@ -127,14 +127,14 @@ def test_todays_golden_report_shape_alone(tree):
     [served] = ops_state(tree.base, None, [], lab_ok=True, now=NOW)["served"]
     assert served["golden"] == {"at": "2026-01-02T03:04:05", "cases": 32, "accuracy": 0.75, "kappa": None, "brier": 0.21}
     assert served["threshold"] == {"at": 0.7, "source": "code", "swept_at": None, "done_at": 0.4}
-    assert served["model_id"] == f"laya-local/{FINE_TUNE}@voidcraft-agent-open-work-20260102-0304"
+    assert served["model_id"] == f"laya-local/{FINE_TUNE}@tldrack-agent-open-work-20260102-0304"
 
 
 def test_a_cut_swept_for_another_checkpoint_is_not_live(tree):
     full_tree(tree)
-    loaded = {FINE_TUNE: str(tree.base / "checkpoints" / "voidcraft-agent-open-work-20261101-0000")}
+    loaded = {FINE_TUNE: str(tree.base / "checkpoints" / "tldrack-agent-open-work-20261101-0000")}
     [served] = ops_state(tree.base, None, [], loaded=loaded, lab_ok=True, now=NOW)["served"]
-    assert served["threshold"]["source"] == "code" and served["checkpoint"] == "voidcraft-agent-open-work-20261101-0000"
+    assert served["threshold"]["source"] == "code" and served["checkpoint"] == "tldrack-agent-open-work-20261101-0000"
     assert served["scores"]["current"] is False
 
 

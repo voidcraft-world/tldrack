@@ -601,7 +601,7 @@ def test_train_registers_only_what_the_gate_passes(monkeypatch, tmp_path):
     assert promote is True and tags["gate"] == "PASS"
 
     def refused(*_a, **_kw):
-        raise gate.GateRefused("voidcraft-agent-open-work has no training record")
+        raise gate.GateRefused("tldrack-agent-open-work has no training record")
 
     monkeypatch.setattr(train, "judge", refused)
     promote, why, _tags = train.gate_verdict(SURFACE, tmp_path, tmp_path / CANDIDATE, "cpu")

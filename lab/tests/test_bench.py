@@ -131,7 +131,7 @@ def test_the_protocol_id_follows_the_rows_asked(lab, public_golden):
 # ── the file ──────────────────────────────────────────────────────────────────
 
 ESTIMATE = {"value", "lo", "hi"}
-TOP = {"v", "protocol", "generated_at", "commit", "voters", "sets", "fleet", "reproduce"}
+TOP = {"v", "protocol", "generated_at", "commit", "voters", "sets", "rack", "reproduce"}
 PROTOCOL = {"id", "surface", "question", "question_version", "positive", "description", "interval", "costs"}
 VOTER = {"name", "label", "kind", "of", "labels", "params_m", "runtime", "licence", "served"}
 SCORE = {"voter", "auc", "brier", "ece", "roc", "reliability", "operating", "latency"}
@@ -149,7 +149,7 @@ def test_the_file_is_the_schema_shape(lab, public_golden, tmp_path):
     )
     assert bench.run(SUITE, lab.base, plan=plan, out_dir=tmp_path / "out") == 0
     payload = written(tmp_path / "out")
-    assert set(payload) == TOP and payload["v"] == 1 and payload["fleet"] is None and payload["commit"] is None
+    assert set(payload) == TOP and payload["v"] == 1 and payload["rack"] is None and payload["commit"] is None
     assert set(payload["protocol"]) == PROTOCOL
     assert payload["protocol"]["interval"] == {
         "level": 0.95,
@@ -269,18 +269,18 @@ def breaks():
     raise OSError("/a/private/path could not be opened")
 
 
-def test_the_fleet_block_is_measured_only_when_asked(lab, public_golden, tmp_path, monkeypatch, capsys):
-    """A results file is published; the operator's own use goes into it only behind `--fleet`."""
+def test_the_rack_block_is_measured_only_when_asked(lab, public_golden, tmp_path, monkeypatch, capsys):
+    """A results file is published; the operator's own use goes into it only behind `--rack`."""
     labelled_store(lab)
     asked: list[int] = []
-    counts = json.loads((paths.REPO_ROOT / "bench" / "results" / "fixture.json").read_text(encoding="utf-8"))["fleet"]
-    monkeypatch.setattr(bench.fleet, "measure", lambda base, suite: (asked.append(1) or counts, None))
+    counts = json.loads((paths.REPO_ROOT / "bench" / "results" / "fixture.json").read_text(encoding="utf-8"))["rack"]
+    monkeypatch.setattr(bench.rack, "measure", lambda base, suite: (asked.append(1) or counts, None))
     plan = bench.Plan([fake("word", by_word)])
     assert bench.run(SUITE, lab.base, plan=plan, out_dir=tmp_path / "quiet", day="2026-01-02") == 0
-    assert asked == [] and written(tmp_path / "quiet")["fleet"] is None
-    assert "fleet    withheld" in capsys.readouterr().out
-    assert bench.run(SUITE, lab.base, plan=plan, out_dir=tmp_path / "asked", day="2026-01-02", with_fleet=True) == 0
-    assert len(asked) == 1 and written(tmp_path / "asked")["fleet"] == counts
+    assert asked == [] and written(tmp_path / "quiet")["rack"] is None
+    assert "rack     withheld" in capsys.readouterr().out
+    assert bench.run(SUITE, lab.base, plan=plan, out_dir=tmp_path / "asked", day="2026-01-02", with_rack=True) == 0
+    assert len(asked) == 1 and written(tmp_path / "asked")["rack"] == counts
 
 
 def test_a_voter_that_cannot_run_is_skipped_and_the_run_goes_on(lab, public_golden, tmp_path, capsys):
@@ -430,7 +430,7 @@ def test_a_served_fine_tune_is_benched_beside_its_base_and_its_floor(lab, public
     assert held["n"] == {"open": 6, "done": 6}
     floor = next(entry for entry in held["scores"] if entry["voter"] == bench.FLOOR)
     assert floor["operating"]["source"] == "live" and floor["auc"]["value"] > 0.9
-    assert {model for _state, model in router.calls} == {"english", "voidcraft-agent-open-work"}
+    assert {model for _state, model in router.calls} == {"english", "tldrack-agent-open-work"}
     assert CHECKPOINT not in json.dumps(payload)
     assert "results →" in capsys.readouterr().out
 

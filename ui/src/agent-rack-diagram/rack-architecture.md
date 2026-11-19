@@ -214,15 +214,15 @@ flowchart TD
     launch["POST /lead/launch<br/>profile, resume?"]
     lead["Lead session<br/>main checkout, edits and forks refused"]
     store["rack.sqlite (bridge core)<br/>runs · steps · decisions"]
-    crew["Crew sessions<br/>one worktree per step, on the crew model"]
+    worker["Worker sessions<br/>one worktree per step, on the worker model"]
     group["worktree task group<br/>open membership, a PR per step"]
     watcher["watcher<br/>zero tokens"]
     card["Rack DECISIONS card<br/>KEEP · options or ANSWER · DEFER"]
     secret["GET /decision-secret<br/>browser fetch only"]
     fork --> launch --> lead
     lead -->|"tldrack lead …"| store
-    lead -->|"lead spawn"| crew --> group
-    crew -->|"lead ask"| store
+    lead -->|"lead spawn"| worker --> group
+    worker -->|"lead ask"| store
     group --> watcher
     store --> watcher
     watcher -->|"one wake per event, typed when the pane is safe"| lead

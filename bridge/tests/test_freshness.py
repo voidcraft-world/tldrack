@@ -420,7 +420,7 @@ def _snapshot_bridge(tmp_path, monkeypatch, freshness):
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=SessionModelStore(tmp_path / "models.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1234, "started_at": 0.0},
         control=ShutdownControl("status-only"),
         freshness=freshness,

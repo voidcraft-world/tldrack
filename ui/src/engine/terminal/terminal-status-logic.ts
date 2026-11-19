@@ -15,7 +15,7 @@
  */
 import { session_lineage_schema, type SessionLineage } from '@tldrack/schemas/session-lineage.ts';
 import { next_step_schema, type NextStep, type NextStepMode } from '@tldrack/schemas/next-step.ts';
-import { session_crew_schema, session_lead_schema, type SessionCrew, type SessionLead } from '@tldrack/schemas/lead.ts';
+import { session_worker_schema, session_lead_schema, type SessionWorker, type SessionLead } from '@tldrack/schemas/lead.ts';
 
 
 /** `background`: owned by bridge/tldrack/agent_index.py — see § BACKGROUND WORK there. */
@@ -180,7 +180,7 @@ export interface SessionStatus {
      *  `parse_session_row` against `schemas/src/lead.ts`; dropped when malformed, absent on other rows. */
     lead?: SessionLead;
     /** A worker session: the run and step it works (`tldrack/lead/`). Same validation as `lead`. */
-    crew?: SessionCrew;
+    worker?: SessionWorker;
 }
 
 /** Why a turn was cut off, off Claude Code's own synthetic error entry. */
@@ -282,10 +282,13 @@ export function parse_session_row(value: unknown): SessionStatus | null {
         if (parsed.success) row.lead = parsed.data;
         else delete row.lead;
     }
-    if (raw.crew !== undefined) {
-        const parsed = session_crew_schema.safeParse(raw.crew);
-        if (parsed.success) row.crew = parsed.data;
-        else delete row.crew;
+    // Legacy (step 6.8): a bridge one release behind names this block `crew`; one writing both, `worker` wins.
+    const worker = raw.worker !== undefined ? raw.worker : raw.crew;
+    delete (row as unknown as Record<string, unknown>).crew;
+    if (worker !== undefined) {
+        const parsed = session_worker_schema.safeParse(worker);
+        if (parsed.success) row.worker = parsed.data;
+        else delete row.worker;
     }
     if (raw.children_running !== undefined) {
         const n = raw.children_running;
@@ -522,7 +525,7 @@ const SUMMARY_TERMS: { state: TerminalDisplayState; word: string }[] = [
 
 /** The rollup as segments, for a surface that dots each one.
  *  Zero counts are dropped; unknown shows only when it's all there is. */
-export function fleet_summary_segments(counts: DisplayCounts): { state: TerminalDisplayState; text: string }[] {
+export function rack_summary_segments(counts: DisplayCounts): { state: TerminalDisplayState; text: string }[] {
     const segments = SUMMARY_TERMS.filter(({ state }) => counts[state] > 0).map(({ state, word }) => ({
         state,
         text: `${counts[state]} ${word}`,
@@ -532,8 +535,8 @@ export function fleet_summary_segments(counts: DisplayCounts): { state: Terminal
 }
 
 /** '1 needs you · 2 busy · 3 free'. Empty string for an empty rack. */
-export function format_fleet_summary(counts: DisplayCounts): string {
-    return fleet_summary_segments(counts)
+export function format_rack_summary(counts: DisplayCounts): string {
+    return rack_summary_segments(counts)
         .map((segment) => segment.text)
         .join(' · ');
 }
@@ -549,7 +552,7 @@ export function format_fleet_summary(counts: DisplayCounts): string {
 
 /** A rendered notification, or null when there is nothing outstanding (which is
  *  the caller's cue to RETRACT whatever is on screen). */
-export interface FleetNotice {
+export interface RackNotice {
     title: string;
     body: string;
     /** In-page snackbar text. Separate from title+body because the snackbar is already
@@ -581,9 +584,9 @@ function notice_key(sessions: string[]): string {
  * de-duplication both need current state: an agent that blocks and then
  * unblocks on its own simply never appears in a set, so it never reaches you.
  */
-export function summarize_fleet_attention(
+export function summarize_rack_attention(
     entries: { session: string; message: string | null }[],
-): FleetNotice | null {
+): RackNotice | null {
     if (entries.length === 0) return null;
     const members = entries.map((entry) => entry.session);
     const key = notice_key(members);
@@ -939,7 +942,7 @@ export function classify_rename_status(status: number): RenameResult {
  *
  * Pure so it is unit-testable and so both rack surfaces can never drift into
  * describing the same failure differently. Every branch names the SESSION —
- * a fleet-sized rack is exactly where "rename failed" with no subject is
+ * a full rack is exactly where "rename failed" with no subject is
  * useless.
  */
 export function rename_failure_message(session: string, name: string, result: RenameResult): string {

@@ -25,7 +25,7 @@ import type { LeadState } from '@tldrack/schemas/lead.ts';
  * 1. **`state`.** The input is `PortSnapshotRow`, whose `display` is the
  *    tracker's committed verdict, so no caller derives a state of its own.
  *
- * 2. **`summary`.** One header form (`fleet_header`), whichever transport a
+ * 2. **`summary`.** One header form (`rack_header`), whichever transport a
  *    rack page is on.
  *
  * 3. **Which rows are counted.** `rows` is expected **already dead-filtered by
@@ -507,7 +507,7 @@ const SUMMARY_PREFIX = 'agents';
  * `+N MORE` overflow row still count here, so the header never under-reports the
  * rack.
  */
-export function fleet_header(session_count: number): string {
+export function rack_header(session_count: number): string {
     return session_count > 0 ? `${SUMMARY_PREFIX} · ${session_count}` : SUMMARY_PREFIX;
 }
 
@@ -873,7 +873,7 @@ export function build_rack_payload(input: RackViewInput): RackPayload {
         sessions,
         focused: input.focused,
         max_sessions: input.max_sessions,
-        summary: fleet_header(input.rows.length),
+        summary: rack_header(input.rows.length),
         reachable: input.reachable,
     };
     // Both are genuinely optional: an absent `attached` means "not applicable",

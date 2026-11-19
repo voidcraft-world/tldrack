@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from laya_bridge import files
-from laya_bridge.paths import CHECKPOINTS_DIRNAME
+from laya_bridge.paths import CHECKPOINTS_DIRNAME, FINE_TUNE_PREFIX, LEGACY_FINE_TUNE_PREFIX, served_name
 
 #: A sweep of the cut needs this many clean operator labels, with this many of each class.
 SWEEP_MIN_ROWS = 40
@@ -81,7 +81,13 @@ def _train_keys(data: bytes) -> frozenset[str]:
 
 
 def checkpoint_name(fine_tune: str) -> re.Pattern[str]:
-    """The folder names laya-lab gives `fine_tune`'s checkpoints, `<fine_tune>-<stamp>`. fullmatch."""
+    """The folder names laya-lab gives `fine_tune`'s checkpoints, `<fine_tune>-<stamp>`. fullmatch. A folder trained
+    under the legacy prefix matches too (`paths.LEGACY_FINE_TUNE_PREFIX`): it keeps the name it was trained under."""
+    fine_tune = served_name(fine_tune)
+    if fine_tune.startswith(FINE_TUNE_PREFIX):
+        rest = re.escape(fine_tune[len(FINE_TUNE_PREFIX) :])
+        prefixes = f"(?:{re.escape(FINE_TUNE_PREFIX)}|{re.escape(LEGACY_FINE_TUNE_PREFIX)})"
+        return re.compile(rf"{prefixes}{rest}-[0-9][0-9-]*")
     return re.compile(rf"{re.escape(fine_tune)}-[0-9][0-9-]*")
 
 

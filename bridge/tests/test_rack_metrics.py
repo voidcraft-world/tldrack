@@ -28,7 +28,7 @@ def event(metrics, **patch):
             source="window",
             reselect=False,
             duration_ms=0,
-            fleet_size=4,
+            rack_size=4,
             context_left=60,
             model="model-a",
             profile="primary",
@@ -104,7 +104,7 @@ def test_pause_markers_and_action_requests(metrics):
     [
         {"duration_ms": float("nan")},
         {"at": 0},
-        {"fleet_size": True},
+        {"rack_size": True},
         {"session": "../private"},
         {"kind": ["select"]},
         {"mark": "invented"},
@@ -162,3 +162,30 @@ def test_routes_use_real_body_validation_and_origin_guard(metrics, tmp_path):
     h._handle_rack_metric_event()
     assert answers[-1][0] == 403
     assert metrics.summary()["total"]["clicks"] == 1
+
+
+def test_a_page_and_a_file_from_before_the_rename_still_count(tmp_path, metrics):
+    # Legacy (step 6.8): `rack_size` was `fleet_size`, in a posted event and in the events table.
+    legacy = event(metrics)
+    legacy["fleet_size"] = legacy.pop("rack_size")
+    assert metrics.record(legacy)["recorded"] is True
+    path = tmp_path / "old.sqlite"
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE events (id TEXT PRIMARY KEY, at INTEGER NOT NULL, received_at INTEGER NOT NULL, client TEXT NOT NULL,"
+        " kind TEXT NOT NULL, session TEXT, session_key TEXT, identified INTEGER NOT NULL, state TEXT NOT NULL,"
+        " mark TEXT NOT NULL, action TEXT NOT NULL, source TEXT NOT NULL, reselect INTEGER NOT NULL,"
+        # step 6.8: the column's name before the rename
+        " duration_ms INTEGER NOT NULL, fleet_size INTEGER NOT NULL, context_left REAL, model TEXT, profile TEXT,"
+        " version INTEGER NOT NULL DEFAULT 1)"
+    )
+    conn.commit()
+    conn.close()
+    old = RackMetrics(path, clock=metrics.clock)
+    assert old.record(event(metrics))["recorded"] is True
+    with old._db() as db:
+        assert "rack_size" in {row[1] for row in db.execute("PRAGMA table_info(events)")}
+    with pytest.raises(ValueError):  # step 6.8: never both names in one event
+        validate_event({**event(metrics), "fleet_size": 4}, round(metrics.clock() * 1000))

@@ -725,7 +725,7 @@ def handler(tmp_path, monkeypatch):
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=SessionModelStore(tmp_path / "models.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1234, "started_at": 0},
         control=ShutdownControl("status-only"),
         next_step_paths=(tmp_path / "state.json", tmp_path / "log.jsonl"),
@@ -771,7 +771,7 @@ def test_a_test_built_handler_has_no_suggester_unless_asked(tmp_path):
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "i.json"),
         model_store=SessionModelStore(tmp_path / "m.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1, "started_at": 0},
         control=ShutdownControl("status-only"),
     )

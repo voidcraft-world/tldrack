@@ -139,7 +139,7 @@ test('dead sessions sort last', () => {
 // ── the full urgency ladder ─────────────────────────────────────────────────
 //
 // The dot column IS the rack readout now — the header stopped spelling the
-// same thing out in words (see rack-view.ts `fleet_header`) — so the order the
+// same thing out in words (see rack-view.ts `rack_header`) — so the order the
 // dots appear in has to mean something on its own.
 
 test('rows sort by how much they want you: attention → done → free → background → busy → unknown → dead', () => {

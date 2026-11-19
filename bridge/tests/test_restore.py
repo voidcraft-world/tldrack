@@ -155,9 +155,9 @@ def test_restore_mode_replays_the_launch_only_while_the_session_stayed_in_it(lau
 def test_a_restore_comes_back_in_auto_and_says_so_on_the_offer(tmp_path):
     profiles = mode_registry(tmp_path)
     (tmp_path / ".claude-a" / "projects" / "p" / f"{SID}.jsonl").write_text("")
-    crew = plan(tmp_path, {**record(str(tmp_path)), "launch_permission_mode": "auto"}, profiles=profiles)
-    assert crew.permission_mode == "auto" and crew.row()["permission_mode"] == "auto"
-    argv = restore_argv(crew, profiles)
+    worker = plan(tmp_path, {**record(str(tmp_path)), "launch_permission_mode": "auto"}, profiles=profiles)
+    assert worker.permission_mode == "auto" and worker.row()["permission_mode"] == "auto"
+    argv = restore_argv(worker, profiles)
     assert "--permission-mode auto" in argv[17] and f"--resume={SID}" in argv[17]
     assert "@vc_permission_mode" in argv, "restamped, so a second restore keeps it too"
     plain = plan(tmp_path, record(str(tmp_path)), profiles=profiles)
@@ -165,7 +165,7 @@ def test_a_restore_comes_back_in_auto_and_says_so_on_the_offer(tmp_path):
     assert "--permission-mode" not in restore_argv(plain, profiles)[17]
 
 
-def test_a_switched_out_crew_restores_in_the_default_launch(tmp_path):
+def test_a_switched_out_worker_restores_in_the_default_launch(tmp_path):
     profiles = mode_registry(tmp_path)
     p = plan(
         tmp_path, {**record(str(tmp_path)), "launch_permission_mode": "auto", "live_permission_mode": "manual"}, profiles=profiles
@@ -184,7 +184,7 @@ def test_a_cli_that_can_no_longer_start_auto_restores_in_the_default_launch(tmp_
     assert counted.ok, "the /snapshot count never probes a CLI"
 
 
-def test_a_codex_crew_restores_fresh_and_still_in_auto_review(tmp_path):
+def test_a_codex_worker_restores_fresh_and_still_in_auto_review(tmp_path):
     profiles = mode_registry(tmp_path)
     p = plan(
         tmp_path, {**record(str(tmp_path), profile="codex", kind="codex"), "launch_permission_mode": "auto"}, profiles=profiles
@@ -193,7 +193,7 @@ def test_a_codex_crew_restores_fresh_and_still_in_auto_review(tmp_path):
     assert "--approve-for-me" in restore_argv(p, profiles)[17]
 
 
-def test_a_codex_crew_with_its_rollout_resumes_in_auto_review(tmp_path):
+def test_a_codex_worker_with_its_rollout_resumes_in_auto_review(tmp_path):
     profiles = mode_registry(tmp_path)
     day = tmp_path / ".codex" / "sessions" / "2026" / "11" / "18"
     day.mkdir(parents=True)

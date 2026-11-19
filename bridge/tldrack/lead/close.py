@@ -30,7 +30,7 @@ class CloseFacts:
     run_open: bool
     step_known: bool
     kind: str | None
-    crew_session: str | None
+    worker_session: str | None
     recorded_lineage: str | None
     run_identity: str
     #: The live session by the worker's name: its lineage id and parent id; None when no session has the name.
@@ -54,14 +54,14 @@ def decide_close(f: CloseFacts) -> tuple[str | None, str]:
     """(None, "closed") to close, else (code, why). Pure: the truth table, in the plan's order."""
     if not f.run_open or not f.step_known:
         return "unknown_step", "that step is not in an open run"
-    if not f.crew_session:
+    if not f.worker_session:
         return "unknown_step", "that step has no worker to close"
     if f.live and (f.recorded_lineage is None or f.live_lineage != f.recorded_lineage):
-        return "not_the_crew", f"the live '{f.crew_session}' is another agent wearing the name"
+        return "not_the_worker", f"the live '{f.worker_session}' is another agent wearing the name"
     if f.live and f.live_parent != f.run_identity:
-        return "not_crew_of_run", f"'{f.crew_session}' was not spawned by this run's lead"
+        return "not_worker_of_run", f"'{f.worker_session}' was not spawned by this run's lead"
     if f.live and f.state != CLOSABLE_STATE:
-        return (f.state or "unknown"), f"'{f.crew_session}' is {f.state or 'unknown'}, not free"
+        return (f.state or "unknown"), f"'{f.worker_session}' is {f.state or 'unknown'}, not free"
     if f.open_questions:
         return "open_question", f"open questions: {', '.join(f.open_questions)}"
     if f.live and f.children_running:
@@ -70,7 +70,7 @@ def decide_close(f: CloseFacts) -> tuple[str | None, str]:
         return "git_error", "git could not read the worktree"
     if not f.tree_clean:
         return "dirty", "the worktree has uncommitted changes"
-    if f.kind == "scout":
+    if f.kind == "report":
         if not f.report_ok:
             return "no_report", "no saved report (tldrack lead report <file>)"
         return None, "closed"

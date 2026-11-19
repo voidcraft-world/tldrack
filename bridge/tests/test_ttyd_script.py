@@ -41,7 +41,7 @@ def run_script(tmp_path):
     fake.write_text(FAKE_TMUX)
     fake.chmod(0o755)
 
-    def run(arg, *, session="voidcraft", start_dir=None, tmux_rc="0", has_rc=None, tmux_err=None):
+    def run(arg, *, session="tldrack", start_dir=None, tmux_rc="0", has_rc=None, tmux_err=None):
         script = ttyd_session_script(session, start_dir)
         env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_TMUX_RC=tmux_rc, TMPDIR=str(tmp_path / "tmp"))
         (tmp_path / "tmp").mkdir(exist_ok=True)
@@ -162,8 +162,8 @@ def test_bare_name_still_attaches_or_creates(run_script):
 
 
 def test_no_arg_falls_back_to_the_default_session(run_script):
-    _, out = run_script(None, session="voidcraft")
-    assert "TMUX: new -A -s voidcraft" in out
+    _, out = run_script(None, session="tldrack")
+    assert "TMUX: new -A -s tldrack" in out
 
 
 def test_start_dir_is_quoted_for_the_create_path(run_script):

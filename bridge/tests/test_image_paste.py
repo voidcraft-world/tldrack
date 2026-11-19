@@ -144,7 +144,7 @@ def test_patch_has_the_operators_origins_and_nothing_that_could_leave_the_script
             configured_script(7792, (bad,))
 
 
-KEY = {"type": "voidcraft-terminal-key", "key": "ctrl_c"}
+KEY = {"type": "tldrack-terminal-key", "key": "ctrl_c"}
 
 
 def test_soft_keys_come_only_from_the_frame_that_holds_the_page_on_a_trusted_origin():
@@ -168,9 +168,21 @@ def test_soft_keys_come_only_from_the_frame_that_holds_the_page_on_a_trusted_ori
 
 def test_a_page_nobody_frames_takes_no_posts_and_config_obeys_the_same_rule():
     assert run_paste(top_level=True, messages=[{"origin": "http://localhost:7682", "parent": True, "data": KEY}])["typed"] == []
-    config = {"type": "voidcraft-terminal-config", "font_size": 30}
+    config = {"type": "tldrack-terminal-config", "font_size": 30}
     assert run_paste(messages=[{"origin": "https://evil.example", "parent": True, "data": config}])["font_size"] is None
     assert run_paste(messages=[{"origin": "http://localhost:7682", "parent": True, "data": config}])["font_size"] == 30
+
+
+def test_a_host_one_release_behind_still_drives_the_font_and_the_key_bar():
+    # Legacy (step 6.8): the names before 0.1.0 are read for one release.
+    legacy = [
+        {"type": "voidcraft-terminal-config", "font_size": 24},
+        {"type": "voidcraft-terminal-key", "key": "escape"},
+        {"type": "other-terminal-key", "key": "ctrl_c"},
+    ]
+    result = run_paste(messages=[{"origin": "http://localhost:7682", "parent": True, "data": data} for data in legacy])
+    assert result["font_size"] == 24
+    assert result["typed"] == ["\x1b"]
 
 
 @pytest.mark.parametrize("url", ["http://localhost:7681/?arg=codex", "http://localhost:7681/?arg=attach:codex"])

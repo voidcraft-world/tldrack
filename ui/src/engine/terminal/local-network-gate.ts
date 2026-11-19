@@ -20,7 +20,7 @@
  * loopback, so nothing is gated (`page_is_loopback`).
  *
  * ── DELIBERATELY IMPORT-FREE ─────────────────────────────────────────────────
- * `fleet-ingestor.ts` imports this and runs under bare `node --test`. Every browser global is
+ * `rack-ingestor.ts` imports this and runs under bare `node --test`. Every browser global is
  * `typeof`-guarded for the same reason.
  *
  * ── THE PERMISSION IS NOT THE SAME QUESTION AS THE OPT-IN ────────────────────

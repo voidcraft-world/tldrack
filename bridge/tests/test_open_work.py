@@ -440,7 +440,7 @@ def test_a_swept_done_cut_reaches_the_verdict_and_the_ledger():
 @pytest.mark.parametrize(
     "thresholds,models",
     [
-        ({"agent_open_work": {"at": 0.62, "model": "voidcraft-other"}}, ("english", FINE_TUNE_MODEL)),
+        ({"agent_open_work": {"at": 0.62, "model": "tldrack-other"}}, ("english", FINE_TUNE_MODEL)),
         ({"agent_open_work": {"at": 0.62, "model": FINE_TUNE_MODEL}}, ("english",)),  # the fine-tune is not served
         ({"agent_open_work": {"at": 0.62, "model": "english"}}, ("english",)),  # a built-in never borrows a cut
         ({"agent_open_work": {"at": 1.0, "model": FINE_TUNE_MODEL}}, ("english", FINE_TUNE_MODEL)),
@@ -852,7 +852,7 @@ def bridge(tmp_path, monkeypatch):
             store=store,
             icon_store=SessionIconStore(tmp_path / "icons.json"),
             model_store=SessionModelStore(tmp_path / "models.json"),
-            default_session="voidcraft",
+            default_session="tldrack",
             bridge_info={"pid": 1234, "started_at": 0.0},
             control=ShutdownControl("status-only"),
             plugins={"laya": laya},

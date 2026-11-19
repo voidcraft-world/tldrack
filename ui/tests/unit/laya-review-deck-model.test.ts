@@ -109,7 +109,7 @@ function card(key: string, over: Partial<ReviewCard> = {}): ReviewCard {
         held_out: true,
         reference: { by: 'sonnet-4.6', open: true, why: 'the deploy is owed' },
         sonnet: { by: 'sonnet-4.6', open: true, why: 'the deploy is owed' },
-        laya: { p: 0.83, threshold: 0.7, model: 'voidcraft-agent-open-work', checkpoint: 'voidcraft-agent-open-work-20260101-0000', question_version: 2, source: 'scores' },
+        laya: { p: 0.83, threshold: 0.7, model: 'tldrack-agent-open-work', checkpoint: 'tldrack-agent-open-work-20260101-0000', question_version: 2, source: 'scores' },
         golden: null,
         decision: null,
         answers: ['agree', 'flip', 'skip'],
@@ -358,7 +358,7 @@ describe('labels', () => {
     it('reads the reference source from reference.by', () => {
         assert.equal(reference_source(card(KEY_A)), 'SONNET');
         assert.equal(reference_source(card(KEY_A, { reference: { by: 'golden:agent-open-work', open: false, why: 'x' } })), 'GOLDEN');
-        assert.equal(reference_source(card(KEY_A, { reference: { by: 'laya:voidcraft-agent-open-work', open: true, why: null } })), 'LAYA');
+        assert.equal(reference_source(card(KEY_A, { reference: { by: 'laya:tldrack-agent-open-work', open: true, why: null } })), 'LAYA');
         assert.equal(reference_source(card(KEY_A, { reference: { by: 'someone', open: true, why: null }, sonnet: null })), 'LAYA');
     });
 });
@@ -537,7 +537,7 @@ describe('acquisition', () => {
     it('a challenger card leads with the challenger’s own score and says which way it went', () => {
         assert.ok(DEAL_STRATA.includes('challenger'));
         assert.equal(DEAL_STRATA.indexOf('challenger'), 2, 'right after UNCERTAIN: its grades gate a promotion');
-        const rival = card(KEY_A, { stratum: 'challenger', challenger: { name: 'voidcraft-agent-open-work-20260102-0000', p: 0.3, threshold: 0.7 } });
+        const rival = card(KEY_A, { stratum: 'challenger', challenger: { name: 'tldrack-agent-open-work-20260102-0000', p: 0.3, threshold: 0.7 } });
         assert.equal(stratum_tag_text(rival), 'CHALLENGER 0.30');
         assert.match(challenger_note(rival) ?? '', /would not have flagged this turn at its own cut 0\.70/);
         assert.ok(explain_card(rival).some((line) => line.startsWith('CHALLENGER 0.30')));

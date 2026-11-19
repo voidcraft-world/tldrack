@@ -149,14 +149,14 @@ def test_the_launch_mode_follows_the_live_stamp_and_never_outlives_it(tmp_path):
     # a name reused after a reboot must not inherit its predecessor's `auto`. Sparse on disk.
     path = tmp_path / "r.json"
     store = SessionRecordStore(path, clock=Clock())
-    crew = {**row("wt-lead-a", "/a"), "launch_permission_mode": "auto"}
-    store.observe_live([crew, row("vc-1", "/b")], kind_of)
+    worker = {**row("wt-lead-a", "/a"), "launch_permission_mode": "auto"}
+    store.observe_live([worker, row("vc-1", "/b")], kind_of)
     on_disk = json.loads(path.read_text())["sessions"]
     assert on_disk["wt-lead-a"]["launch_permission_mode"] == "auto"
     assert "launch_permission_mode" not in on_disk["vc-1"]
     store.observe_live([row("wt-lead-a", "/a"), row("vc-1", "/b")], kind_of)
     assert store.get("wt-lead-a").get("launch_permission_mode") is None, "re-entered in the default mode"
-    store.observe_live([crew, {**row("vc-1", "/b"), "launch_permission_mode": "bypassPermissions"}], kind_of)
+    store.observe_live([worker, {**row("vc-1", "/b"), "launch_permission_mode": "bypassPermissions"}], kind_of)
     assert store.get("vc-1").get("launch_permission_mode") is None
 
 

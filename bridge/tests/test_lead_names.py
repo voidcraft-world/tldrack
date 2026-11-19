@@ -20,7 +20,7 @@ def test_a_built_lead_name_is_recognised_and_suffixed_when_taken():
 @pytest.mark.parametrize(
     "name", ["wt-lead-r0101-abcd-s2", "lead", "lead-one", "my-lead-0101-1200", "lead-One-0101-1200", "vc-3x"]
 )
-def test_crew_and_custom_names_are_not_generated(name):
+def test_worker_and_custom_names_are_not_generated(name):
     assert not is_generated(name)
 
 

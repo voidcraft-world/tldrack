@@ -100,7 +100,7 @@ test('a colour follows the voter, and a ninth voter gets no made-up hue', () => 
 
 test('read less: every judged turn end is counted once', () => {
     const results = fixture();
-    const view = read_less(results.fleet!);
+    const view = read_less(results.rack!);
     assert.equal(view.judged, 2400);
     assert.equal(view.kept, 2140);
     assert.equal(fmt_share(view.kept_share), '89%');
@@ -108,8 +108,8 @@ test('read less: every judged turn end is counted once', () => {
     assert.equal(view.parts.reduce((sum, part) => sum + part.n, 0), view.judged);
     assert.equal(view.per_day.judged, 80);
     assert.equal(fmt_share(view.taken_share!), '34%');
-    assert.equal(read_less({ ...results.fleet!, next_step: null }).taken_share, null);
-    const idle = read_less({ ...results.fleet!, judged: 0, reached: 0, verdicts: { done: 0, reply: 0, open: 0 } });
+    assert.equal(read_less({ ...results.rack!, next_step: null }).taken_share, null);
+    const idle = read_less({ ...results.rack!, judged: 0, reached: 0, verdicts: { done: 0, reply: 0, open: 0 } });
     assert.equal(idle.kept_share, 0, 'an empty window divides by nothing');
 });
 

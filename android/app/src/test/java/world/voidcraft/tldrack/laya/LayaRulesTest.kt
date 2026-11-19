@@ -618,18 +618,18 @@ class LayaRulesTest {
         {"v":1,"ok":true,"message":"","surface":"agent_open_work","rows":[
           {"key":"0a0b0c0d0e0f1013","decision_id":"20261107T224000-000000000003","at":"2026-11-07T22:40:00Z",
            "subject":"vc-7","p":0.8601,"threshold":0.7,"done_threshold":0.4,"mark":"open","band":"open",
-           "edge":{"cut":"open","delta":0.1601},"model":"voidcraft-agent-open-work",
-           "checkpoint":"voidcraft-agent-open-work-20260102-0304","text":"Added to review backlog","text_chars":23,
+           "edge":{"cut":"open","delta":0.1601},"model":"tldrack-agent-open-work",
+           "checkpoint":"tldrack-agent-open-work-20260102-0304","text":"Added to review backlog","text_chars":23,
            "stratum":"flagged","reference_open":true,
            "operator":{"answer_id":"a_0000000000000003","key":"0a0b0c0d0e0f1013","answer":"flip","open":false,"needs":null}},
           {"key":"0a0b0c0d0e0f1012","decision_id":"20261107T210000-000000000003","at":"2026-11-07T21:00:00Z",
            "subject":"vc-7","p":0.55,"threshold":0.7,"done_threshold":null,"mark":"reply","band":"reply",
-           "edge":{"cut":"open","delta":-0.15},"model":"voidcraft-agent-open-work","checkpoint":null,
+           "edge":{"cut":"open","delta":-0.15},"model":"tldrack-agent-open-work","checkpoint":null,
            "text":"Refactored the test.","text_chars":20,"stratum":"flagged","reference_open":false,
            "operator":{"answer_id":"a_0000000000000002","answer":"skip","open":null,"needs":null}},
           {"key":"0a0b0c0d0e0f1011","decision_id":"20261107T200000-000000000001","at":"2026-11-07T20:00:00Z",
            "subject":null,"p":0.2,"threshold":0.7,"done_threshold":0.4,"mark":"done","band":"done",
-           "edge":{"cut":"done","delta":-0.2},"model":"voidcraft-agent-open-work","checkpoint":null,
+           "edge":{"cut":"done","delta":-0.2},"model":"tldrack-agent-open-work","checkpoint":null,
            "text":"Shipped.","text_chars":8,"stratum":null,"reference_open":null,"operator":null}
         ],"summary":{"n":3,"skipped":1,"done_at":0.4,"order":"newest","todo":false,"pool":3},"generated_at":"2026-11-07T22:50:00Z"}
     """.trimIndent()
@@ -685,7 +685,7 @@ class LayaRulesTest {
                "stratum":"flagged","text":"Added to review backlog","text_chars":23,"truncated":false,"held_out":false,
                "reference":{"by":"claude-sonnet","open":true,"why":"lists work still to do"},
                "sonnet":{"by":"claude-sonnet","open":true,"why":"lists work still to do"},
-               "laya":{"p":0.8601,"threshold":0.7,"model":"voidcraft-agent-open-work","checkpoint":null,
+               "laya":{"p":0.8601,"threshold":0.7,"model":"tldrack-agent-open-work","checkpoint":null,
                        "question_version":3,"source":"turn_end"},
                "golden":null,"decision":{"decision_id":"20261107T224000-000000000003","at":"2026-11-07T22:40:00Z"},
                "answers":["agree","flip","skip"]},

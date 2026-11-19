@@ -1,11 +1,11 @@
-"""routing.json — which profile a piece of agent work runs on (ladder rung 7, the crew-dispatch half).
+"""routing.json — which profile a piece of agent work runs on (ladder rung 7, the worker-dispatch half).
 
 `~/.config/tldrack/routing.json` (env `TLDRACK_ROUTING_PATH`) maps a task kind and a
-lane to an ordered list of profiles and a quota floor; firstmate's crew-dispatch.json is the shape:
+lane to an ordered list of profiles and a quota floor, in the shape of firstmate's dispatch file (docs/INSPIRATIONS.md):
 
     {"ladder_step": {"claude": {"profiles": ["a", "b"], "min_quota_pct": 15},
                      "codex":  {"profiles": ["codex"], "min_quota_pct": 10}},
-     "scout":       {"any":    {"profiles": ["b", "a"]}}}
+     "report":      {"any":    {"profiles": ["b", "a"]}}}
 
 - The first listed profile whose 5-hour AND weekly windows both have at least `min_quota_pct` left
   wins, read off the usage the bridge already keeps per account (usage.py, codex_usage.py).
@@ -36,7 +36,9 @@ from tldrack import paths
 from tldrack.launch_pick import window_left
 
 ROUTING_FILE = "routing.json"
-KINDS = ("ladder_step", "scout", "rank", "brief", "judge", "review")
+KINDS = ("ladder_step", "report", "rank", "brief", "judge", "review")
+#: Legacy (step 6.8): a kind's name in a routing.json written before 0.1.0, read as the new one for one release.
+LEGACY_KINDS = {"scout": "report"}
 LANES = ("claude", "codex", "any")
 LANE_KINDS = {"claude": ("claude",), "codex": ("codex",), "any": ("claude", "codex")}
 _PROFILE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
@@ -77,6 +79,7 @@ def parse_routing(text: str, log: Callable[[str], None] = lambda _m: None) -> di
         return {}
     table: dict[str, dict[str, Route]] = {}
     for kind, lanes in data.items():
+        kind = LEGACY_KINDS.get(kind, kind)
         if kind not in KINDS or not isinstance(lanes, Mapping):
             log(f"routing.json: dropped unknown kind {kind!r}")
             continue

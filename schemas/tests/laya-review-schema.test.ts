@@ -59,7 +59,7 @@ const CARD = {
     held_out: true,
     reference: { by: 'sonnet-4.6', open: true, why: 'the deploy is owed' },
     sonnet: { by: 'sonnet-4.6', open: true, why: 'the deploy is owed' },
-    laya: { p: 0.81, threshold: 0.7, model: 'voidcraft-agent-open-work', checkpoint: 'voidcraft-agent-open-work-20261020-101500', question_version: 2, source: 'ledger' },
+    laya: { p: 0.81, threshold: 0.7, model: 'tldrack-agent-open-work', checkpoint: 'tldrack-agent-open-work-20261020-101500', question_version: 2, source: 'ledger' },
     golden: null,
     decision: { decision_id: '20261026T233000-0123456789ab', at: '2026-10-26T23:30:00Z', shown: true, reaction: 'dismissed' },
     answers: ['agree', 'flip', 'skip'],
@@ -88,7 +88,7 @@ const ANSWER_ROW = {
     answer: 'agree',
     open: true,
     against: { by: 'sonnet-4.6', open: true },
-    laya: { p: 0.81, threshold: 0.7, source: 'ledger', checkpoint_path: 'checkpoints/voidcraft-agent-open-work-20261020-101500' },
+    laya: { p: 0.81, threshold: 0.7, source: 'ledger', checkpoint_path: 'checkpoints/tldrack-agent-open-work-20261020-101500' },
     decision_id: '20261026T233000-0123456789ab',
     held_out: true,
 };
@@ -106,8 +106,8 @@ const RECENT_ROW = {
     mark: 'open',
     band: 'open',
     edge: { cut: 'open', delta: 0.12 },
-    model: 'voidcraft-agent-open-work',
-    checkpoint: 'voidcraft-agent-open-work-20261020-101500',
+    model: 'tldrack-agent-open-work',
+    checkpoint: 'tldrack-agent-open-work-20261020-101500',
     text: 'Hand-off: the migration is written; the deploy is still owed.',
     text_chars: 61,
     stratum: 'flagged',
@@ -135,10 +135,10 @@ const RECENT_SUMMARY = {
 const UNDO_ROW = { v: 1, op: 'undo', answer_id: 'a_0123456789abcdef', at: '2026-10-26T23:31:00Z', by: 'operator', surface: 'agent_open_work' };
 
 const SERVED = {
-    name: 'voidcraft-agent-open-work',
+    name: 'tldrack-agent-open-work',
     surface: 'agent_open_work',
-    checkpoint: 'voidcraft-agent-open-work-20261020-101500',
-    model_id: 'laya-local/voidcraft-agent-open-work@voidcraft-agent-open-work-20261020-101500',
+    checkpoint: 'tldrack-agent-open-work-20261020-101500',
+    model_id: 'laya-local/tldrack-agent-open-work@tldrack-agent-open-work-20261020-101500',
     threshold: { at: 0.7, source: 'code', swept_at: null },
     eval: null,
     golden: { at: '20261020-101900', cases: 24, accuracy: 0.92, kappa: null, brier: 0.08 },
@@ -168,7 +168,7 @@ describe('review responses (default strip)', () => {
     });
 
     it('never carries a path as a checkpoint', () => {
-        for (const checkpoint of ['checkpoints/voidcraft-agent-open-work', '..\\x']) {
+        for (const checkpoint of ['checkpoints/tldrack-agent-open-work', '..\\x']) {
             const card = { ...CARD, laya: { ...CARD.laya, checkpoint } };
             assert.equal(reviewCardSchema.safeParse(card).success, false, checkpoint);
         }
@@ -354,7 +354,7 @@ describe('OPS state', () => {
     });
 
     it('never carries a path as a served checkpoint', () => {
-        const served = [{ ...SERVED, checkpoint: 'checkpoints/voidcraft-agent-open-work-20261020-101500' }];
+        const served = [{ ...SERVED, checkpoint: 'checkpoints/tldrack-agent-open-work-20261020-101500' }];
         assert.equal(layaOpsStateSchema.safeParse({ ...OPS, served }).success, false);
     });
 });

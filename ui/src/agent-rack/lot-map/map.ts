@@ -716,12 +716,12 @@ export function drawMap(board: Board, now: number, setup: Setup): string {
   body += drawn.map(d => d.over).join('')
 
   // Each subagent still at work circles the agents station.
-  const crew = (board.agents ?? []).slice(0, 6)
-  crew.forEach((_, k) => {
+  const workers = (board.agents ?? []).slice(0, 6)
+  workers.forEach((_, k) => {
     const lap = 7000
     const spin = `${n1(agentsAt.x)} ${n1(agentsAt.y)}`
     body +=
-      `<g><animateTransform attributeName="transform" type="rotate" from="0 ${spin}" to="360 ${spin}" begin="${clock(-((now + (k * lap) / crew.length) % lap))}" dur="${clock(lap)}" repeatCount="indefinite"/>` +
+      `<g><animateTransform attributeName="transform" type="rotate" from="0 ${spin}" to="360 ${spin}" begin="${clock(-((now + (k * lap) / workers.length) % lap))}" dur="${clock(lap)}" repeatCount="indefinite"/>` +
       `<circle cx="${n1(agentsAt.x)}" cy="${n1(agentsAt.y - NODE - 6)}" r="3" fill="${c.hot}"/></g>`
   })
 

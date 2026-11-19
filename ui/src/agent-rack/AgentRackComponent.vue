@@ -62,7 +62,7 @@ import {
     work_done_title,
 } from '../config/terminal-status-flags.ts';
 // Type-only imports of its own, so the state words cost this page nothing.
-import { state_label } from '../engine/terminal/fleet-board-logic.ts';
+import { state_label } from '../engine/terminal/rack-board-logic.ts';
 import {
     DEFAULT_RENDER_OPTIONS,
     MAX_TERMINAL_FONT_SIZE,
@@ -395,7 +395,7 @@ function dot_title(row: RackRow): string {
  * that message keeps meaning exactly one thing: the bridge was asked and did
  * not answer. Anything here means it was never asked at all.
  *
- * The heading words match `fleet-board-logic.ts::local_access_view` on purpose:
+ * The heading words match `rack-board-logic.ts::local_access_view` on purpose:
  * a board and the rack may sit side by side, and an operator must not read them
  * as two different problems.
  *
@@ -453,7 +453,7 @@ const metric_recorder = create_rack_metric_recorder({
             && open_work_mark_kind(state, row.open_work ? true : null, false, row.open_work ?? {}) === 'warning';
         return { session: row?.session ?? null, state,
             mark: done ? 'done' : open ? 'open' : state === 'background' ? 'background' : state === 'done' ? 'reply' : 'none',
-            fleet_size: data?.sessions.filter(item => item.live).length ?? 0,
+            rack_size: data?.sessions.filter(item => item.live).length ?? 0,
             context_left: row?.context_left ?? null,
             model: row?.model_label?.slice(0, 160) ?? null, profile: row?.profile?.slice(0, 80) ?? null };
     },
@@ -2671,7 +2671,7 @@ onUnmounted(() => {
     padding: 0;
     overflow-y: auto;
     flex: 1 1 auto;
-    /* Without it a flex item never shrinks below its content, so a long fleet
+    /* Without it a flex item never shrinks below its content, so a long rack
        overflowed the clipped `.rack` instead of scrolling inside the list. */
     min-height: 0;
     /* The ledger: mark · name · ctx · (profile). Session rows are subgrids, so
@@ -2694,7 +2694,7 @@ onUnmounted(() => {
 .rack__list--emoji { --rack-mark-w: 22px; }
 
 /* ↺ CLOSED: under the head, above LAUNCH — the undo sits next to where you look
-   first. Capped so a long list scrolls instead of pushing the fleet off. */
+   first. Capped so a long list scrolls instead of pushing the rack off. */
 .rack__closed { flex: 0 0 auto; max-height: 30%; overflow-y: auto; padding: 0 6px; }
 .rack__closed-note { margin: 0; font-size: 12px; opacity: 0.6; }
 .rack__closed-head { display: flex; align-items: center; gap: 8px; padding: 6px 6px 2px; font-weight: 700; font-size: 12px; }
@@ -2734,7 +2734,7 @@ onUnmounted(() => {
 .closed__ago { opacity: 0.55; font-size: 11.5px; font-variant-numeric: tabular-nums; }
 
 /* DEVICES: pinned under the list (the list is the flex-grow item), so it sits
-   in the space a short fleet leaves empty and never pushes a session off. */
+   in the space a short rack leaves empty and never pushes a session off. */
 .rack__devices { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; }
 /* The cohort header's look (`.row--cohort`), as a button: it opens and closes. MISSIONS wears it
    too, so the two sections under the list read as one band. */

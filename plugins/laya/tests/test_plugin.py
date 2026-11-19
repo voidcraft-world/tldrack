@@ -23,7 +23,7 @@ from laya_bridge.plugin import LayaPlugin
 from laya_bridge.runtime import LayaRuntime
 from laya_bridge.wire import WireError, clean_request
 
-KNOWN = frozenset({"english", "multilingual", "voidcraft-paste"})
+KNOWN = frozenset({"english", "multilingual", "tldrack-paste"})
 
 
 def question(qtype="noul", **extra):
@@ -60,7 +60,7 @@ def test_clean_request_keeps_only_documented_fields():
         ({"state": "x", "questions": {"a": question("noul", criteria={"y": "yes"})}}, "no criteria"),
         ({"state": "x" * 64_001, "questions": {"a": question()}}, "over"),
         ({"state": "x", "questions": {"a": question()}, "model": "convaiinnovations/other"}, "not served"),
-        ({"state": "x", "questions": {"a": question()}, "model": "voidcraft-mail"}, "not served"),
+        ({"state": "x", "questions": {"a": question()}, "model": "tldrack-mail"}, "not served"),
         ({"state": "x", "questions": {"a": question("choice", criteria={"o" * 81: "too long a name"})}}, "at most 80"),
         # 41 code points, 82 UTF-16 units: the ledger's `choice` is `.max(80)` as JavaScript counts it
         ({"state": "x", "questions": {"a": question("choice", criteria={"😀" * 41: "an emoji name"})}}, "at most 80"),
@@ -73,8 +73,7 @@ def test_clean_request_refuses(body, fragment):
 
 def test_clean_request_passes_a_registered_model():
     assert (
-        clean_request({"state": "x", "questions": {"a": question()}, "model": "voidcraft-paste"}, KNOWN)["model"]
-        == "voidcraft-paste"
+        clean_request({"state": "x", "questions": {"a": question()}, "model": "tldrack-paste"}, KNOWN)["model"] == "tldrack-paste"
     )
 
 
@@ -96,16 +95,16 @@ def test_extra_models_resolve_inside_params_only(tmp_path):
     write_models(
         params,
         {
-            "voidcraft-paste": {"path": "checkpoints/paste-1"},
-            "voidcraft-sneaky": {"path": "checkpoints/sneaky"},
-            "voidcraft-dotdot": {"path": "../elsewhere"},
+            "tldrack-paste": {"path": "checkpoints/paste-1"},
+            "tldrack-sneaky": {"path": "checkpoints/sneaky"},
+            "tldrack-dotdot": {"path": "../elsewhere"},
             "english": {"path": "checkpoints/paste-1"},
             "Bad Name": {"path": "checkpoints/paste-1"},
-            "voidcraft-missing": {"path": "checkpoints/nope"},
+            "tldrack-missing": {"path": "checkpoints/nope"},
         },
     )
     env = {paths.DATA_ENV: str(params), paths.CONFIG_ENV: str(tmp_path / "config")}
-    assert read_extra_models(env) == {"voidcraft-paste": str(good.resolve())}
+    assert read_extra_models(env) == {"tldrack-paste": str(good.resolve())}
 
 
 @pytest.mark.parametrize("data", ["relative/path", "/definitely/not/here"])
@@ -250,7 +249,7 @@ def test_cold_decide_warms_then_answers_then_idles_out(runtime_dir, tree):
     runtime = LayaRuntime(
         runtime_dir=runtime_dir,
         idle_stop_seconds=60,
-        extra_models=lambda: {"voidcraft-agent-open-work": str(checkpoint)},
+        extra_models=lambda: {"tldrack-agent-open-work": str(checkpoint)},
         registry=lambda: registry_view(tree.base),
     )
     plugin = LayaPlugin(context=None, runtime=runtime, params_dir=lambda: tree.base)
@@ -264,12 +263,12 @@ def test_cold_decide_warms_then_answers_then_idles_out(runtime_dir, tree):
         assert status == 200, payload
         assert payload["answers"]["todo"]["noul"] == 0.8
         assert payload["decision_id"] and payload["model_id"] == "laya-local/english@55cf4c4" and payload["checkpoint"] is None
-        status, pinned = plugin.handle_post("/decide", {}, {**body, "model": "voidcraft-agent-open-work"})
+        status, pinned = plugin.handle_post("/decide", {}, {**body, "model": "tldrack-agent-open-work"})
         assert status == 200 and pinned["checkpoint"] == checkpoint.name, "a basename, never a path"
-        assert pinned["model_id"] == f"laya-local/voidcraft-agent-open-work@{checkpoint.name}"
+        assert pinned["model_id"] == f"laya-local/tldrack-agent-open-work@{checkpoint.name}"
         [first, second] = [json.loads(line) for line in (tree.base / "ledger" / "untagged.jsonl").read_text().splitlines()]
         assert (first["model"], first["checkpoint_path"]) == ("english", None)
-        assert (second["model"], second["checkpoint_path"]) == ("voidcraft-agent-open-work", f"checkpoints/{checkpoint.name}")
+        assert (second["model"], second["checkpoint_path"]) == ("tldrack-agent-open-work", f"checkpoints/{checkpoint.name}")
         assert first["state"] is None, "untagged is hash-only"
         plugin.handle_post("/decide", {}, body)
         third = json.loads((tree.base / "ledger" / "untagged.jsonl").read_text().splitlines()[-1])
@@ -281,8 +280,12 @@ def test_cold_decide_warms_then_answers_then_idles_out(runtime_dir, tree):
         assert status_body["device"] == "fake"
         assert status_body["model_ids"] == {
             "english": "laya-local/english@55cf4c4",
-            "voidcraft-agent-open-work": f"laya-local/voidcraft-agent-open-work@{checkpoint.name}",
+            "tldrack-agent-open-work": f"laya-local/tldrack-agent-open-work@{checkpoint.name}",
         }
+
+        # Legacy (step 6.8): a caller that still pins the old name is served the same fine-tune.
+        status, legacy = plugin.handle_post("/decide", {}, {**body, "model": "voidcraft-agent-open-work"})
+        assert status == 200 and legacy["checkpoint"] == checkpoint.name, legacy
 
         # Not idle yet → kept; past the idle window → stopped, and the next decide warms again.
         assert runtime.reap_if_idle() is False
@@ -371,8 +374,8 @@ def test_status_carries_a_swept_done_cut(runtime_dir, tree):
         thresholds={
             "agent_open_work": lab_files.threshold_entry(
                 0.7,
-                "voidcraft-agent-open-work",
-                "voidcraft-agent-open-work-20260102-0304",
+                "tldrack-agent-open-work",
+                "tldrack-agent-open-work-20260102-0304",
                 "2026-10-27T01:00:00Z",
                 "operator",
                 48,
@@ -383,9 +386,7 @@ def test_status_carries_a_swept_done_cut(runtime_dir, tree):
         }
     )
     runtime = LayaRuntime(runtime_dir=runtime_dir, idle_stop_seconds=60, registry=lambda: registry_view(tree.base))
-    assert runtime.status()["thresholds"] == {
-        "agent_open_work": {"at": 0.7, "model": "voidcraft-agent-open-work", "done_at": 0.3}
-    }
+    assert runtime.status()["thresholds"] == {"agent_open_work": {"at": 0.7, "model": "tldrack-agent-open-work", "done_at": 0.3}}
 
 
 def test_status_keeps_a_swept_cut_only_for_the_loaded_checkpoint(runtime_dir, tree):
@@ -393,8 +394,8 @@ def test_status_keeps_a_swept_cut_only_for_the_loaded_checkpoint(runtime_dir, tr
         thresholds={
             "agent_open_work": lab_files.threshold_entry(
                 0.62,
-                "voidcraft-agent-open-work",
-                "voidcraft-agent-open-work-20260102-0304",
+                "tldrack-agent-open-work",
+                "tldrack-agent-open-work-20260102-0304",
                 "2026-10-27T01:00:00Z",
                 "operator",
                 48,
@@ -403,24 +404,24 @@ def test_status_keeps_a_swept_cut_only_for_the_loaded_checkpoint(runtime_dir, tr
             )
         }
     )
-    other = tree.path("checkpoints/voidcraft-agent-open-work-20261101-0000")
+    other = tree.path("checkpoints/tldrack-agent-open-work-20261101-0000")
     other.mkdir()
-    loaded = {"voidcraft-agent-open-work": str(other.resolve())}
+    loaded = {"tldrack-agent-open-work": str(other.resolve())}
     runtime = LayaRuntime(
         runtime_dir=runtime_dir,
         idle_stop_seconds=60,
         extra_models=lambda: dict(loaded),
         registry=lambda: registry_view(tree.base),
     )
-    assert runtime.status()["thresholds"] == {"agent_open_work": {"at": 0.62, "model": "voidcraft-agent-open-work"}}, (
+    assert runtime.status()["thresholds"] == {"agent_open_work": {"at": 0.62, "model": "tldrack-agent-open-work"}}, (
         "not running: the registered checkpoint is the one the cut was swept on"
     )
     try:
         runtime.ensure_started()
         wait_for(runtime, "ready")
         assert runtime.loaded() == loaded and runtime.status()["thresholds"] == {}
-        assert runtime.served_identity("voidcraft-agent-open-work") == (
-            "laya-local/voidcraft-agent-open-work@voidcraft-agent-open-work-20261101-0000",
+        assert runtime.served_identity("tldrack-agent-open-work") == (
+            "laya-local/tldrack-agent-open-work@tldrack-agent-open-work-20261101-0000",
             str(other.resolve()),
         )
         assert runtime.served_identity("english") == ("laya-local/english@55cf4c4", None)
@@ -482,12 +483,12 @@ def test_the_status_lines_say_the_base_model_is_serving_and_how_far_a_first_fine
                 "ready": True,
                 "base": install.BASE_REPO,
                 "base_only": False,
-                "fine_tunes": ["voidcraft-agent-open-work"],
+                "fine_tunes": ["tldrack-agent-open-work"],
                 "first_fine_tune": {},
             },
         }
     )
-    assert served[1] == "serving: voidcraft-agent-open-work over the base model convaiinnovations/laya"
+    assert served[1] == "serving: tldrack-agent-open-work over the base model convaiinnovations/laya"
 
 
 def test_mount_tightens_operator_file_modes(tree):

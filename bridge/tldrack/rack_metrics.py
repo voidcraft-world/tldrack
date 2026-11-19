@@ -52,7 +52,7 @@ EVENT_FIELDS = {
     "source",
     "reselect",
     "duration_ms",
-    "fleet_size",
+    "rack_size",
     "context_left",
     "model",
     "profile",
@@ -109,7 +109,14 @@ def _number(value: object, lo: float, hi: float, *, integer: bool = False) -> bo
     return type(value) in (int, float) and math.isfinite(value) and lo <= value <= hi and (not integer or int(value) == value)
 
 
+#: Legacy (step 6.8): `rack_size` was `fleet_size` before 0.1.0, in an event a page one release behind posts and in
+#: the column of an older file (`RackMetrics._db` renames it in place).
+LEGACY_EVENT_FIELDS = {"fleet_size": "rack_size"}
+
+
 def validate_event(raw: object, now_ms: int) -> dict:
+    if isinstance(raw, dict) and not set(raw) & set(LEGACY_EVENT_FIELDS.values()):
+        raw = {LEGACY_EVENT_FIELDS.get(key, key): value for key, value in raw.items()}
     if not isinstance(raw, dict) or set(raw) != EVENT_FIELDS:
         raise ValueError("Invalid metric fields")
     try:
@@ -136,7 +143,7 @@ def validate_event(raw: object, now_ms: int) -> dict:
     if (
         type(raw["reselect"]) is not bool
         or not _number(raw["duration_ms"], 0, 20_000, integer=True)
-        or not _number(raw["fleet_size"], 0, 10_000, integer=True)
+        or not _number(raw["rack_size"], 0, 10_000, integer=True)
         or (raw["context_left"] is not None and not _number(raw["context_left"], 0, 100))
     ):
         raise ValueError("Invalid metric measurement")
@@ -178,6 +185,7 @@ class RackMetrics:
     def __init__(self, path: Path, *, clock: Callable[[], float] = time.time):
         self.path = path
         self.clock = clock
+        self._renamed = False
 
     @contextmanager
     def _db(self):
@@ -196,7 +204,7 @@ class RackMetrics:
                     client TEXT NOT NULL, kind TEXT NOT NULL, session TEXT, session_key TEXT,
                     identified INTEGER NOT NULL, state TEXT NOT NULL, mark TEXT NOT NULL,
                     action TEXT NOT NULL, source TEXT NOT NULL, reselect INTEGER NOT NULL,
-                    duration_ms INTEGER NOT NULL, fleet_size INTEGER NOT NULL,
+                    duration_ms INTEGER NOT NULL, rack_size INTEGER NOT NULL,
                     context_left REAL, model TEXT, profile TEXT, version INTEGER NOT NULL DEFAULT 1
                 );
                 CREATE INDEX IF NOT EXISTS events_at ON events(at);
@@ -210,6 +218,12 @@ class RackMetrics:
                 CREATE INDEX IF NOT EXISTS signals_at ON signals(at);
                 INSERT OR IGNORE INTO settings VALUES ('enabled', '1');
             """)
+            if not self._renamed:
+                columns = {row[1] for row in db.execute("PRAGMA table_info(events)")}
+                for old, new in LEGACY_EVENT_FIELDS.items():
+                    if old in columns and new not in columns:
+                        db.execute(f"ALTER TABLE events RENAME COLUMN {old} TO {new}")
+                self._renamed = True
             for suffix in ("-wal", "-shm"):
                 side = Path(str(self.path) + suffix)
                 if side.exists():
@@ -244,7 +258,7 @@ class RackMetrics:
                 event["source"],
                 int(event["reselect"]),
                 event["duration_ms"],
-                event["fleet_size"],
+                event["rack_size"],
                 event["context_left"],
                 event["model"],
                 event["profile"],

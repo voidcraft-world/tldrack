@@ -6,7 +6,7 @@ from tldrack.icons import ICON_TOKEN_RE, SessionIconStore, parse_icon_file, seri
 
 
 def test_parse_serialize_round_trip():
-    icons = {"voidcraft": "flame", "research": "wrench.and.screwdriver"}
+    icons = {"tldrack": "flame", "research": "wrench.and.screwdriver"}
     assert parse_icon_file(serialize_icon_file(icons)) == icons
 
 
@@ -52,17 +52,17 @@ def test_store_set_get_persist(tmp_path):
     path = tmp_path / "session-icons.json"
     store = SessionIconStore(path)
     assert store.get_all() == {}
-    store.set("voidcraft", "flame")
-    assert store.get_all() == {"voidcraft": "flame"}
+    store.set("tldrack", "flame")
+    assert store.get_all() == {"tldrack": "flame"}
     # A fresh store re-reads what the first one persisted.
-    assert SessionIconStore(path).get_all() == {"voidcraft": "flame"}
+    assert SessionIconStore(path).get_all() == {"tldrack": "flame"}
 
 
 def test_store_set_none_deletes(tmp_path):
     path = tmp_path / "session-icons.json"
     store = SessionIconStore(path)
-    store.set("voidcraft", "flame")
-    store.set("voidcraft", None)
+    store.set("tldrack", "flame")
+    store.set("tldrack", None)
     assert store.get_all() == {}
     assert SessionIconStore(path).get_all() == {}
 
@@ -89,16 +89,16 @@ def test_store_corrupt_file_tolerated_not_clobbered(tmp_path, capsys):
 
 def test_store_creates_parent_dirs(tmp_path):
     path = tmp_path / "deep" / "nested" / "session-icons.json"
-    SessionIconStore(path).set("voidcraft", "star")
-    assert json.loads(path.read_text())["icons"] == {"voidcraft": "star"}
+    SessionIconStore(path).set("tldrack", "star")
+    assert json.loads(path.read_text())["icons"] == {"tldrack": "star"}
 
 
 def test_store_get_all_returns_copy(tmp_path):
     store = SessionIconStore(tmp_path / "session-icons.json")
-    store.set("voidcraft", "flame")
+    store.set("tldrack", "flame")
     snapshot = store.get_all()
-    snapshot["voidcraft"] = "mutated"
-    assert store.get_all() == {"voidcraft": "flame"}
+    snapshot["tldrack"] = "mutated"
+    assert store.get_all() == {"tldrack": "flame"}
 
 
 # ── rename ──────────────────────────────────────────────────────────────────

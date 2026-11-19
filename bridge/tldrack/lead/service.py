@@ -30,11 +30,11 @@ from tldrack.attention import running_descendants
 from tldrack.inbox import Inbox, InboxError
 from tldrack.lead import brief
 from tldrack.lead.close import CloseFacts, decide_close, publication, tree_clean
-from tldrack.lead.models import LeadModels, pair_error
+from tldrack.lead.models import LeadModels, pair_error, renamed
 from tldrack.lead.names import lead_name
 from tldrack.lead.runs import FINAL, SPAWNABLE, LeadError, LeadRuns, branch_for, deps_met, next_actions
 from tldrack.lead.subscription import SubscriptionGate
-from tldrack.lead.watcher import TICK_SECONDS, crew_facts, observe
+from tldrack.lead.watcher import TICK_SECONDS, worker_facts, observe
 from tldrack.pane_typist import UNSUBMITTED, PaneTypist
 
 BODY_MAX = 600 * 1024
@@ -67,15 +67,15 @@ EDIT_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "MultiEdit"})
 #: its parent's model. Why a capped lead may not use it: owned by lead/models.py — see the note there.
 AGENT_TOOLS = frozenset({"Agent", "Task"})
 FORK_TYPE = "fork"
-NO_PAIR = {"model": None, "crew_model": None}
-CREW_STAGES = ("research", "implement", "validate", "blocked", "failed")
+NO_PAIR = {"model": None, "worker_model": None}
+WORKER_STAGES = ("research", "implement", "validate", "blocked", "failed")
 SHA_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,200}")
 GIT_TIMEOUT = 30
 #: Every worker, Claude or Codex, starts in the CLI's automatic-approval mode, so the operator never
 #: switches one by hand. What it means per CLI: owned by `tldrack/profiles.py`
 #: `PERMISSION_ARGS` — see the note there.
-CREW_PERMISSION_MODE = "auto"
+WORKER_PERMISSION_MODE = "auto"
 #: A queued line held this long shows on its step's `lead status` line (a flush is every 5 s).
 WAITING_SHOWN_SECONDS = 60.0
 
@@ -160,9 +160,9 @@ class LeadService:
             run = self.runs.run(run["id"])
         return row, run
 
-    def _crew(self, caller: str | None, live: Mapping[str, dict]) -> tuple[dict, dict, dict]:
+    def _worker(self, caller: str | None, live: Mapping[str, dict]) -> tuple[dict, dict, dict]:
         row = self._caller(caller, live)
-        step = self.runs.crew_step(caller, self._identity(row))
+        step = self.runs.worker_step(caller, self._identity(row))
         if step is None:
             raise LeadError(f"'{caller}' is not a worker on an open LEAD run", 403)
         return row, self.runs.run(step["run_id"]), step
@@ -225,7 +225,7 @@ class LeadService:
         return self.models.pair() if self.models is not None else dict(NO_PAIR)
 
     def verb_models(self, payload: Mapping[str, Any], caller: str | None) -> tuple[int, dict]:
-        """`POST /lead/models {model?, crew_model?}` — the operator's standing pair (lead/models.py).
+        """`POST /lead/models {model?, worker_model?}` — the operator's standing pair (lead/models.py).
         Refused from a rack pane: an agent does not pick its own worker's model. A label, like every
         caller check here (see the module docstring)."""
         if caller is not None:
@@ -239,10 +239,11 @@ class LeadService:
         return 200, {"ok": True, **pair}
 
     def verb_launch(self, payload: Mapping[str, Any], _caller: str | None) -> tuple[int, dict]:
-        """`POST /lead/launch {profile, resume?, model?, crew_model?}` — a new LEAD (or a fresh one
+        """`POST /lead/launch {profile, resume?, model?, worker_model?}` — a new LEAD (or a fresh one
         for a run whose lead is gone). Always a Claude subscription, decided 2026-11-04
         (like AUTO, a LEAD may run on any Claude subscription). The model pair: a
         RESUME takes its run's, a new lead the request's keys over the standing pair (lead/models.py)."""
+        payload = renamed(payload)  # a legacy `crew_model` key (lead/models.py, step 6.8)
         wanted = payload.get("profile")
         if not isinstance(wanted, str) or not wanted:
             raise LeadError('profile is required ("auto" or a Claude profile id)')
@@ -267,15 +268,15 @@ class LeadService:
         else:
             lineage = self.bridge.prepare_lineage()
         if run is not None:
-            pair = {"model": run.get("lead_model"), "crew_model": run.get("crew_model")}
+            pair = {"model": run.get("lead_model"), "worker_model": run.get("worker_model")}
         else:
-            pair = {**self._pair(), **{k: payload[k] for k in ("model", "crew_model") if k in payload}}
-        refusal = pair_error(pair["model"], pair["crew_model"]) or self.bridge.model_refusal(
-            profile, pair["model"], pair["crew_model"]
+            pair = {**self._pair(), **{k: payload[k] for k in ("model", "worker_model") if k in payload}}
+        refusal = pair_error(pair["model"], pair["worker_model"]) or self.bridge.model_refusal(
+            profile, pair["model"], pair["worker_model"]
         )
         if refusal:
             raise LeadError(refusal)
-        models = {key: value for key, value in (("model", pair["model"]), ("subagent_model", pair["crew_model"])) if value}
+        models = {key: value for key, value in (("model", pair["model"]), ("subagent_model", pair["worker_model"])) if value}
         name = lead_name(profile, self._clock(), live)
         status, body = self.bridge.spawn(name, profile, brief.launch_prompt(run["id"] if run else None), lineage, **models)
         if status >= 400:
@@ -323,7 +324,7 @@ class LeadService:
             resolved=view["resolved"],
             events=events,
             actions=view["next"],
-            crew_live=view["crew_live"],
+            worker_live=view["worker_live"],
         )
         return 200, {"ok": True, "run": run["id"], "text": text, "next": view["next"]}
 
@@ -333,21 +334,21 @@ class LeadService:
         parked = self.inbox.parked_steps(run["id"])
         decisions = self.inbox.open_rows(run["id"])
         parked_by = {s: [d["key"] for d in decisions if d["blocking"] and s in d["steps"]] for s in parked}
-        crew_rows = {s["step_id"]: self._crew_row(s, live) for s in steps}
+        worker_rows = {s["step_id"]: self._worker_row(s, live) for s in steps}
         waiting = self._waiting()
         lines = [
             brief.step_line(
                 s,
-                crew_state=(crew_rows[s["step_id"]] or {}).get("state"),
+                worker_state=(worker_rows[s["step_id"]] or {}).get("state"),
                 worker=workers.get(s.get("branch") or "") or {},
                 parked_by=parked_by.get(s["step_id"], []),
-                waiting=waiting.get(s.get("crew_session") or ""),
+                waiting=waiting.get(s.get("worker_session") or ""),
             )
             for s in steps
         ]
         questions = self.runs.questions(run["id"])
-        actions = next_actions(run, steps, live=crew_rows, workers=workers, parked=parked, questions=questions)
-        crew_live = sum(1 for s in steps if crew_rows[s["step_id"]] is not None or s["state"] == "spawning")
+        actions = next_actions(run, steps, live=worker_rows, workers=workers, parked=parked, questions=questions)
+        worker_live = sum(1 for s in steps if worker_rows[s["step_id"]] is not None or s["state"] == "spawning")
         return {
             "steps": steps,
             "workers": workers,
@@ -356,8 +357,8 @@ class LeadService:
             "decisions": decisions,
             "resolved": self.inbox.resolved_rows(run["id"]),
             "next": actions,
-            "crew_live": crew_live,
-            "crew_rows": crew_rows,
+            "worker_live": worker_live,
+            "worker_rows": worker_rows,
             "parked": parked,
         }
 
@@ -372,11 +373,11 @@ class LeadService:
                 out[item["session"]] = {**item, "age": age}
         return out
 
-    def _crew_row(self, step: Mapping, live: Mapping[str, dict]) -> dict | None:
-        row = live.get(step.get("crew_session") or "")
+    def _worker_row(self, step: Mapping, live: Mapping[str, dict]) -> dict | None:
+        row = live.get(step.get("worker_session") or "")
         if row is None or step["state"] in FINAL:
             return None
-        if step.get("crew_lineage") and self._identity(row) != step["crew_lineage"]:
+        if step.get("worker_lineage") and self._identity(row) != step["worker_lineage"]:
             return None  # the name came back on another agent
         return row
 
@@ -403,7 +404,7 @@ class LeadService:
             parallel_max=payload.get("parallel", 3),
             # The pair this lead was LAUNCHED with, read off its own stamps.
             lead_model=row.get("launch_model"),
-            crew_model=row.get("subagent_model"),
+            worker_model=row.get("subagent_model"),
         )
         self._refresh_roles(live)
         # The title is what the lead is about, so it names the rack row (lead/names.py owns why a label).
@@ -441,8 +442,8 @@ class LeadService:
             raise LeadError(f"{step['step_id']} already has work: use `spawn {step['step_id']} --follow-up`", 409)
         if mode == "fresh" and follow_up:
             follow_up = False
-        if self._crew_row(step, live) is not None:
-            raise LeadError(f"{step['step_id']} has a live worker ({step['crew_session']}): `lead tell` it instead", 409)
+        if self._worker_row(step, live) is not None:
+            raise LeadError(f"{step['step_id']} has a live worker ({step['worker_session']}): `lead tell` it instead", 409)
         if step["step_id"] in self.inbox.parked_steps(run["id"]):
             raise LeadError(f"{step['step_id']} is parked by a blocking decision", 409)
         groups = self._groups()
@@ -452,10 +453,10 @@ class LeadService:
             merged = {s["step_id"] for s in steps if (workers.get(s.get("branch") or "") or {}).get("pr_state") == "merged"}
             if not deps_met(step, {s["step_id"]: s for s in steps}, merged):
                 raise LeadError(f"{step['step_id']} waits for {', '.join(step['after'])}", 409)
-        crew_live = sum(1 for s in steps if self._crew_row(s, live) is not None or s["state"] == "spawning")
-        if crew_live >= run["parallel_max"]:
-            raise LeadError(f"{crew_live} workers are live (cap {run['parallel_max']}); close one first", 429)
-        kind = "ladder_step" if step["kind"] == "ship" else "scout"
+        worker_live = sum(1 for s in steps if self._worker_row(s, live) is not None or s["state"] == "spawning")
+        if worker_live >= run["parallel_max"]:
+            raise LeadError(f"{worker_live} workers are live (cap {run['parallel_max']}); close one first", 429)
+        kind = "ladder_step" if step["kind"] == "change" else "report"
         profile, why = routing.resolve(self._routing(), kind, step["lane"], self.bridge.summaries(), self.bridge.ranked())
         if profile is None:
             return self._route_wait(run, step, why)
@@ -463,9 +464,9 @@ class LeadService:
         if refusal:
             return self._route_wait(run, step, refusal)
         # A Claude worker runs the run's worker model (lead/models.py); a Codex worker its profile's own.
-        crew_model = run.get("crew_model") if self.bridge.kind_of(profile) == "claude" else None
-        if crew_model:
-            refusal = self.bridge.model_refusal(profile, crew_model)
+        worker_model = run.get("worker_model") if self.bridge.kind_of(profile) == "claude" else None
+        if worker_model:
+            refusal = self.bridge.model_refusal(profile, worker_model)
             if refusal:
                 return self._route_wait(run, step, refusal)
         status, state = self._wt("GET", "/state")
@@ -473,15 +474,15 @@ class LeadService:
         if not (
             caps.get("task_group_modes")
             and caps.get("create_respawn")
-            and CREW_PERMISSION_MODE in (caps.get("permission_modes") or ())
-            and (caps.get("launch_models") or not crew_model)
+            and WORKER_PERMISSION_MODE in (caps.get("permission_modes") or ())
+            and (caps.get("launch_models") or not worker_model)
         ):
             raise LeadError("the worktree plugin is too old for a LEAD run; restart the bridge", 503)
         branch = branch_for(run["id"], step["step_id"])
         # A retry after a failed start reuses the tree it already made: /create refuses a branch twice.
         reuse = follow_up or branch in self._trees()
         base = None if reuse else self._origin_main()
-        if step["kind"] == "ship" and not run.get("group_id"):
+        if step["kind"] == "change" and not run.get("group_id"):
             run = self._ensure_group(run, base or self._origin_main())
         session = f"wt-{branch.replace('/', '-')}"
         self.runs.note_spawn(
@@ -493,7 +494,7 @@ class LeadService:
             profile=profile,
             follow_up=follow_up,
         )
-        if step["kind"] == "ship" and branch not in workers:
+        if step["kind"] == "change" and branch not in workers:
             # `start_sha` is the commit this branch is cut from, so the PR's published-base check holds
             # it to origin/main at spawn, not to the group's first base (a later main may differ).
             join = {"id": run["group_id"], "branch": branch, "start_sha": base or run.get("start_sha")}
@@ -505,15 +506,15 @@ class LeadService:
             "branch": branch,
             "profile": profile,
             "parent_session": run["lead_session"],
-            "permission_mode": CREW_PERMISSION_MODE,
+            "permission_mode": WORKER_PERMISSION_MODE,
         }
         if reuse:
             request["existing"] = True
         else:
             request["base"] = base
-        if crew_model:
-            request["model"] = crew_model
-        prompt = brief.crew_prompt(run, step)
+        if worker_model:
+            request["model"] = worker_model
+        prompt = brief.worker_prompt(run, step)
         if cli == "claude":
             request["prompt"] = prompt
         # A respawn's new brief replaces any the last attempt never delivered, or both would go.
@@ -523,7 +524,7 @@ class LeadService:
             return self._spawn_failed(run, step, body.get("error") or f"worktree create answered {status}")
         session = body.get("session") or session
         if session != f"wt-{branch.replace('/', '-')}":
-            self.runs.update_step(run["id"], step["step_id"], crew_session=session)
+            self.runs.update_step(run["id"], step["step_id"], worker_session=session)
         if cli != "claude":
             # Unpinned: /create mints the worker's lineage in its job; `_pin_lines` pins it once seen.
             self.typist.queue(session, None, "brief", prompt)
@@ -582,14 +583,16 @@ class LeadService:
         text = " ".join(str(payload.get("text") or "").split())
         if not text:
             raise LeadError("tell needs text")
-        crew = self._crew_row(step, live)
-        if crew is None:
+        worker = self._worker_row(step, live)
+        if worker is None:
             raise LeadError(f"{step['step_id']} has no live worker; `spawn {step['step_id']} --follow-up` instead", 409)
         source = payload.get("from") if isinstance(payload.get("from"), str) else None
         qid = payload.get("question")
         if isinstance(qid, str) and qid:
             self.runs.settle_question(qid, state="resolved", resolution=text[:1000], source=source)
-        self.typist.queue(step["crew_session"], self._identity(crew), "tell", brief.tell_line(run, step["step_id"], text, source))
+        self.typist.queue(
+            step["worker_session"], self._identity(worker), "tell", brief.tell_line(run, step["step_id"], text, source)
+        )
         if step["state"] == "reopened":
             self.runs.update_step(run["id"], step["step_id"], state="working", expect=("reopened",))
         self.runs.event(run["id"], "told", step["step_id"], {"question": qid, "from": source})
@@ -638,11 +641,11 @@ class LeadService:
             return 409, {"ok": False, "code": code, "error": why}
         killed = False
         if facts.live:
-            again = self._live().get(step["crew_session"])
-            if again is not None and self._identity(again) != step["crew_lineage"]:
-                return 409, {"ok": False, "code": "not_the_crew", "error": "the name changed hands mid-check"}
+            again = self._live().get(step["worker_session"])
+            if again is not None and self._identity(again) != step["worker_lineage"]:
+                return 409, {"ok": False, "code": "not_the_worker", "error": "the name changed hands mid-check"}
             if again is not None:
-                status, body = self.bridge.kill(step["crew_session"])
+                status, body = self.bridge.kill(step["worker_session"])
                 if status >= 400:
                     return 500, {"ok": False, "error": body.get("error") or "the kill failed"}
                 killed = bool(body.get("killed"))
@@ -659,9 +662,9 @@ class LeadService:
         return 200, {"ok": True, "step": step["step_id"], "killed": killed}
 
     def close_facts(self, run: Mapping, step: Mapping, live: Mapping[str, dict]) -> CloseFacts:
-        row = live.get(step.get("crew_session") or "")
+        row = live.get(step.get("worker_session") or "")
         lineage = (row or {}).get("lineage") or {}
-        children = running_descendants(live.values()).get(step.get("crew_session") or "", 0) if row else 0
+        children = running_descendants(live.values()).get(step.get("worker_session") or "", 0) if row else 0
         questions = [q["id"] for q in self.runs.questions(run["id"]) if q["step_id"] == step["step_id"]]
         questions += self.inbox.open_for_step(run["id"], step["step_id"])
         tree = self._trees().get(step.get("branch") or "") or {}
@@ -670,8 +673,8 @@ class LeadService:
             run_open=run["state"] == "open",
             step_known=True,
             kind=step["kind"],
-            crew_session=step.get("crew_session"),
-            recorded_lineage=step.get("crew_lineage"),
+            worker_session=step.get("worker_session"),
+            recorded_lineage=step.get("worker_lineage"),
             run_identity=run["lead_identity"],
             live_lineage=lineage.get("id"),
             live_parent=lineage.get("parent_id"),
@@ -681,7 +684,7 @@ class LeadService:
             children_running=children,
             tree_clean=tree_clean(path, self.bridge.git),
         )
-        if step["kind"] == "scout":
+        if step["kind"] == "report":
             facts.report_ok = self._report_ok(step)
             return facts
         worker = self._workers(run).get(step.get("branch") or "") or {}
@@ -705,7 +708,7 @@ class LeadService:
     def verb_peek(self, payload: Mapping[str, Any], caller: str | None) -> tuple[int, dict]:
         _, run = self._lead(caller, self._live())
         step = self.runs.step(run["id"], str(payload.get("step")))
-        text = self.bridge.closing(step["crew_session"]) if step.get("crew_session") else None
+        text = self.bridge.closing(step["worker_session"]) if step.get("worker_session") else None
         return 200, {
             "ok": True,
             "step": step["step_id"],
@@ -719,7 +722,7 @@ class LeadService:
         step = self.runs.step(run["id"], str(payload.get("step")))
         if step["state"] in FINAL:
             raise LeadError(f"{step['step_id']} is already {step['state']}", 409)
-        if self._crew_row(step, live) is not None:
+        if self._worker_row(step, live) is not None:
             raise LeadError(f"{step['step_id']}'s worker is live: close it (or let it finish) first", 409)
         reason = " ".join(str(payload.get("reason") or "").split())[:300]
         if not reason:
@@ -762,15 +765,15 @@ class LeadService:
         _, run = self._lead(caller, live)
         run = self.runs.set_cap(run["id"], payload.get("parallel"))
         steps = self.runs.steps(run["id"])
-        crew_live = sum(1 for s in steps if self._crew_row(s, live) is not None or s["state"] == "spawning")
-        return 200, {"ok": True, "run": run["id"], "parallel": run["parallel_max"], "crew_live": crew_live}
+        worker_live = sum(1 for s in steps if self._worker_row(s, live) is not None or s["state"] == "spawning")
+        return 200, {"ok": True, "run": run["id"], "parallel": run["parallel_max"], "worker_live": worker_live}
 
     def verb_brief(self, payload: Mapping[str, Any], caller: str | None) -> tuple[int, dict]:
-        _, run, step = self._crew(caller, self._live())
+        _, run, step = self._worker(caller, self._live())
         return 200, {"ok": True, "text": brief.brief_text(run, step, self.inbox.resolved_rows(run["id"]))}
 
     def verb_ask(self, payload: Mapping[str, Any], caller: str | None) -> tuple[int, dict]:
-        _, run, step = self._crew(caller, self._live())
+        _, run, step = self._worker(caller, self._live())
         blocking = payload.get("blocking")
         if not isinstance(blocking, bool):
             raise LeadError('--blocking, or --assume "what you do meanwhile"')
@@ -784,15 +787,15 @@ class LeadService:
         }
 
     def verb_progress(self, payload: Mapping[str, Any], caller: str | None) -> tuple[int, dict]:
-        _, run, step = self._crew(caller, self._live())
+        _, run, step = self._worker(caller, self._live())
         stage = payload.get("stage")
-        if stage not in CREW_STAGES:
-            raise LeadError(f"stage is one of {', '.join(CREW_STAGES)} (finish with `lead ready`)")
+        if stage not in WORKER_STAGES:
+            raise LeadError(f"stage is one of {', '.join(WORKER_STAGES)} (finish with `lead ready`)")
         return self._report_stage(run, step, {"stage": stage, "note": str(payload.get("note") or "")[:1000]})
 
     def verb_ready(self, payload: Mapping[str, Any], caller: str | None) -> tuple[int, dict]:
-        _, run, step = self._crew(caller, self._live())
-        if step["kind"] != "ship":
+        _, run, step = self._worker(caller, self._live())
+        if step["kind"] != "change":
             raise LeadError("a report step finishes with `tldrack lead report <file>`")
         head = payload.get("head")
         if not isinstance(head, str) or not SHA_RE.fullmatch(head):
@@ -809,8 +812,8 @@ class LeadService:
         return 200, {"ok": True, "stage": fields["stage"]}
 
     def verb_report(self, payload: Mapping[str, Any], caller: str | None) -> tuple[int, dict]:
-        _, run, step = self._crew(caller, self._live())
-        if step["kind"] != "scout":
+        _, run, step = self._worker(caller, self._live())
+        if step["kind"] != "report":
             raise LeadError("a change step finishes with `tldrack lead ready`")
         text = payload.get("text")
         if not isinstance(text, str):
@@ -838,8 +841,8 @@ class LeadService:
                         "lane": s["lane"],
                         "state": s["state"],
                         "parked": s["step_id"] in parked,
-                        "crew_session": s.get("crew_session"),
-                        "crew_live": self._crew_row(s, live) is not None,
+                        "worker_session": s.get("worker_session"),
+                        "worker_live": self._worker_row(s, live) is not None,
                         "profile": s.get("profile"),
                         "branch": s.get("branch"),
                         "pr_url": w.get("pr_url"),
@@ -859,7 +862,7 @@ class LeadService:
                     "created_at": run["created_at"],
                     "steps": steps,
                     "lead_model": run.get("lead_model"),
-                    "crew_model": run.get("crew_model"),
+                    "worker_model": run.get("worker_model"),
                     "decisions": self.inbox.open_rows(run["id"]),
                 }
             )
@@ -876,10 +879,10 @@ class LeadService:
                 roles[session] = ("lead", run["id"] if run else None)
         for run in runs.values():
             for s in self.runs.steps(run["id"]):
-                if s["state"] not in FINAL and s.get("crew_session") in live:
-                    row = live[s["crew_session"]]
-                    if s.get("crew_lineage") in (None, self._identity(row)):
-                        roles[s["crew_session"]] = ("crew", run["id"], s["step_id"])
+                if s["state"] not in FINAL and s.get("worker_session") in live:
+                    row = live[s["worker_session"]]
+                    if s.get("worker_lineage") in (None, self._identity(row)):
+                        roles[s["worker_session"]] = ("worker", run["id"], s["step_id"])
         capped = {session for session, role in roles.items() if role[0] == "lead" and live[session].get("subagent_model")}
         with self._lock:
             self._roles = roles
@@ -890,13 +893,15 @@ class LeadService:
             return self._roles.get(session)
 
     def row_fields(self, row: Mapping) -> dict:
-        """Additive /snapshot fields: `lead` on a lead row, `crew` on a worker row. Absent otherwise."""
+        """Additive /snapshot fields: `lead` on a lead row, `worker` on a worker row. Absent otherwise."""
         role = self.role_of(row.get("session") or "")
         if role is None:
             return {}
         if role[0] == "lead":
             return {"lead": {"run": role[1], "open_decisions": len(self.inbox.open_rows(role[1])) if role[1] else 0}}
-        return {"crew": {"run": role[1], "step": role[2]}}
+        worker = {"run": role[1], "step": role[2]}
+        # Legacy (step 6.8): the key was `crew` before 0.1.0. /snapshot is additive, so it is still written, for one release.
+        return {"worker": worker, "crew": dict(worker)}
 
     def hook_tool(self, session: str, payload: Mapping[str, Any]) -> dict | None:
         """PreToolUse on the http relay: a deny for a lead's edit, and a worker's AskUserQuestion turned
@@ -911,7 +916,7 @@ class LeadService:
             tool_input = payload.get("tool_input")
             if isinstance(tool_input, dict) and tool_input.get("subagent_type") == FORK_TYPE:
                 return _deny(brief.FORK_DENIAL)
-        if role[0] == "crew" and tool == "AskUserQuestion":
+        if role[0] == "worker" and tool == "AskUserQuestion":
             questions = (
                 (payload.get("tool_input") or {}).get("questions") if isinstance(payload.get("tool_input"), dict) else None
             )
@@ -931,7 +936,7 @@ class LeadService:
         role = self.role_of(session)
         if role is None:
             return None
-        return brief.lead_context(role[1]) if role[0] == "lead" else brief.crew_context(role[1], role[2])
+        return brief.lead_context(role[1]) if role[0] == "lead" else brief.worker_context(role[1], role[2])
 
     # ── the watcher ───────────────────────────────────────────────────────────
 
@@ -966,8 +971,8 @@ class LeadService:
         for step in self.runs.steps(run["id"]):
             if step["state"] in FINAL or step["state"] == "pending":
                 continue
-            row = live.get(step.get("crew_session") or "")
-            facts = crew_facts(row, workers.get(step.get("branch") or "") or {})
+            row = live.get(step.get("worker_session") or "")
+            facts = worker_facts(row, workers.get(step.get("branch") or "") or {})
             tree = trees.get(step.get("branch") or "") or {}
             error = tree.get("create_error") if tree.get("create_status") == "error" else None
             updates, events = observe(
@@ -990,23 +995,23 @@ class LeadService:
 
     def _pin_lines(self, runs: list[dict]) -> None:
         """Pin each unpinned queued line (a Codex worker's brief) to its worker, once `observe` has recorded
-        `crew_lineage`, which it takes only off a live row whose parent is the run's lead. A line whose
+        `worker_lineage`, which it takes only off a live row whose parent is the run's lead. A line whose
         session is no open step's worker any more is dropped: nobody it was meant for can appear."""
         unpinned = {item["session"] for item in self.typist.pending() if not item["lineage"]}
         if not unpinned:
             return
         steps = {
-            s["crew_session"]: s
+            s["worker_session"]: s
             for run in runs
             for s in self.runs.steps(run["id"])
-            if s.get("crew_session") in unpinned and s["state"] not in FINAL
+            if s.get("worker_session") in unpinned and s["state"] not in FINAL
         }
         for session in unpinned:
             step = steps.get(session)
             if step is None:
                 self.typist.drop_pending(session, "no open worker step", unpinned_only=True)
-            elif step.get("crew_lineage"):
-                self.typist.pin(session, step["crew_lineage"])
+            elif step.get("worker_lineage"):
+                self.typist.pin(session, step["worker_lineage"])
 
     def _cli_of(self, row: Mapping) -> str | None:
         return self.bridge.kind_of(row.get("profile")) if isinstance(row.get("profile"), str) else None

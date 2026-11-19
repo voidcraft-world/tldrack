@@ -37,7 +37,7 @@ export const OFFICE_STALE_MS = 15_000;
 const MAX_SESSIONS = 500;
 
 /** The rack's sessions, as the office reads it. */
-export interface OfficeFleet {
+export interface OfficeRack {
     sessions: RackSession[];
     resources?: OfficeResources;
     focused: string | null;
@@ -53,7 +53,7 @@ export type OfficeMessage =
     /** office → racks: focus this session in the live pane. */
     | { type: 'office:select'; session: string }
     /** rack → offices: the rack. */
-    | { type: 'office:fleet'; fleet: OfficeFleet };
+    | { type: 'office:rack'; rack: OfficeRack };
 
 const STATES: readonly TerminalDisplayState[] = ['busy', 'background', 'attention', 'free', 'unknown', 'done'];
 
@@ -139,19 +139,21 @@ export function parse_office_message(raw: unknown): OfficeMessage | null {
             const session = optional_string(message.session);
             return session ? { type: 'office:select', session } : null;
         }
-        case 'office:fleet': {
-            const fleet = message.fleet as Record<string, unknown> | null | undefined;
-            if (typeof fleet !== 'object' || fleet === null || !Array.isArray(fleet.sessions)) return null;
-            if (fleet.sessions.length > MAX_SESSIONS) return null;
-            const sessions = fleet.sessions.map(parse_office_session).filter((row): row is RackSession => row !== null);
-            const resources = parse_office_resources(fleet.resources);
+        // Legacy (step 6.8): a rack page one release behind relays `office:fleet` with the rack under `fleet`.
+        case 'office:fleet':
+        case 'office:rack': {
+            const rack = (message.type === 'office:rack' ? message.rack : message.fleet) as Record<string, unknown> | null | undefined;
+            if (typeof rack !== 'object' || rack === null || !Array.isArray(rack.sessions)) return null;
+            if (rack.sessions.length > MAX_SESSIONS) return null;
+            const sessions = rack.sessions.map(parse_office_session).filter((row): row is RackSession => row !== null);
+            const resources = parse_office_resources(rack.resources);
             return {
-                type: 'office:fleet',
-                fleet: {
+                type: 'office:rack',
+                rack: {
                     sessions,
-                    focused: optional_string(fleet.focused) ?? null,
-                    reachable: fleet.reachable !== false,
-                    frozen: fleet.frozen === true,
+                    focused: optional_string(rack.focused) ?? null,
+                    reachable: rack.reachable !== false,
+                    frozen: rack.frozen === true,
                     ...(resources ? { resources } : {}),
                 },
             };
@@ -171,7 +173,7 @@ export interface OfficeSource {
 }
 
 /** What a rack relays for its payload. */
-export function office_fleet(payload: OfficeSource): OfficeFleet {
+export function office_rack(payload: OfficeSource): OfficeRack {
     return {
         sessions: payload.sessions.map(office_session),
         focused: payload.focused,
@@ -205,7 +207,7 @@ export function create_office_relay(opts: {
     // The raw payload, projected only when relayed: a rack with no office open pays nothing.
     let last: OfficeSource | null = null;
     const relay = (): void => {
-        if (last && channel) channel.postMessage({ type: 'office:fleet', fleet: office_fleet(last) });
+        if (last && channel) channel.postMessage({ type: 'office:rack', rack: office_rack(last) });
     };
     if (channel) {
         channel.onmessage = (event) => {

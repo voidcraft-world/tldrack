@@ -80,7 +80,7 @@
     function hello(data) {
         if (window.parent === window || !parent_origin) return;
         window.parent.postMessage({
-            type: 'voidcraft-agent-canvas',
+            type: 'tldrack-agent-canvas',
             session,
             has_canvas: data.rev !== null,
             has_content: data.rev !== null || data.view === 'skills' || !!data.errors?.length || !!data.truncated,

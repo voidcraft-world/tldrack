@@ -151,14 +151,14 @@ def test_reopen_name_gives_up_rather_than_loop_forever():
     assert reopen_name("x", taken) is None
 
 
-def test_a_closed_crew_keeps_both_modes_and_a_bad_one_is_dropped(tmp_path):
+def test_a_closed_worker_keeps_both_modes_and_a_bad_one_is_dropped(tmp_path):
     path = tmp_path / "closed.json"
     store = ClosedSessionStore(path, clock=Clock())
-    crew = store.add("wt-lead-a", {**_record(), "launch_permission_mode": "auto", "live_permission_mode": "manual"}, "killed")
+    worker = store.add("wt-lead-a", {**_record(), "launch_permission_mode": "auto", "live_permission_mode": "manual"}, "killed")
     plain = store.add("vc-3", _record(sid=OTHER_SID), "killed")
     entries = dict(ClosedSessionStore(path, clock=Clock()).entries())
-    assert entries[crew]["launch_permission_mode"] == "auto"
-    assert entries[crew]["live_permission_mode"] == "manual"
+    assert entries[worker]["launch_permission_mode"] == "auto"
+    assert entries[worker]["live_permission_mode"] == "manual"
     assert not {"launch_permission_mode", "live_permission_mode"} & set(json.loads(path.read_text())["closed"][plain])
     forged = clean_entry({**_record(), "session": "vc-3", "closed_at": 1.0, "launch_permission_mode": "bypassPermissions"})
     assert "launch_permission_mode" not in forged

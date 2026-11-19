@@ -188,7 +188,7 @@ export type BenchSetResult = z.infer<typeof benchSetResultSchema>;
  * What the rack's live use looked like over the window, from the decision ledger: turn ends judged, the verdict each
  * drew, how many ⚠️ reached the operator, live latency and the next-step taken rate. Counts only.
  */
-export const benchFleetSchema = z.strictObject({
+export const benchRackSchema = z.strictObject({
   from: z.iso.date(),
   to: z.iso.date(),
   days: z.number().int().positive(),
@@ -199,9 +199,16 @@ export const benchFleetSchema = z.strictObject({
   latency: z.strictObject({ n: count, p50_ms: ms, p90_ms: ms }).nullable(),
   next_step: z.strictObject({ suggested: count, taken: count }).nullable(),
 });
-export type BenchFleet = z.infer<typeof benchFleetSchema>;
+export type BenchRack = z.infer<typeof benchRackSchema>;
 
-export const benchResultsSchema = z
+/** Legacy (step 6.8): the rack block was `fleet` before 0.1.0; a file written then reads as today's. */
+function renamed_rack_block(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || !('fleet' in raw) || 'rack' in raw) return raw;
+  const { fleet, ...rest } = raw as Record<string, unknown>;
+  return { ...rest, rack: fleet };
+}
+
+const benchResultsFields = z
   .strictObject({
     v: z.literal(BENCH_RESULTS_VERSION),
     /** Present and true only on invented numbers (`fixture.json`): the page says so on every panel. */
@@ -212,7 +219,7 @@ export const benchResultsSchema = z
     commit: z.string().regex(/^[0-9a-f]{40}$/).nullable(),
     voters: z.array(benchVoterSchema).min(1).max(BENCH_VOTERS_MAX),
     sets: z.array(benchSetResultSchema).min(1).max(BENCH_SETS.length),
-    fleet: benchFleetSchema.nullable(),
+    rack: benchRackSchema.nullable(),
     /** The one command that re-runs the public set, and which set it is. */
     reproduce: z.strictObject({ command: z.string().min(1).max(300), set: z.literal('golden') }),
   })
@@ -237,13 +244,14 @@ export const benchResultsSchema = z
         if (!names.has(score.voter)) ctx.addIssue({ code: 'custom', path: ['sets', i, 'scores', j, 'voter'], message: 'scores name a voter in this file' });
       });
     });
-    if (file.fleet) {
-      const { done, reply, open } = file.fleet.verdicts;
-      if (done + reply + open !== file.fleet.judged) ctx.addIssue({ code: 'custom', path: ['fleet', 'verdicts'], message: 'every judged turn drew one verdict' });
-      if (file.fleet.reached > open) ctx.addIssue({ code: 'custom', path: ['fleet', 'reached'], message: 'only an open verdict reaches the operator' });
+    if (file.rack) {
+      const { done, reply, open } = file.rack.verdicts;
+      if (done + reply + open !== file.rack.judged) ctx.addIssue({ code: 'custom', path: ['rack', 'verdicts'], message: 'every judged turn drew one verdict' });
+      if (file.rack.reached > open) ctx.addIssue({ code: 'custom', path: ['rack', 'reached'], message: 'only an open verdict reaches the operator' });
     }
   });
-export type BenchResults = z.infer<typeof benchResultsSchema>;
+export const benchResultsSchema = z.preprocess(renamed_rack_block, benchResultsFields);
+export type BenchResults = z.infer<typeof benchResultsFields>;
 
 /** The errors behind a ROC point on a set of `n` rows: false ⚠️ and missed open turns. */
 export function roc_counts(point: BenchRocPoint, n: { open: number; done: number }): { false_warnings: number; missed_open: number } {

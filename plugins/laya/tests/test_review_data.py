@@ -125,11 +125,9 @@ def test_disagree_needs_a_current_score(tree):
     tree.write_jsonl(
         "data/agent-open-work-laya-p.jsonl",
         [
-            lab_files.scores_row(keys[0], 0.2, "voidcraft-agent-open-work", current, 1, 0.7, "2026-10-27T00:00:00Z"),  # disagrees
-            lab_files.scores_row(keys[1], 0.9, "voidcraft-agent-open-work", current, 1, 0.7, "2026-10-27T00:00:00Z"),  # agrees
-            lab_files.scores_row(
-                keys[2], 0.1, "voidcraft-agent-open-work", "an-older-checkpoint", 1, 0.7, "2026-10-27T00:00:00Z"
-            ),
+            lab_files.scores_row(keys[0], 0.2, "tldrack-agent-open-work", current, 1, 0.7, "2026-10-27T00:00:00Z"),  # disagrees
+            lab_files.scores_row(keys[1], 0.9, "tldrack-agent-open-work", current, 1, 0.7, "2026-10-27T00:00:00Z"),  # agrees
+            lab_files.scores_row(keys[2], 0.1, "tldrack-agent-open-work", "an-older-checkpoint", 1, 0.7, "2026-10-27T00:00:00Z"),
         ],
     )
     found = strata(snap(tree))
@@ -138,7 +136,7 @@ def test_disagree_needs_a_current_score(tree):
     assert card["laya"] == {
         "p": 0.2,
         "threshold": 0.7,
-        "model": "voidcraft-agent-open-work",
+        "model": "tldrack-agent-open-work",
         "checkpoint": current,
         "question_version": 1,
         "source": "scores",
@@ -435,17 +433,17 @@ def test_held_out_is_true_false_or_unknown(tree):
     tree.register(train_texts=[trained_text])
     view = snap(tree)
     assert review_data.card(view, keys[0])["held_out"] is False and review_data.card(view, keys[1])["held_out"] is True
-    tree.path("checkpoints/voidcraft-agent-open-work-20261001-0000").mkdir()  # an OLD checkpoint with no record
+    tree.path("checkpoints/tldrack-agent-open-work-20261001-0000").mkdir()  # an OLD checkpoint with no record
     assert review_data.card(snap(tree), keys[1])["held_out"] is True, "only the served checkpoint's record decides"
-    tree.register(checkpoint="voidcraft-agent-open-work-20261020-0000", train_texts=None)  # served, no record
+    tree.register(checkpoint="tldrack-agent-open-work-20261020-0000", train_texts=None)  # served, no record
     assert review_data.card(snap(tree), keys[1])["held_out"] is None
 
 
 def test_loaded_wins_over_the_registry(tree):
     tree.register(train_texts=["x"])
-    assert review_data.served_model(tree.base, SURFACE).name == "voidcraft-agent-open-work"
+    assert review_data.served_model(tree.base, SURFACE).name == "tldrack-agent-open-work"
     assert review_data.served_model(tree.base, SURFACE, loaded={}).name == "english"
-    loaded = {"voidcraft-agent-open-work": str(tree.base / "checkpoints" / "elsewhere-1")}
+    loaded = {"tldrack-agent-open-work": str(tree.base / "checkpoints" / "elsewhere-1")}
     assert review_data.served_model(tree.base, SURFACE, loaded=loaded).basename == "elsewhere-1"
 
 
@@ -526,7 +524,7 @@ def test_below_twenty_pairs_there_is_no_interval_and_no_rate_without_its_minimum
 def test_answers_against_golden_or_laya_are_not_sonnet_pairs(tree):
     keys = tree.unlabelled(pick("g", "review-sample", True, 3))
     operator(tree, keys[0], against_open=True, by="golden")
-    operator(tree, keys[1], against_open=True, by="voidcraft-agent-open-work")
+    operator(tree, keys[1], against_open=True, by="tldrack-agent-open-work")
     operator(tree, keys[2], against_open=True, by="english")
     assert review_data.stats(snap(tree), tree.base, now=NOW)["operator_vs_sonnet"]["n"] == 0
 
@@ -628,22 +626,22 @@ def test_sweep_refuses_a_built_in(tree):
 
 def test_sweep_refuses_a_served_checkpoint_without_a_training_record(tree):
     labelled_tree(tree, 25, 15)
-    tree.register(checkpoint="voidcraft-agent-open-work-20261020-0000", train_texts=None)
+    tree.register(checkpoint="tldrack-agent-open-work-20261020-0000", train_texts=None)
     ready = review_data.sweep_readiness(tree.base, SURFACE)
     assert ready["ready"] is False
-    assert ready["reason"] == "checkpoint voidcraft-agent-open-work-20261020-0000 has no training record — retrain it"
+    assert ready["reason"] == "checkpoint tldrack-agent-open-work-20261020-0000 has no training record — retrain it"
 
 
 def test_an_old_unrecorded_checkpoint_never_blocks_a_sweep(tree):
     labelled_tree(tree, 25, 15)  # served: a checkpoint WITH its training record
-    tree.path("checkpoints/voidcraft-agent-open-work-20261001-0000").mkdir()  # retraining never removes this one
+    tree.path("checkpoints/tldrack-agent-open-work-20261001-0000").mkdir()  # retraining never removes this one
     ready = review_data.sweep_readiness(tree.base, SURFACE)
     assert ready["reason"] is None and ready["ready"] is True
 
 
 def test_a_served_folder_laya_lab_did_not_name_has_no_known_record(tree):
     labelled_tree(tree, 25, 15)
-    loaded = {"voidcraft-agent-open-work": str(tree.path("checkpoints/hand-copied"))}
+    loaded = {"tldrack-agent-open-work": str(tree.path("checkpoints/hand-copied"))}
     ready = review_data.sweep_readiness(tree.base, SURFACE, loaded=loaded)
     assert ready["reason"] == "checkpoint hand-copied has no training record — retrain it"
 

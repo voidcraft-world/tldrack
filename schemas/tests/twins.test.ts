@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import {
   DECIDE_SURFACE_NAME,
   LAYA_FINE_TUNE_PREFIX,
+  LAYA_LEGACY_FINE_TUNE_PREFIX,
   LAYA_LANDING_SURFACES,
   LAYA_LEDGER_KEEP_TEXT,
   LAYA_LEDGER_RACK_SURFACES,
@@ -56,6 +57,7 @@ describe('the Python twins', () => {
     assert.ok(surface, 'SURFACE_NAME is not a re.compile literal any more: update this pin');
     assert.equal(`^${surface[1]}$`, DECIDE_SURFACE_NAME.source);
     assert.equal(string(paths, 'FINE_TUNE_PREFIX'), LAYA_FINE_TUNE_PREFIX);
+    assert.equal(string(paths, 'LEGACY_FINE_TUNE_PREFIX'), LAYA_LEGACY_FINE_TUNE_PREFIX);
   });
 
   it('the verifier card repository: plugins/laya/laya_bridge/card_files.py', () => {

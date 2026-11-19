@@ -88,6 +88,7 @@ CREATE TABLE lead_steps (
     after TEXT NOT NULL,
     state TEXT NOT NULL,
     branch TEXT,
+    -- crew_session, crew_lineage: renamed by V3 (step 6.8)
     crew_session TEXT,
     crew_lineage TEXT,
     profile TEXT,
@@ -99,6 +100,7 @@ CREATE TABLE lead_steps (
     close_facts TEXT,
     PRIMARY KEY (run_id, step_id)
 );
+-- renamed by V3 (step 6.8)
 CREATE TABLE crew_questions (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
@@ -143,14 +145,28 @@ CREATE TABLE typed_queue (
 );
 """
 
-#: The pair a run started with: owned by lead/models.py — see the note there.
+#: The pair a run started with: owned by lead/models.py — see the note there. Renamed by V3 (step 6.8).
 _SCHEMA_V2 = """
 ALTER TABLE lead_runs ADD COLUMN lead_model TEXT;
 ALTER TABLE lead_runs ADD COLUMN crew_model TEXT;
 """
 
+#: The rack's words (step 6.8): a worker's columns, its questions' table and the step kinds take the names people
+#: read. V1 and V2 above keep the names they shipped with, because a ladder replays history. The `observed` facts
+#: (lead/watcher.py) are a JSON object whose keys carry the same prefix; `close_facts` is a record and stays as written.
+_SCHEMA_V3 = """
+ALTER TABLE lead_steps RENAME COLUMN crew_session TO worker_session;
+ALTER TABLE lead_steps RENAME COLUMN crew_lineage TO worker_lineage;
+ALTER TABLE lead_runs RENAME COLUMN crew_model TO worker_model;
+ALTER TABLE crew_questions RENAME TO worker_questions;
+-- step 6.8: the stored kinds and the observed facts' keys
+UPDATE lead_steps SET kind = 'change' WHERE kind = 'ship';
+UPDATE lead_steps SET kind = 'report' WHERE kind = 'scout';
+UPDATE lead_steps SET observed = replace(observed, '"crew_', '"worker_');
+"""
+
 #: Index i holds the script that takes the schema from version i to i + 1.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
@@ -162,9 +178,8 @@ def resolve_rack_db_path() -> Path:
 def migrate(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     for step in range(version, SCHEMA_VERSION):
-        conn.executescript(MIGRATIONS[step])
-        conn.execute(f"PRAGMA user_version = {step + 1}")
-        conn.commit()
+        # One transaction per rung, the version bump inside it: a rung that fails leaves the file as it was.
+        conn.executescript(f"BEGIN;\n{MIGRATIONS[step]}\nPRAGMA user_version = {step + 1};\nCOMMIT;")
 
 
 class RackDb:

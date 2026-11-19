@@ -194,9 +194,9 @@ def test_run_writes_a_private_golden_report_the_plugin_reads(lab, public_golden,
     private_suite(lab, [operator_case("a synthetic held-out operator flip", True), operator_case(trained_text, False)])
     router = FakeRouter(lambda state: 0.9 if "Phase C" in state or "held-out" in state else 0.1)
     assert golden.run("agent-open-work", lab.base, router=router) == 0
-    assert {model for _state, model in router.calls} == {"voidcraft-agent-open-work"}
+    assert {model for _state, model in router.calls} == {"tldrack-agent-open-work"}
 
-    found = lab_files.newest_report(lab.base, "agent-open-work", "voidcraft-agent-open-work", "golden")
+    found = lab_files.newest_report(lab.base, "agent-open-work", "tldrack-agent-open-work", "golden")
     assert found is not None
     path, report = found
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
@@ -206,7 +206,7 @@ def test_run_writes_a_private_golden_report_the_plugin_reads(lab, public_golden,
         "name": CHECKPOINT,
         "path": f"checkpoints/{CHECKPOINT}",
         "revision": None,
-        "model_id": f"laya-local/voidcraft-agent-open-work@{CHECKPOINT}",
+        "model_id": f"laya-local/tldrack-agent-open-work@{CHECKPOINT}",
         "registered": True,
         "digest": infer.checkpoint_digest(FINE_TUNE, folder),
     }
@@ -223,15 +223,15 @@ def test_run_writes_a_private_golden_report_the_plugin_reads(lab, public_golden,
 def test_all_checkpoints_reports_each_under_one_run(lab, public_golden, capsys):
     registered = lab.checkpoint(train_texts=[])
     register(lab.base, SURFACE, registered, {"eval_items": 1})
-    older = "voidcraft-agent-open-work-20261001-0900"
+    older = "tldrack-agent-open-work-20261001-0900"
     lab.checkpoint(older, train_texts=[])
-    lab.checkpoint("voidcraft-agent-open-work-20261002-0900", weights=False)  # no weights: not loadable
+    lab.checkpoint("tldrack-agent-open-work-20261002-0900", weights=False)  # no weights: not loadable
     router = FakeRouter(lambda state: 0.8)
     assert golden.run("agent-open-work", lab.base, all_checkpoints=True, router=router) == 0
-    assert [model for _s, model in router.calls[::2]] == ["english", "voidcraft-agent-open-work", older]
+    assert [model for _s, model in router.calls[::2]] == ["english", "tldrack-agent-open-work", older]
     reports = [
         lab_files.newest_report(lab.base, "agent-open-work", model, "golden")[1]
-        for model in ("english", "voidcraft-agent-open-work", older)
+        for model in ("english", "tldrack-agent-open-work", older)
     ]
     assert len({report["run_id"] for report in reports}) == 1
     assert [report["checkpoint"]["registered"] for report in reports] == [False, True, False]

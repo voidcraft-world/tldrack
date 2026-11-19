@@ -60,7 +60,7 @@ def test_route_guards_size_limit_and_local_storage(image_tmp):
         StatusStore(),
         SessionIconStore(image_tmp / "icons.json"),
         SessionModelStore(image_tmp / "models.json"),
-        "voidcraft",
+        "tldrack",
         {"pid": 1},
         ShutdownControl("status-only"),
     )

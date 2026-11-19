@@ -50,7 +50,7 @@ def handler(tmp_path):
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=SessionModelStore(tmp_path / "models.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1234, "started_at": 0},
         control=ShutdownControl("status-only"),
         auto_names=SessionNameStore(tmp_path / "names.json"),
@@ -82,7 +82,7 @@ def _tmux_ok(monkeypatch, stdout="", stderr=""):
 
 def test_kill_session_answers_200(handler, monkeypatch):
     _tmux_ok(monkeypatch)
-    handler.path = "/kill-session?session=voidcraft"
+    handler.path = "/kill-session?session=tldrack"
 
     handler._handle_kill_session()
 
@@ -101,7 +101,7 @@ def _with_body(handler, payload):
 def test_rename_session_answers_200(handler, monkeypatch):
     _tmux_ok(monkeypatch)
     handler.path = "/rename-session"
-    _with_body(handler, {"session": "voidcraft", "name": "renamed"})
+    _with_body(handler, {"session": "tldrack", "name": "renamed"})
 
     handler._handle_rename_session()
 
@@ -113,7 +113,7 @@ def test_rename_session_answers_200(handler, monkeypatch):
 def test_origin_is_logged_not_crashed(handler, monkeypatch, capsys):
     """The log line that carried the bug still reports the caller's origin."""
     _tmux_ok(monkeypatch)
-    handler.path = "/kill-session?session=voidcraft"
+    handler.path = "/kill-session?session=tldrack"
 
     handler._handle_kill_session()
 
@@ -155,7 +155,7 @@ def spawner(tmp_path):
         store=store,
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=model_store,
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1234, "status_port": 7682, "started_at": 0},
         control=ShutdownControl("status-only"),
         start_dir=str(tmp_path),
@@ -445,7 +445,7 @@ def test_an_http_relay_names_its_pane_and_lands_on_that_session(spawner):
 def test_an_http_relay_outside_tmux_is_ignored_not_filed_under_the_default(spawner, pane):
     recorded = _http_hook(spawner, "UserPromptSubmit", {"prompt": "go"}, pane)
     assert (recorded.status, recorded.body.get("ignored")) == (200, "no tmux session")
-    assert spawner.store.get("voidcraft")["state"] == "unknown"
+    assert spawner.store.get("tldrack")["state"] == "unknown"
     assert spawner.rfile.read() == b""  # the body was drained
 
 
@@ -733,7 +733,7 @@ def restorer(tmp_path):
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=SessionModelStore(tmp_path / "models.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1234, "status_port": 7682, "started_at": 0},
         control=ShutdownControl("status-only"),
         start_dir=str(tmp_path),
@@ -1165,7 +1165,7 @@ def test_usage_books_cost_against_the_bound_session(tmp_path):
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=SessionModelStore(tmp_path / "models.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1, "started_at": 0},
         control=ShutdownControl("status-only"),
         costs=SessionCostStore(tmp_path / "costs.json"),
@@ -1330,7 +1330,7 @@ def test_a_first_prompt_gets_a_topic_label_unique_against_the_rack(tmp_path, mon
         store=StatusStore(),
         icon_store=SessionIconStore(tmp_path / "icons.json"),
         model_store=SessionModelStore(tmp_path / "models.json"),
-        default_session="voidcraft",
+        default_session="tldrack",
         bridge_info={"pid": 1234, "started_at": 0},
         control=ShutdownControl("status-only"),
         auto_names=names,

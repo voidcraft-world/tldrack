@@ -229,15 +229,28 @@ export const DECIDE_SURFACES: Readonly<Record<RackSurface, DecideSurfaceInfo>> =
 };
 
 /**
- * A fine-tune's served name: the prefix, then the surface with `_` as `-` (`voidcraft-agent-open-work`). The
+ * A fine-tune's served name: the prefix, then the surface with `_` as `-` (`tldrack-agent-open-work`). The
  * trainer registers a surface's fine-tune under it and the plugin serves it under it, so the two cannot disagree
- * about which checkpoint answers which surface. The prefix is stored in every model registry on disk, so it
- * stays what it was when the first checkpoint was registered. Python twin: plugins/laya/laya_bridge/paths.py.
+ * about which checkpoint answers which surface. Python twin: plugins/laya/laya_bridge/paths.py.
  */
-export const LAYA_FINE_TUNE_PREFIX = 'voidcraft-';
+export const LAYA_FINE_TUNE_PREFIX = 'tldrack-';
+/**
+ * Legacy (step 6.8): the prefix before 0.1.0. Registries, ledger rows, reports and checkpoint folders on disk still
+ * carry it, so a reader takes it as the same model for one release (`served_model_name`); nothing writes it.
+ */
+export const LAYA_LEGACY_FINE_TUNE_PREFIX = 'voidcraft-';
 
 export function fine_tune_name(surface: DecideSurface): string {
   return `${LAYA_FINE_TUNE_PREFIX}${surface.replace(/_/g, '-')}`;
+}
+
+/**
+ * A model name as it is served today: one under LAYA_LEGACY_FINE_TUNE_PREFIX reads as `tldrack-<surface>`, any other name as
+ * it is. A checkpoint folder's name (`…-<stamp>`) is never rewritten. Python twin: paths.py `served_name`.
+ */
+export function served_model_name(name: string): string {
+  if (!name.startsWith(LAYA_LEGACY_FINE_TUNE_PREFIX) || /-[0-9]/.test(name)) return name;
+  return LAYA_FINE_TUNE_PREFIX + name.slice(LAYA_LEGACY_FINE_TUNE_PREFIX.length);
 }
 
 // ── laya-local model ids ─────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { office_resources, parse_office_resources, resource_readout } from '../../src/engine/terminal/office-resources.ts';
 import { parse_devices } from '../../src/engine/terminal/device-readout.ts';
-import { office_fleet, parse_office_message } from '../../src/engine/terminal/agent-office-link.ts';
+import { office_rack, parse_office_message } from '../../src/engine/terminal/agent-office-link.ts';
 
 test('floor totals add session trees once and distinguish unknown from idle', () => {
     const rows = [{ session: 'a', rss: 1024 ** 3, cpu_pct: 120 }, { session: 'svc-b', rss: 512 * 1024 ** 2, cpu_pct: 0 }];
@@ -23,8 +23,8 @@ test('the existing device sample supplies resources, closes as stale, and reject
 });
 test('resources round trip through the standalone office channel without extra polling', () => {
     const resources = { stale: false, sessions: [{ session: 'a', rss: 123, cpu_pct: 4.5 }] };
-    const fleet = office_fleet({ sessions: [], focused: null, reachable: true, office_resources: resources });
-    const parsed = parse_office_message(JSON.parse(JSON.stringify({ type: 'office:fleet', fleet })));
-    assert.equal(parsed?.type, 'office:fleet');
-    if (parsed?.type === 'office:fleet') assert.deepEqual(parsed.fleet.resources, resources);
+    const rack = office_rack({ sessions: [], focused: null, reachable: true, office_resources: resources });
+    const parsed = parse_office_message(JSON.parse(JSON.stringify({ type: 'office:rack', rack })));
+    assert.equal(parsed?.type, 'office:rack');
+    if (parsed?.type === 'office:rack') assert.deepEqual(parsed.rack.resources, resources);
 });

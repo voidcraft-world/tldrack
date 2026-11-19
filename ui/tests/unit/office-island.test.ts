@@ -2,7 +2,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Mesh, MeshBasicMaterial } from 'three';
 import { with_island, type WorktreeIsland } from '../../src/engine/terminal/rack-view.ts';
-import { office_fleet, parse_office_message } from '../../src/engine/terminal/agent-office-link.ts';
+import { office_rack, parse_office_message } from '../../src/engine/terminal/agent-office-link.ts';
 import { build_office } from '../../src/engine/terminal/agent-office-logic.ts';
 import { island_status } from '../../src/engine/terminal/island-status.ts';
 import { OfficeIsland } from '../../src/engine/terminal/office-island.ts';
@@ -16,11 +16,11 @@ function island(pr_state?: SessionIsland['pr_state']): SessionIsland {
 }
 
 function relay(sessions: RackSession[]) {
-    const message = parse_office_message(JSON.parse(JSON.stringify({ type: 'office:fleet',
-        fleet: office_fleet({ sessions, focused: null, reachable: true }),
+    const message = parse_office_message(JSON.parse(JSON.stringify({ type: 'office:rack',
+        rack: office_rack({ sessions, focused: null, reachable: true }),
     })));
-    assert.ok(message?.type === 'office:fleet');
-    return message.fleet;
+    assert.ok(message?.type === 'office:rack');
+    return message.rack;
 }
 
 describe('worktree islands in the office', () => {
@@ -28,12 +28,12 @@ describe('worktree islands in the office', () => {
         let geometry_key: string | undefined;
         for (const state of ['none', 'open', 'closed', 'merged', undefined] as const) {
             const tree: WorktreeIsland = { ...TREE, ...(state ? { pr: { state, number: state === 'none' ? null : 12, url: null } } : {}) };
-            const fleet = relay([
+            const rack = relay([
                 with_island(AGENT, [tree]),
                 with_island({ ...AGENT, session: 'main', cwd: '/code/demo' }, [tree]),
                 with_island({ ...AGENT, session: 'svc-vite' }, [tree]),
             ]);
-            const layout = build_office(fleet.sessions);
+            const layout = build_office(rack.sessions);
             const agents = layout.rooms.flatMap(room => room.desks.map(desk => desk.agent));
             const worktree = agents.find(agent => agent.session === 'worker')!.island!;
             assert.ok(worktree);
@@ -58,10 +58,10 @@ describe('worktree islands in the office', () => {
     test('a malformed island is dropped without dropping the agent', () => {
         for (const bad of [null, [], 'island', { ...island(), path: '' }, { ...island(), label: 4 },
             { ...island(), title: 'x'.repeat(4097) }, { ...island(), pr: 'merged' }, { ...island(), pr_state: 'maybe' }]) {
-            const message = parse_office_message({ type: 'office:fleet', fleet: { sessions: [{ ...AGENT, island: bad }] } });
-            assert.ok(message?.type === 'office:fleet');
-            assert.equal(message.fleet.sessions.length, 1);
-            assert.equal(message.fleet.sessions[0].island, undefined);
+            const message = parse_office_message({ type: 'office:rack', rack: { sessions: [{ ...AGENT, island: bad }] } });
+            assert.ok(message?.type === 'office:rack');
+            assert.equal(message.rack.sessions.length, 1);
+            assert.equal(message.rack.sessions[0].island, undefined);
         }
     });
 

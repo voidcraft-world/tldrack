@@ -155,10 +155,10 @@ describe('laya_react', () => {
 describe('parse_laya_status', () => {
     it('reads the plugin status and rejects unknown states', () => {
         assert.deepEqual(parse_laya_status({
-            state: 'ready', models: ['voidcraft-paste', 3], device: 'mps', idle_stop_seconds: 900,
+            state: 'ready', models: ['tldrack-paste', 3], device: 'mps', idle_stop_seconds: 900,
             model_ids: { english: 'laya-local/english@a1b2c3d', evil: 'othervendor/model-1.13' },
         }), {
-            state: 'ready', models: ['voidcraft-paste'], device: 'mps', error: null, idle_stop_seconds: 900,
+            state: 'ready', models: ['tldrack-paste'], device: 'mps', error: null, idle_stop_seconds: 900,
             model_ids: { english: 'laya-local/english@a1b2c3d' },
         });
         assert.equal(parse_laya_status({ state: 'exploded' }), null);

@@ -23,7 +23,7 @@ if str(PLUGIN_DIR) not in sys.path:
 
 from laya_bridge import label_budget, paths, rows  # noqa: E402
 
-FINE_TUNE = "voidcraft-agent-open-work"
+FINE_TUNE = "tldrack-agent-open-work"
 #: An invented checkpoint folder name, in the shape laya-lab dates them.
 CHECKPOINT = f"{FINE_TUNE}-20260102-0304"
 SONNET = "claude-sonnet-5-5"

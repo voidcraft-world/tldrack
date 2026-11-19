@@ -20,10 +20,10 @@ export const FIGURES = ['read-less', 'labels-buy', 'roc'];
 export const THEMES = ['light', 'dark'];
 /**
  * A figure drawn from an optional block of the results file, by the block's key. The page draws
- * no panel for a block the file leaves null, so no figure is taken: a withheld `fleet` (the
- * operator's own use, opt-in at `laya-lab bench --fleet`) never reaches a PNG either.
+ * no panel for a block the file leaves null, so no figure is taken: a withheld `rack` (the
+ * operator's own use, opt-in at `laya-lab bench --rack`) never reaches a PNG either.
  */
-export const FIGURE_BLOCK = { 'read-less': 'fleet' };
+export const FIGURE_BLOCK = { 'read-less': 'rack' };
 
 /** The figures one results file yields. */
 export function figures_for(results) {

@@ -44,6 +44,7 @@ from laya_bridge.paths import (
     PathsError,
     ensure_laya_dir,
     fine_tune_name as _fine_tune_name,
+    served_name,
     laya_dir,
     migrate_payload,
     payload_version,
@@ -420,6 +421,8 @@ def resolve_model(base: Path, surface: str, model: str) -> tuple[str, Path | Non
     (`available_checkpoints` lists it so); an alias resolves to the folder it points at."""
     if model in (SERVED, CHAMPION):
         model = served_model(base, surface)
+    elif served_name(model) == fine_tune_name(surface):
+        model = fine_tune_name(surface)  # its legacy name too (paths.served_name)
     elif model in (CHALLENGER, PREVIOUS):
         target = alias_target(base, surface, model)
         if target is None:
@@ -519,9 +522,9 @@ def clear_threshold(base: Path, surface: str, version: str | None = None) -> boo
 def swept_cut(base: Path, surface: str, model: str) -> dict[str, Any] | None:
     """The swept cut (`lab_files.threshold_view`) that applies to `model`: for the served name, the champion's own
     (`paths.thresholds_view` owns that rule); for a registered version's folder name, that version's own; else None."""
-    if model == fine_tune_name(surface):
+    if served_name(model) == fine_tune_name(surface):
         cut = thresholds_view(registry_view(base)).get(surface)
-        return cut if cut is not None and cut["model"] == model else None
+        return cut if cut is not None and cut["model"] == fine_tune_name(surface) else None
     version = registry_versions(base)["versions"].get(model)
     if version is None or version["surface"] != surface or version["cut"] is None or not 0 < version["cut"]["at"] < 1:
         return None

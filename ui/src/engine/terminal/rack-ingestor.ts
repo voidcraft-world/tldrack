@@ -5,7 +5,7 @@
  * that talks to a browser.
  *
  * ITS ENVIRONMENT IS INJECTED: the base URL, the "is the operator looking"
- * test and the flags all arrive through `FleetIngestorDeps`. That is what lets
+ * test and the flags all arrive through `RackIngestorDeps`. That is what lets
  * one loop serve the HTTP transport (`agent-rack/rack-http-transport.ts`) and a
  * host's own payload owner alike, and what lets it run under `node --test`
  * against fakes.
@@ -125,7 +125,7 @@ export interface BridgeCommand {
 /** The outstanding rack after one tick, in the shape a caller that renders
  *  banners needs, so this module never learns that notifications exist. Waits only: a finished
  *  turn is never a ping (`tldrack/notify.py` property 6 owns why). */
-export interface FleetNoticeSets {
+export interface RackNoticeSets {
     attention: { session: string; message: string | null }[];
 }
 
@@ -146,7 +146,7 @@ export interface IngestorFlags {
     fake_background: Record<string, number | null>;
 }
 
-export interface FleetIngestorDeps {
+export interface RackIngestorDeps {
     /** `path` → absolute URL. Loopback beside the bridge, the remote origin for a rack pointed at another machine. */
     base_url: (path: string) => string;
     /**
@@ -197,14 +197,14 @@ export interface FleetIngestorDeps {
     on_command?: (command: BridgeCommand) => void;
     /** The whole outstanding set, once per tick. Omit to raise nothing — which
      *  is what every surface that is not the elected notifier should do. */
-    on_notice?: (sets: FleetNoticeSets) => void;
+    on_notice?: (sets: RackNoticeSets) => void;
     fetch_impl?: typeof fetch;
     event_source?: (url: string) => EventSource | null;
     set_interval?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
     clear_interval?: (handle: ReturnType<typeof setInterval>) => void;
 }
 
-export interface FleetIngestor {
+export interface RackIngestor {
     /**
      * Open the SSE stream WITHOUT starting the poll.
      *
@@ -268,7 +268,7 @@ function seeded_background(status: SessionStatus | null, fakes: Record<string, n
     return { ...status, state: 'background', background_jobs: fakes[status.session] };
 }
 
-export function create_fleet_ingestor(deps: FleetIngestorDeps): FleetIngestor {
+export function create_rack_ingestor(deps: RackIngestorDeps): RackIngestor {
     // The DEFAULTS carry the local-network gate; the injected forms do not, so
     // a test's fake fetch stays a fake fetch. Every real caller builds a
     // loopback URL from `deps.base_url`, and `local_fetch` passes a

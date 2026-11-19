@@ -8,7 +8,7 @@
  *     (`rack-http-transport.ts`). With no `?remote=` that bridge is the origin that served the
  *     page (`rack-remote.ts` `same_origin_config`), so a page the bridge serves needs no setup.
  *   • `bus`: the page is a satellite of a host application's main window on this machine. The
- *     fleet arrives over the window bus (`rack-bus-transport.ts`) and every action goes home. In
+ *     rack arrives over the window bus (`rack-bus-transport.ts`) and every action goes home. In
  *     this mode the window does no work: it never polls and never opens an EventSource, because
  *     the main window owns the one status poller and its notifications. `?remote=` still wins.
  *
@@ -50,7 +50,7 @@ import { useTtydFontStep } from '../composables/useTtydFontStep.ts';
 import { useDevicePixelRail } from '../composables/useDevicePixelRail.ts';
 import { SPLIT_STORAGE_KEY, TERM_MIN_PX, clamp_split_px, parse_split_px } from './rack-window-geometry.ts';
 import AgentCanvasPane from './AgentCanvasPane.vue';
-import { office_fleet } from '../engine/terminal/agent-office-link.ts';
+import { office_rack } from '../engine/terminal/agent-office-link.ts';
 import {
     CANVAS_LAYOUT_KEY,
     CANVAS_SIZE_KEY,
@@ -81,7 +81,7 @@ import { TTYD_FRAME_ALLOW } from '../engine/terminal/terminal-clipboard.ts';
 import { with_payload_overlay, type RackPayload, type RackTransport } from './rack-transport.ts';
 import { create_pane_settle } from './pane-settle.ts';
 
-// History reads on demand, independently of fleet polling and notification ownership.
+// History reads on demand, independently of rack polling and notification ownership.
 const AgentHistoryPane = defineAsyncComponent(() => import('./AgentHistoryPane.vue'));
 const history_open = ref(false);
 
@@ -111,7 +111,7 @@ const POPOUT_DPI_SCALE = 1;
 const bus = useWindowBus();
 
 const props = withDefaults(defineProps<{
-    /** Where the fleet comes from; the file header owns the two meanings. */
+    /** Where the rack comes from; the file header owns the two meanings. */
     feed?: 'bridge' | 'bus';
 }>(), { feed: 'bridge' });
 
@@ -223,7 +223,7 @@ function connect_to(host: string): void {
 }
 
 /** Which machine this page is driving. Worth surfacing: the whole point of the
- *  remote path is that the fleet is somewhere else, and a rack with no host on
+ *  remote path is that the rack is somewhere else, and a rack with no host on
  *  it looks exactly like a local one. */
 const remote_host = computed<string>(() => {
     if (!remote) return '';
@@ -486,7 +486,7 @@ const canvas_shown = computed<boolean>(() => !narrow.value && canvas_layout.valu
 const canvas_src = computed<string | null>(() =>
     canvas_page_url(canvas_bridge_origin, payload.value?.focused ?? null),
 );
-const canvas_fleet = computed(() => payload.value ? office_fleet(payload.value) : null);
+const canvas_rack = computed(() => payload.value ? office_rack(payload.value) : null);
 const canvas_agent = computed(() => payload.value?.sessions.find(row => row.session === payload.value?.focused) ?? null);
 const canvas_map_stale = computed(() => payload.value?.reachable !== true || payload.value?.attached === false);
 const canvas_dragging = ref(false);
@@ -831,7 +831,7 @@ onBeforeUnmount(() => {
                     v-if="canvas_shown && canvas_layout === 'under'"
                     layout="under"
                     :src="canvas_src"
-                    :fleet="canvas_fleet"
+                    :rack="canvas_rack"
                     :agent="canvas_agent"
                     :stale="canvas_map_stale"
                     :session="payload?.focused ?? null"
@@ -953,7 +953,7 @@ onBeforeUnmount(() => {
                 :inert="history_open"
                 layout="column"
                 :src="canvas_src"
-                :fleet="canvas_fleet"
+                :rack="canvas_rack"
                 :agent="canvas_agent"
                 :stale="canvas_map_stale"
                 :session="payload?.focused ?? null"
@@ -1076,7 +1076,7 @@ onBeforeUnmount(() => {
     display: flex;
     flex: 1 1 auto;
     /* Without this a long session list stretches the row instead of scrolling
-       inside it, and the terminal loses height as the fleet grows. */
+       inside it, and the terminal loses height as the rack grows. */
     min-height: 0;
     /* The positioning context the split grip hangs off. Costs the flex layout
        nothing, which is the point — see `.rack-window__grip`. */

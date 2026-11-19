@@ -96,7 +96,7 @@ def test_the_bench_asks_a_challenger_its_own_version_of_the_same_rows(lab, publi
     assert payload["protocol"]["question_version"] == open_work.QUESTION_VERSION
     asked = {(state, model) for state, model in router.calls}
     requested = open_work.decide_state(cases[0]["state"]["hand_off"], "Build phases A, B and C.", version=3)
-    assert (requested, challenger.name) in asked and (cases[0]["state"]["hand_off"], "voidcraft-agent-open-work") in asked
+    assert (requested, challenger.name) in asked and (cases[0]["state"]["hand_off"], "tldrack-agent-open-work") in asked
     assert "Build phases A, B and C." not in json.dumps(payload), "a request never reaches the file"
     assert not any(name.startswith("mean.") for name in roster), "a challenger brings no mean"
 

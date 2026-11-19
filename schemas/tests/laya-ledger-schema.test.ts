@@ -14,6 +14,7 @@ import {
     DECIDE_SURFACES,
     decideSurfaceSchema,
     fine_tune_name,
+    served_model_name,
     is_laya_local_model_id,
     layaLedgerAnswerSchema,
     layaLedgerDecisionRowSchema,
@@ -52,9 +53,9 @@ const DECISION = {
     subject: 'wt-laya-review|pane:3',
     question_version: 2,
     threshold: 0.7,
-    model: 'voidcraft-agent-open-work',
-    model_id: 'laya-local/voidcraft-agent-open-work@voidcraft-agent-open-work-20261020-101500',
-    checkpoint_path: 'checkpoints/voidcraft-agent-open-work-20261020-101500',
+    model: 'tldrack-agent-open-work',
+    model_id: 'laya-local/tldrack-agent-open-work@tldrack-agent-open-work-20261020-101500',
+    checkpoint_path: 'checkpoints/tldrack-agent-open-work-20261020-101500',
     state_hash: 'a'.repeat(64),
     state: 'Hand-off: tests pass, the PR is not opened yet.',
     state_truncated: false,
@@ -145,7 +146,7 @@ describe('ledger rows', () => {
 
     it('keeps checkpoint_path relative to laya/, or null for a built-in', () => {
         assert.ok(layaLedgerRowSchema.safeParse({ ...DECISION, checkpoint_path: null }).success);
-        assert.ok(LAYA_DATA_RELATIVE_PATH.test('checkpoints/voidcraft-agent-open-work-20261020-1015'));
+        assert.ok(LAYA_DATA_RELATIVE_PATH.test('checkpoints/tldrack-agent-open-work-20261020-1015'));
         assert.ok(LAYA_DATA_RELATIVE_PATH.test('checkpoints/.cache/v1.2..3'));
         const escapes = [
             '/srv/laya/checkpoints/x',
@@ -172,7 +173,7 @@ describe('ledger rows', () => {
     });
 
     it('reads a model id’s name with the same rule as a row’s model', () => {
-        for (const name of ['english', 'voidcraft-agent-open-work', 'English', 'a_b', '9lives', 'a'.repeat(64), 'a'.repeat(65)]) {
+        for (const name of ['english', 'tldrack-agent-open-work', 'English', 'a_b', '9lives', 'a'.repeat(64), 'a'.repeat(65)]) {
             assert.equal(is_laya_local_model_id(`laya-local/${name}@55cf4c4`), LAYA_MODEL_NAME.test(name), name);
         }
     });
@@ -278,9 +279,17 @@ describe('the ledger surface sets', () => {
         }
     });
 
-    it('names a fine-tune after its surface, under the stored prefix', () => {
-        assert.equal(fine_tune_name('agent_open_work'), 'voidcraft-agent-open-work');
+    it('names a fine-tune after its surface, under the tldrack- prefix', () => {
+        assert.equal(fine_tune_name('agent_open_work'), 'tldrack-agent-open-work');
         assert.equal(fine_tune_name(HOST_SURFACE), `${LAYA_FINE_TUNE_PREFIX}notes-router`);
         assert.ok(LAYA_MODEL_NAME.test(fine_tune_name(HOST_SURFACE)));
+    });
+
+    it('reads a legacy model name as its tldrack- twin, never a checkpoint folder', () => {
+        // Legacy (step 6.8): names stored before 0.1.0.
+        assert.equal(served_model_name('voidcraft-agent-open-work'), 'tldrack-agent-open-work');
+        assert.equal(served_model_name('tldrack-paste'), 'tldrack-paste');
+        assert.equal(served_model_name('english'), 'english');
+        assert.equal(served_model_name('voidcraft-agent-open-work-20261020-1015'), 'voidcraft-agent-open-work-20261020-1015');
     });
 });

@@ -12,7 +12,7 @@
  *
  * A notification tag is scoped by bridge port, not by window. Two documents on one origin that
  * both raised rack notices would overwrite and retract each other's banners forever. So this
- * transport raises none: it shares the ingestion core (`fleet-ingestor.ts`, `rack-view.ts`),
+ * transport raises none: it shares the ingestion core (`rack-ingestor.ts`, `rack-view.ts`),
  * and the ingestor raises a notice only when it is handed an `on_notice`. This file hands it
  * none, and must not start to. A page that wants banners is a different feature: it would need
  * one owner per origin, chosen on purpose.
@@ -20,7 +20,7 @@
 import { next_session_name } from '../engine/terminal/multi-terminal-layout.ts';
 import { create_rack_metric_delivery } from './metrics-delivery.ts';
 import { create_next_step_delivery } from './next-step-client.ts';
-import { create_fleet_ingestor } from '../engine/terminal/fleet-ingestor.ts';
+import { create_rack_ingestor } from '../engine/terminal/rack-ingestor.ts';
 import {
     adopt_focus,
     attach_only_sessions,
@@ -253,7 +253,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
     }
 
     /**
-     * The poll, the SSE stream and the tracker ladder are `fleet-ingestor.ts`'s, shared with
+     * The poll, the SSE stream and the tracker ladder are `rack-ingestor.ts`'s, shared with
      * any other payload owner. What is left here is this transport's own.
      *
      * `allow_legacy_fallback: false` is the one real POLICY difference, and it is
@@ -263,7 +263,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
      *
      * It never raises a notification (no `on_notice`): the file header owns why.
      */
-    const ingestor = create_fleet_ingestor({
+    const ingestor = create_rack_ingestor({
         base_url: url,
         flags: () => TERMINAL_STATUS_FLAGS,
         // Only the session actually on screen here counts as watched.
@@ -400,7 +400,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
      * The pre-`/spawn` `+ NEW`: ttyd runs with `-a`, so pointing the pane at an
      * unused `?arg=<name>` IS the creation. Only on a bridge that sent no
      * `profiles`, or answered `/spawn` with 404. The whole job is picking a
-     * name nothing has claimed — see `FleetIngestor.known_sessions`.
+     * name nothing has claimed — see `RackIngestor.known_sessions`.
      */
     function legacy_new(): void {
         spawning = null;
@@ -445,7 +445,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
         base_url: url,
         island_focus,
         launch_notice,
-        tick_fleet: () => void ingestor.tick(),
+        tick_rack: () => void ingestor.tick(),
         tick_lead: () => void lead.tick(),
     };
 

@@ -1,30 +1,30 @@
 """The zero-token watcher (lead/watcher.py) and the wake: events on transitions only, nothing for a
 busy worker or a pending check, persisted facts across a restart, one coalesced line per wake."""
 
-from lead_fakes import CLAUDE_BOX, build, crew_appears, launch_and_start, ok, publish
+from lead_fakes import CLAUDE_BOX, build, worker_appears, launch_and_start, ok, publish
 
-from tldrack.lead.watcher import SPAWN_GRACE_SECONDS, crew_facts, observe
+from tldrack.lead.watcher import SPAWN_GRACE_SECONDS, worker_facts, observe
 
 ID = "11111111-1111-4111-8111-111111111111"
-CREW = "22222222-2222-4222-8222-222222222222"
+WORKER = "22222222-2222-4222-8222-222222222222"
 
 
 def step(state="working", observed=None, **kw):
-    return {"state": state, "observed": observed or {}, "crew_lineage": CREW, **kw}
+    return {"state": state, "observed": observed or {}, "worker_lineage": WORKER, **kw}
 
 
 def facts(row_state="busy", **worker):
-    row = {"live": True, "state": row_state, "lineage": {"id": CREW, "parent_id": ID}}
-    return crew_facts(row, worker)
+    row = {"live": True, "state": row_state, "lineage": {"id": WORKER, "parent_id": ID}}
+    return worker_facts(row, worker)
 
 
 def run_observe(s, f, **kw):
     return observe(s, f, run_identity=ID, now=100.0, spawned_at=0.0, create_error=None, open_question=False, **kw)
 
 
-def test_spawning_becomes_working_when_its_crew_appears():
+def test_spawning_becomes_working_when_its_worker_appears():
     updates, events = observe(
-        step("spawning", crew_lineage=None),
+        step("spawning", worker_lineage=None),
         facts(),
         run_identity=ID,
         now=1.0,
@@ -32,11 +32,11 @@ def test_spawning_becomes_working_when_its_crew_appears():
         create_error=None,
         open_question=False,
     )
-    assert updates["state"] == "working" and updates["crew_lineage"] == CREW and events == []
+    assert updates["state"] == "working" and updates["worker_lineage"] == WORKER and events == []
 
 
-def test_a_create_error_or_a_crew_that_never_appears_fails_the_step():
-    gone = crew_facts(None, {})
+def test_a_create_error_or_a_worker_that_never_appears_fails_the_step():
+    gone = worker_facts(None, {})
     assert (
         observe(
             step("spawning"), gone, run_identity=ID, now=1.0, spawned_at=0.0, create_error="bootstrap failed", open_question=False
@@ -90,14 +90,14 @@ def test_stopped_and_gone():
         )[1]
         and not observe(step(observed=busy), free, run_identity=ID, now=1, spawned_at=0, create_error=None, open_question=True)[1]
     ), "a worker that asked and ended its turn did what it was told"
-    gone = crew_facts(None, {"stage": "implement"})
+    gone = worker_facts(None, {"stage": "implement"})
     assert [k for k, _ in run_observe(step(observed=free), gone)[1]] == ["gone"]
 
 
 def test_a_stranger_wearing_the_name_reads_as_gone():
-    stranger = crew_facts({"live": True, "state": "free", "lineage": {"id": "x", "parent_id": ID}}, {})
+    stranger = worker_facts({"live": True, "state": "free", "lineage": {"id": "x", "parent_id": ID}}, {})
     updates, events = run_observe(step(observed=facts("free")), stranger)
-    assert [k for k, _ in events] == ["gone"] and updates["observed"]["crew_live"] is False
+    assert [k for k, _ in events] == ["gone"] and updates["observed"]["worker_live"] is False
 
 
 # ── the wake ────────────────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ def test_one_coalesced_wake_only_when_the_lead_pane_is_safe(tmp_path):
     lead, run_id = launch_and_start(service, fake, steps=("S1", "S2"))
     for sid in ("S1", "S2"):
         ok(service.handle("spawn", {"step": sid}, lead))
-        crew_appears(service, fake, lead, sid, run_id)
+        worker_appears(service, fake, lead, sid, run_id)
     ok(service.handle("status", {}, lead))
     fake.typed.clear()
     lead_row = next(r for r in fake.rows if r["session"] == lead)
@@ -133,7 +133,7 @@ def test_no_wake_for_events_the_lead_already_read(tmp_path):
     service, fake, _ = build(tmp_path)
     lead, run_id = launch_and_start(service, fake, steps=("S1",))
     ok(service.handle("spawn", {"step": "S1"}, lead))
-    crew_appears(service, fake, lead, "S1", run_id)
+    worker_appears(service, fake, lead, "S1", run_id)
     fake.typed.clear()
     next(r for r in fake.rows if r["session"] == lead)["state"] = "busy"
     publish(fake, service.runs.step(run_id, "S1")["branch"])
@@ -148,7 +148,7 @@ def test_observed_facts_survive_a_restart(tmp_path):
     service, fake, clock = build(tmp_path)
     lead, run_id = launch_and_start(service, fake, steps=("S1",))
     ok(service.handle("spawn", {"step": "S1"}, lead))
-    crew_appears(service, fake, lead, "S1", run_id)
+    worker_appears(service, fake, lead, "S1", run_id)
     publish(fake, service.runs.step(run_id, "S1")["branch"])
     service.tick()
     before = len(service.runs.history(run_id, 500))

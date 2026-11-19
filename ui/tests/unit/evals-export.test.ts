@@ -67,6 +67,6 @@ test('a figure of a withheld block is not published', () => {
 });
 
 test('a block left null yields no figure; the others always do', () => {
-    assert.deepEqual(figures_for({ fleet: null }), ['labels-buy', 'roc']);
-    assert.deepEqual(figures_for({ fleet: { days: 7 } }), ['read-less', 'labels-buy', 'roc']);
+    assert.deepEqual(figures_for({ rack: null }), ['labels-buy', 'roc']);
+    assert.deepEqual(figures_for({ rack: { days: 7 } }), ['read-less', 'labels-buy', 'roc']);
 });

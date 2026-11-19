@@ -14,7 +14,7 @@ import VoterRoster from './VoterRoster.vue';
 import { default_focus, fmt_count, fmt_day, headline_set, label_gains, parse_results, SET_LABEL, set_result, sets_in, voter_slots } from './evals-model.ts';
 
 /**
- * The EVALS page: one results file, eight panels (seven when it withholds its fleet block), in the order a reader asks. `file` is the
+ * The EVALS page: one results file, eight panels (seven when it withholds its rack block), in the order a reader asks. `file` is the
  * file's name and `raw` its JSON, untrusted until `parse_results` has read it.
  */
 const props = defineProps<{ file: string | null; raw: unknown }>();
@@ -44,8 +44,8 @@ const view = computed(() => {
         gains: label_gains(file, set),
         fixture: file.fixture === true,
         level: Math.round(file.protocol.interval.level * 100),
-        // A file that withholds its fleet block (the operator's own use, opt-in) draws no Read less panel; the rest close up.
-        shift: file.fleet ? 0 : 1,
+        // A file that withholds its rack block (the operator's own use, opt-in) draws no Read less panel; the rest close up.
+        shift: file.rack ? 0 : 1,
     };
 });
 const focus_label = computed(() => view.value?.file.voters.find((voter) => voter.name === view.value?.focus)?.label ?? '');
@@ -89,8 +89,8 @@ const focus_label = computed(() => view.value?.file.voters.find((voter) => voter
             </p>
 
             <div class="ev-panels">
-                <EvalsPanel v-if="view.file.fleet" :num="1" figure="read-less" title="Read less" :fixture="view.fixture" span>
-                    <ReadLess :fleet="view.file.fleet" />
+                <EvalsPanel v-if="view.file.rack" :num="1" figure="read-less" title="Read less" :fixture="view.fixture" span>
+                    <ReadLess :rack="view.file.rack" />
                 </EvalsPanel>
 
                 <div v-if="view.sets.length > 1" class="ev-filter ev-span">

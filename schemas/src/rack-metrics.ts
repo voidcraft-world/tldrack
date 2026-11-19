@@ -13,7 +13,7 @@ export const rack_metric_event_schema = z.object({
     source: z.enum(['window', 'embedded']),
     reselect: z.boolean(),
     duration_ms: z.number().int().min(0).max(20_000),
-    fleet_size: z.number().int().min(0).max(10_000),
+    rack_size: z.number().int().min(0).max(10_000),
     context_left: z.number().min(0).max(100).nullable(),
     model: z.string().max(160).nullable(),
     profile: z.string().max(80).nullable(),

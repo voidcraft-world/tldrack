@@ -21,13 +21,13 @@ SPAWN_GRACE_SECONDS = 600.0
 WORKING = ("busy", "background")
 
 
-def crew_facts(row: Mapping[str, Any] | None, worker: Mapping[str, Any]) -> dict:
+def worker_facts(row: Mapping[str, Any] | None, worker: Mapping[str, Any]) -> dict:
     lineage = (row or {}).get("lineage") or {}
     return {
-        "crew_live": bool(row and row.get("live")),
-        "crew_state": (row or {}).get("state") if row else None,
-        "crew_lineage": lineage.get("id"),
-        "crew_parent": lineage.get("parent_id"),
+        "worker_live": bool(row and row.get("live")),
+        "worker_state": (row or {}).get("state") if row else None,
+        "worker_lineage": lineage.get("id"),
+        "worker_parent": lineage.get("parent_id"),
         "stage": worker.get("stage"),
         "note": worker.get("note") or "",
         "head": worker.get("head"),
@@ -51,16 +51,16 @@ def observe(
 ) -> tuple[dict, list[tuple[str, dict]]]:
     """(step field updates, events) for one step. Pure.
 
-    `facts` comes from `crew_facts`; `step["observed"]` holds the previous ones."""
+    `facts` comes from `worker_facts`; `step["observed"]` holds the previous ones."""
     prev: Mapping[str, Any] = step.get("observed") or {}
     state = step["state"]
     updates: dict[str, Any] = {}
     events: list[tuple[str, dict]] = []
 
     if state == "spawning":
-        mine = facts["crew_live"] and facts["crew_parent"] == run_identity
+        mine = facts["worker_live"] and facts["worker_parent"] == run_identity
         if mine:
-            updates.update(state="working", crew_lineage=facts["crew_lineage"])
+            updates.update(state="working", worker_lineage=facts["worker_lineage"])
             state = "working"
         elif create_error:
             updates["state"] = "failed"
@@ -74,8 +74,8 @@ def observe(
             return {}, []  # still being built: nothing to compare yet
 
     # A name taken by another agent is not our worker: judge the session facts as "gone".
-    ours = facts["crew_live"] and (
-        step.get("crew_lineage") in (None, facts["crew_lineage"]) or updates.get("crew_lineage") == facts["crew_lineage"]
+    ours = facts["worker_live"] and (
+        step.get("worker_lineage") in (None, facts["worker_lineage"]) or updates.get("worker_lineage") == facts["worker_lineage"]
     )
     live = bool(ours)
 
@@ -98,20 +98,20 @@ def observe(
     if facts["pr_state"] == "merged" and prev.get("pr_state") != "merged":
         events.append(("merged", {"pr": facts["pr_url"]}))
 
-    prev_live, prev_state = prev.get("crew_live"), prev.get("crew_state")
+    prev_live, prev_state = prev.get("worker_live"), prev.get("worker_state")
     if prev_live and not live and state not in ("closed", "abandoned"):
         events.append(("gone", {}))
     elif (
         live
         and prev_state in WORKING
-        and facts["crew_state"] == "free"
+        and facts["worker_state"] == "free"
         and state in ("working", "reopened")
         and stage == prev_stage
         and not open_question
     ):
         events.append(("stopped", {}))
 
-    observed = {**facts, "crew_live": live}
+    observed = {**facts, "worker_live": live}
     if observed != dict(prev):
         updates["observed"] = observed
     return updates, events
