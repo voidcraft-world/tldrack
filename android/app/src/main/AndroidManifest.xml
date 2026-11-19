@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Loopback only: the phone-link listener the Mac's `adb reverse` puts at 127.0.0.1:7683. -->
+    <!-- The phone-link listener the Mac's `adb reverse` puts at 127.0.0.1:7683; and, only when the operator switched
+         the Mac's tailnet door on, that same listener over HTTPS (plugins/phone-link/README.md § The tailnet door). -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
@@ -28,7 +29,7 @@
             </intent-filter>
             <!--
               tldrack://review: the bridge's daily push opens it (LayaRules.is_review_link). Browsable, so a link in
-              a note works too: the screen only reads loopback, and every grade is a press on it.
+              a note works too: the screen only reads the Mac's link, and every grade is a press on it.
             -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

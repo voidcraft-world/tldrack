@@ -107,7 +107,7 @@ three steps. Version 1 (`Bearer`) is gone: the link answers it 401 `unlinked`.
 
 | # | Check | Refusal |
 |---|---|---|
-| 1 | `Host` is absent or a loopback name (`localhost`, `127.0.0.1`, `[::1]`, any port). One `Host` only. This stops DNS rebinding | 403 `host_refused` |
+| 1 | `Host` is absent or a loopback name (`localhost`, `127.0.0.1`, `[::1]`, any port). One `Host` only. This stops DNS rebinding. (With the tailnet door on, its one configured name takes the door's own checks instead of 2 and 3: § The tailnet door) | 403 `host_refused` · 403 `tailnet_refused` |
 | 2 | No proxy header (`Forwarded`, `Via`, `X-Forwarded-*`, `X-Real-IP`, `Tailscale-*`) | 403 `proxy_refused` |
 | 3 | No `Origin` of any value, and no `Sec-Fetch-*` header, because those come from a browser | 403 `browser_refused` |
 | 4 | `GET /nonce?c=<c>` is answered here, before any proof: a nonce, signed over `c` | 400 `bad_challenge` |
@@ -260,7 +260,8 @@ pass request headers gets 403 `host_too_old`. The shape only gains keys, and it 
               "checked_at": "2026-11-07T21:04:10Z", "bridge_reverse_removed_at": null}],
  "requests": {"n": 12, "last_at": "2026-11-07T21:04:31Z", "refused": 0},
  "door": {"date": "2026-11-09", "at": "2026-11-09T12:10:00-06:00", "waiting": 7, "sent": true, "reason": "sent"},
- "wireless": {"paired": 1}}
+ "wireless": {"paired": 1},
+ "tailnet": {"on": false, "host": null, "port": null, "error": null}}
 ```
 
 | field | meaning |
@@ -275,6 +276,7 @@ pass request headers gets 403 `host_too_old`. The shape only gains keys, and it 
 | `devices[].bridge_reverse_removed_at` | the last time a tunnel that could reach the bridge was found on this phone and removed |
 | `requests` | `n`, the requests that proved the token; `last_at`; `refused`, the requests turned away by the checks above |
 | `wireless.paired` | phones in adb's Wireless debugging pairing record on this Mac; 0 means none was ever paired |
+| `tailnet` | the tailnet door as configured: `on`, its `host` and `port`, and `error` naming a configured door that was refused (it stays off) |
 | `door` | the daily grade door's last attempt (below), or `null` before the first: its local `date`, how many cards waited, whether the push went out, and the bridge's `reason` when it did not |
 
 ## The daily grade door
@@ -312,3 +314,76 @@ Restart the bridge after either. `/state`'s `app` reads what took effect.
 executable runs through real subprocesses, to prove that the token travels on stdin and never in argv, and a
 second proves that closing the keeper kills a live `track-devices`. `tests/link_client.py` drives the handshake
 end to end, and a squatter on a loopback port proves the client never shows it the token or the request.
+
+## The tailnet door (experimental, off)
+
+A second way in for the same app, for when the phone is not on the Mac's Wi-Fi at all. It is **off unless
+configured**, the app never mentions it, and Wireless debugging (above) is the way this README recommends. It was
+built from `tailscale serve`'s source and documentation and has **not yet been run against a live `serve`**: do the
+smoke test below before relying on it.
+
+What it is: `tailscale serve` on this Mac terminates HTTPS for the machine's own tailnet name and proxies to
+`127.0.0.1:7683`. The listener's bind does not change, and the bridge's port is still never exposed (serve is
+pointed at 7683, the link, and at nothing else). Every request still runs the whole handshake: a tailnet caller
+without the token gets `/nonce`, 401s and a share of the 16 slots, as any app on the phone does today.
+
+### Turning it on
+
+1. Tailscale running on this Mac and on the phone, signed in as the same user. In the tailnet's admin console:
+   MagicDNS on, and HTTPS certificates on (the machine's name then appears in the public Certificate Transparency
+   log, as for any certificate).
+2. `tailscale serve --bg --https=7683 http://127.0.0.1:7683`. Never `tailscale funnel`.
+3. In `~/.config/tldrack/phone-link.json`:
+   ```json
+   {"tailnet": {"host": "<machine>.<tailnet>.ts.net", "port": 7683, "login": "<your tailnet login>"}}
+   ```
+4. Restart the bridge. `tailnet.on` in § State turns true; a door that was refused says why in `tailnet.error`.
+5. Open the app once while it is linked over adb. Its next signed `/health` reply carries the door's address
+   (`"remote": "https://<machine>.<tailnet>.ts.net:7683/"`), and the app keeps it in its private storage.
+
+Turning it off: remove `tailnet` from the file, restart the bridge, `tailscale serve --https=7683 off`. The next
+signed `/health` reply has no `remote`, and the app forgets the address.
+
+### What the door checks, and what that is worth
+
+A request whose `Host` is exactly the configured `host:port` (compared whole, never by suffix) is the door's. It
+must then be what serve sends for the configured login, or it is refused 403 `tailnet_refused`:
+
+- no `Tailscale-Funnel-Request` (serve sets it on a request from the public internet);
+- exactly one `Tailscale-User-Login`, equal to the configured `login`. A tagged device has none, so it is refused;
+- serve's `X-Forwarded-For`, `X-Forwarded-Proto: https` and `X-Forwarded-Host` (the door's own name), one each;
+- no other `X-Forwarded-*`, `Tailscale-*`, `Forwarded`, `Via` or `X-Real-IP` header. A header serve gains in a
+  later release is refused until it is read and listed in `gate.py`;
+- no browser (`Origin`, `Sec-Fetch-*`), as on loopback.
+
+**These headers are not proof.** Serve overwrites them on what it proxies, so a tailnet caller cannot forge them,
+but anything on this Mac's own loopback can send them with the door's `Host`. That buys such a caller nothing: it
+could already reach the listener on loopback, and either way it meets the handshake. The checks are there to
+narrow who reaches the handshake FROM THE TAILNET to the operator's own signed-in devices, and to refuse Funnel.
+The token is the proof, here as everywhere.
+
+The reverse holds too: a tailnet caller cannot pass as local. Serve always adds its `X-Forwarded-*`, and a
+loopback `Host` takes the loopback checks, which refuse every proxy header.
+
+The port may not be 443, 8443 or 10000: those are the only ports Funnel can publish, so a `funnel` typed by
+mistake finds no door of ours behind it.
+
+### How the app uses it
+
+Every call goes to the phone's own loopback first. When nothing there proves itself the link (nobody listening, or
+something that cannot sign the challenge), the app tries the door's address, over HTTPS, with the same handshake.
+The request is the same one: the handshake signs the method, the target and the body, never the host. A door that
+does not answer leaves the loopback's verdict on screen, so the app still says UNLINKED and names the fix in reach.
+The address itself needs no trust: it arrived in a reply only this Mac can sign, it is dialled only when it is one
+machine's `https://….ts.net:<port>/`, and whatever answers there is believed only once it signs a fresh challenge.
+
+Not carried by the door: the token (still written over USB only, § Two limits) and the daily grade door, which
+fires only for a phone linked over adb.
+
+### Smoke test, before relying on it
+
+With the door on and the phone on the tailnet but off adb (Wireless debugging off, unplugged), open the app: it
+should list. Then check that serve passes the request through byte for byte, which the MAC depends on: open a turn
+whose closing text has spaces, `&` and `;` in its first line (the search target carries them). A turn that opens
+proves the target survived. A door that reads UNLINKED there, while `/state` shows `requests.refused` rising, means
+serve sent a header this README does not list: read the bridge log, then `gate.py`.

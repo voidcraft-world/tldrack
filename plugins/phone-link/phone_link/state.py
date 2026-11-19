@@ -51,12 +51,21 @@ class Listener:
 
 
 class LinkState:
-    def __init__(self, port: int, *, clock=now_iso, app: Mapping[str, object] | None = None) -> None:
+    def __init__(
+        self,
+        port: int,
+        *,
+        clock=now_iso,
+        app: Mapping[str, object] | None = None,
+        tailnet: Mapping[str, object] | None = None,
+    ) -> None:
         self._lock = threading.Lock()
         self._clock = clock
         self._port = port
         #: Which app the token goes to, and why a configured one was refused (config.py `LinkConfig.to_json`).
         self._app = dict(app) if app is not None else None
+        #: The tailnet door as configured (config.py `LinkConfig.tailnet_json`): off unless the operator set it.
+        self._tailnet = dict(tailnet) if tailnet is not None else {"on": False, "host": None, "port": None, "error": None}
         self._adb = "missing"
         self._adb_error: str | None = None
         self._listener = Listener()
@@ -166,4 +175,5 @@ class LinkState:
                 "requests": asdict(self._requests),
                 "door": dict(self._door) if self._door is not None else None,
                 "wireless": {"paired": self._paired},
+                "tailnet": dict(self._tailnet),
             }

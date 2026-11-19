@@ -608,3 +608,46 @@ def test_the_token_is_never_logged(link):
     send(link, "GET", "/health")
     send(link, "GET", "/health", auth=None)
     assert link.logs and not any(link.token in line for line in link.logs)
+
+
+# -- the tailnet door -----------------------------------------------------------------------------------
+def test_health_names_the_tailnet_door_only_when_it_is_on_and_only_to_a_proven_caller(tmp_path):
+    from phone_link.config import TailnetDoor
+
+    door = TailnetDoor("mymac.tail1234.ts.net", 7683, "operator@example.com")
+    tokens = TokenStore(tmp_path / "state")
+    token = tokens.value()
+    served = {
+        "host": [door.authority],
+        "x-forwarded-for": ["100.64.0.7"],
+        "x-forwarded-host": [door.authority],
+        "x-forwarded-proto": ["https"],
+        "tailscale-user-login": ["operator@example.com"],
+    }
+
+    def health(app, headers):
+        """The whole handshake, socket-free, through the app's one policy function."""
+        issued = app.respond("GET", "/nonce?c=" + "c" * 43, dict(headers), lambda n: b"")
+        if issued.status != 200:
+            return issued.status, json.loads(issued.body)
+        nonce = json.loads(issued.body)["nonce"]
+        auth = link_client.authorization(token, nonce, "GET", "/health")
+        answer = app.respond("GET", "/health", {**headers, "authorization": [auth]}, lambda n: b"")
+        assert link_client.signed(token, nonce, answer.status, answer.body, {"phone-link-mac": answer.mac})
+        return answer.status, json.loads(answer.body)
+
+    local = {"host": ["127.0.0.1:7683"]}
+    off = LinkApp(tokens, LinkState(7683), 1)
+    assert health(off, local) == (200, {"ok": True, "v": 2})
+    assert health(off, served) == (403, {"ok": False, "error": "host_refused"})
+
+    on = LinkApp(tokens, LinkState(7683), 1, tailnet=door)
+    # Over the cable or over the tailnet, a proven caller is told the door's address.
+    told = {"ok": True, "v": 2, "remote": "https://mymac.tail1234.ts.net:7683/"}
+    assert health(on, local) == (200, told)
+    assert health(on, served) == (200, told)
+    # The door admits a caller to the handshake, never past it: without the token it is as unlinked as anyone.
+    unproven = on.respond("GET", "/health", dict(served), lambda n: b"")
+    assert (unproven.status, json.loads(unproven.body), unproven.mac) == (401, {"ok": False, "error": "unlinked"}, None)
+    stranger = {**served, "tailscale-user-login": ["stranger@example.com"]}
+    assert health(on, stranger) == (403, {"ok": False, "error": "tailnet_refused"})
