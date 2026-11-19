@@ -10,7 +10,7 @@ TLDRACK_DATA_DIR=$(mktemp -d) uv run --project lab laya-lab bench agent-open-wor
 
 ## What it prints
 
-A `golden` block with one row, `laya-base`. The published run, `bench/results/2026-11-14.json` (golden protocol `agent-open-work.q2.g7fada07abf88`), printed:
+A `golden` block with one row, `laya-base`. The published run, `bench/results/2026-11-18.json` (golden protocol `agent-open-work.q2.g7fada07abf88`), printed:
 
 | AUC [95% CI] | Brier | ECE | Cut | False ⚠️ | Missed open | Cost |
 |---|---|---|---|---|---|---|

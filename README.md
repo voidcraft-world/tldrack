@@ -120,8 +120,8 @@ The same held-out turns, one curve per voter. Up and to the left is better.
 
 Claude Opus 5.5 is on the chart as a reference: a frontier cloud model, asked the same question with no
 training. Most of these held-out labels were written by a Claude model, so its curve is partly Claude
-agreeing with Claude. On the 37 turns the operator graded by hand, it and the fine-tune tie (AUC 0.77
-against 0.74, the difference well inside the interval), and Opus is several times slower per verdict.
+agreeing with Claude. On the 40 turns the operator graded by hand, it and the fine-tune tie (AUC 0.72
+against 0.69, the difference well inside the interval), and Opus is several times slower per verdict.
 
 <p align="center">
   <picture>
