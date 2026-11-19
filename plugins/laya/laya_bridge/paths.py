@@ -119,8 +119,9 @@ PUBLIC_GOLDEN_DIR = LAB_DIR / "golden"
 #: served model's scores (`lab_files.scores_row`); teacher: a local teacher's labels beside Sonnet's
 #: (laya-lab `teacher_local.py`); requests: the request that opened each text's turn, keyed like the
 #: texts (laya-lab `open_work_data.py` `export`); votes: a Claude model's p per state, asked once on the
-#: subscription (laya-lab `claude_voter.py`).
-DATA_PARTS = ("labels", "unlabelled", "operator", "laya-p", "teacher", "requests", "votes")
+#: subscription (laya-lab `claude_voter.py`); facts: each text's turn's runtime facts, keyed like the
+#: requests (laya-lab `open_work_data.py` `export`).
+DATA_PARTS = ("labels", "unlabelled", "operator", "laya-p", "teacher", "requests", "votes", "facts")
 MODELS_CAP_BYTES = 1024 * 1024
 
 SURFACE_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")

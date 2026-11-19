@@ -17,6 +17,7 @@
 
 ## Limits
 - It judges the message, not the work: a turn that says it is done and is not reads as done.
+  A challenger question (v4, measured, not served) also reads the turn's request and its runtime facts: whether tests ran and passed, how many files were edited, and whether a commit or a pull request was made.
 - Most training labels are a teacher model's, so the fine-tune inherits the teacher's reading wherever the operator has not graded.
 - A fine-tune is fitted to one operator's agents, projects and habits of phrasing. Its numbers do not carry to another operator; the base model's numbers on the public suite do.
 - The held-out sets are small. Read every number with its row count and its interval.

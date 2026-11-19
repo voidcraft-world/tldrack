@@ -10,14 +10,17 @@ from laya_lab.data import jsonl_line
 from laya_lab.open_work_data import (
     closings,
     export,
+    merge_facts,
     merge_requests,
     merge_unlabelled,
+    read_facts_file,
     read_labels,
     read_requests_file,
     stored_request,
     text_key,
     training_rows,
     turn_ends,
+    turn_records,
 )
 from laya_bridge import review_data
 from tldrack import open_work
@@ -267,3 +270,82 @@ def test_curated_sets_are_found_in_the_store_never_named_in_code(tmp_path):
     # Folders with no readable cases add nothing and are named, so a build says which set did not read.
     assert read_supplements(tmp_path).missing == ("a-set", "b-set")
     assert read_supplements(tmp_path, names=["c-set"]).missing == ("c-set",)
+
+
+# ── facts (question v4) ─────────────────────────────────────────────────────
+
+
+def bash(call_id, command):
+    block = {"type": "tool_use", "id": call_id, "name": "Bash", "input": {"command": command}}
+    return {"type": "assistant", "message": {"id": f"m-{call_id}", "content": [block]}}
+
+
+def answer(call_id, content, is_error=False):
+    block = {"type": "tool_result", "tool_use_id": call_id, "content": content, "is_error": is_error}
+    return {"type": "user", "message": {"content": [block]}, "toolUseResult": {}}
+
+
+def edit(call_id, path):
+    block = {"type": "tool_use", "id": call_id, "name": "Edit", "input": {"file_path": path}}
+    return {"type": "assistant", "message": {"id": f"m-{call_id}", "content": [block]}}
+
+
+WORKED = [
+    prompt("fix the test and commit"),
+    edit("e1", "/w/a.py"),
+    bash("t1", "pytest -q"),
+    answer("t1", "Exit code 1\n1 failed, 3 passed", is_error=True),
+    bash("t2", "pytest -q"),
+    answer("t2", "4 passed"),
+    bash("c1", "git commit -am fix"),
+    answer("c1", "[x 1a2b] fix"),
+    say("m1", "Fixed the flaky test, ran it green, and committed the fix."),
+    task_notification(),
+    say("m2", "The background agent finished; its report is written up."),
+]
+
+
+def test_each_turn_carries_the_facts_the_bridge_would_serve_it_with():
+    assert list(turn_records(WORKED)) == [
+        (
+            "Fixed the flaky test, ran it green, and committed the fix.",
+            "fix the test and commit",
+            {"ran_tests": True, "tests_passed": True, "edited_files": 1, "made_commit": True, "opened_pr": False},
+        ),
+        (
+            "The background agent finished; its report is written up.",
+            None,
+            {"ran_tests": False, "tests_passed": None, "edited_files": 0, "made_commit": False, "opened_pr": False},
+        ),
+    ], "a task notification opens a turn of its own with a fresh trace, as on the bridge (`_is_turn_start`)"
+    assert [(text, request) for text, request, _facts in turn_records(WORKED)] == list(closings(WORKED))
+
+
+def test_merge_facts_keeps_what_was_found_and_never_overwrites_it():
+    old = {"ran_tests": False, "tests_passed": None, "edited_files": 0, "made_commit": False, "opened_pr": False}
+    new = {**old, "edited_files": 4}
+    assert merge_facts({"a" * 16: old}, {"a" * 16: new, "b" * 16: new, "c" * 16: new}, {"a" * 16, "b" * 16}) == {
+        "a" * 16: old,
+        "b" * 16: new,
+    }
+
+
+def test_export_writes_each_turns_facts_beside_the_export_as_booleans_and_counts(tmp_path, umask_022):
+    out = tmp_path / "data" / "agent-open-work-unlabelled.jsonl"
+    facts_out = out.with_name("agent-open-work-facts.jsonl")
+    out.parent.mkdir()
+    projects = tmp_path / "claude" / "projects" / "p"
+    projects.mkdir(parents=True)
+    (projects / "s.jsonl").write_text("".join(json.dumps(e) + "\n" for e in WORKED))
+    export(out, [tmp_path / "claude"], limit=5, facts_out=facts_out)
+    rows = [json.loads(line) for line in facts_out.read_text().splitlines()]
+    assert all(set(row) == {"key", "facts"} for row in rows)
+    assert all(set(row["facts"]) == set(open_work.FACT_KEYS) for row in rows)
+    assert "/w/a.py" not in facts_out.read_text() and "pytest" not in facts_out.read_text(), "never a path or a command"
+    found = read_facts_file(facts_out)
+    assert found[text_key("Fixed the flaky test, ran it green, and committed the fix.")]["made_commit"] is True
+    assert stat.S_IMODE(os.stat(facts_out).st_mode) == 0o600
+
+    facts_out.write_text(facts_out.read_text() + json.dumps({"key": "f" * 16, "facts": {"ran_tests": 1}}) + "\n")
+    assert "f" * 16 not in read_facts_file(facts_out), "a row that does not read is dropped"
+    assert read_facts_file(tmp_path / "absent.jsonl") == {}
