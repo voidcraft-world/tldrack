@@ -240,14 +240,20 @@ class OfficeRig {
     private pulse_ms: number | null = null;
     private typing = false;
     private hovered = false;
+    readonly session: string;
+    readonly kind: OfficeDesk['agent']['kind'];
+    private readonly floating_names: boolean;
 
     constructor(
-        readonly session: string,
-        readonly kind: OfficeDesk['agent']['kind'],
+        session: string,
+        kind: OfficeDesk['agent']['kind'],
         parts: OfficeParts,
-        private readonly shared: { solid: MeshBasicMaterial; chrome: LineBasicMaterial; hitbox: MeshBasicMaterial },
-        private readonly floating_names: boolean,
+        shared: { solid: MeshBasicMaterial; chrome: LineBasicMaterial; hitbox: MeshBasicMaterial },
+        floating_names: boolean,
     ) {
+        this.session = session;
+        this.kind = kind;
+        this.floating_names = floating_names;
         const g = OFFICE_GEOMETRY;
         const solid = shared.solid;
         this.screen_material = new MeshBasicMaterial({ color: PALETTE.screen_off });
@@ -644,8 +650,10 @@ export class AgentOfficeScene {
     private focused: string | null = null;
     private readonly readouts = new Map<string, FloorReadout>();
     private last_tick_ms: number | null = null;
+    private readonly floating_names: boolean;
 
-    constructor(private readonly floating_names = true) {
+    constructor(floating_names = true) {
+        this.floating_names = floating_names;
         this.ground = new Mesh(new PlaneGeometry(1, 1), new MeshBasicMaterial({ color: PALETTE.ground }));
         this.ground.rotation.x = -Math.PI / 2;
         this.group.add(this.ground, this.rooms_group);
