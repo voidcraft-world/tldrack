@@ -4,9 +4,19 @@ tldrack runs your coding agents side by side in tmux and shows every one of them
 Sessions name themselves from your prompt, so you can find the right task at a glance. A local model
 reads finished turns for you and marks them ✅ done or ⚠️ needs you.
 
-| Overview | Live rack | Annotated tour |
-|:---:|:---:|:---:|
-| <a href="docs/images/tldrack-infographic-v2.png"><img src="docs/images/tldrack-infographic-v2.png" width="280" alt="Run more agents. Read fewer answers. Auto-named tmux sessions. A local model reviews finished turns and flags those that need you."></a> | <a href="docs/img/rack.png"><img src="docs/img/rack.png" width="280" alt="TLDRack with the agent list, selected terminal, 3D office, activity board and artifact files."></a> | <a href="docs/img/rack-annotated-v2.png"><img src="docs/img/rack-annotated-v2.png" width="280" alt="Annotated TLDRack tour: launch agents or a LEAD/coordinator for big tasks, parallel agents and mixed models; find automatically named sessions, choose a coding mode, use common tools, jump between sessions, manage services, close sessions flagged as finished by a local model, connect compute, review code diffs in a resizable terminal, follow agent activity and open generated files and canvas drawings."></a> |
+<table>
+  <tr><th>Overview</th><th>Live rack</th><th>Annotated tour</th></tr>
+  <tr>
+    <td align="center"><a href="docs/images/tldrack-infographic-v2.webp"><img src="docs/img/thumbs/tldrack-infographic-v2.webp" width="280" alt="Run more agents. Read fewer answers. Auto-named tmux sessions. A local model reviews finished turns and flags those that need you."></a></td>
+    <td align="center"><a href="docs/img/rack.webp"><img src="docs/img/thumbs/rack.webp" width="280" alt="TLDRack with the agent list, selected terminal, 3D office, activity board and artifact files."></a></td>
+    <td align="center"><a href="docs/img/rack-annotated-v2.webp"><img src="docs/img/thumbs/rack-annotated-v2.webp" width="280" alt="Annotated TLDRack tour: launch agents or a LEAD/coordinator for big tasks, parallel agents and mixed models; find automatically named sessions, choose a coding mode, use common tools, jump between sessions, manage services, close sessions flagged as finished by a local model, connect compute, review code diffs in a resizable terminal, follow agent activity and open generated files and canvas drawings."></a></td>
+  </tr>
+  <tr><th colspan="2">Laya review · desktop</th><th>Laya review · Android</th></tr>
+  <tr>
+    <td align="center" colspan="2"><a href="docs/img/laya-review-desktop.webp"><img src="docs/img/thumbs/laya-review-desktop.webp" width="568" alt="Laya review on the desktop: one finished turn's closing message as Laya read it, the deal filters, agreement with Sonnet and with Laya, and one button per grade: DONE, READ, RUNNING, NEEDS YOU, SKIP."></a></td>
+    <td align="center"><a href="docs/img/laya-review-android.webp"><img src="docs/img/thumbs/laya-review-android.webp" width="172" alt="Laya review on Android: the grade counts, one finished turn with Laya's score, and tap-only grade buttons along the bottom: DONE, READ, RUNNING, NEEDS YOU, SKIP, UNDO."></a></td>
+  </tr>
+</table>
 
 Click an image to open it at full size.
 
