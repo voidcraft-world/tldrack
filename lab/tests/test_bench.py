@@ -131,7 +131,7 @@ def test_the_protocol_id_follows_the_rows_asked(lab, public_golden):
 # ── the file ──────────────────────────────────────────────────────────────────
 
 ESTIMATE = {"value", "lo", "hi"}
-TOP = {"v", "protocol", "generated_at", "commit", "voters", "sets", "rack", "reproduce"}
+TOP = {"v", "protocol", "generated_at", "commit", "voters", "sets", "rack", "felt", "reproduce"}
 PROTOCOL = {"id", "surface", "question", "question_version", "positive", "description", "interval", "costs"}
 VOTER = {"name", "label", "kind", "of", "labels", "params_m", "runtime", "licence", "served"}
 SCORE = {"voter", "auc", "brier", "ece", "roc", "reliability", "operating", "latency"}
@@ -149,7 +149,13 @@ def test_the_file_is_the_schema_shape(lab, public_golden, tmp_path):
     )
     assert bench.run(SUITE, lab.base, plan=plan, out_dir=tmp_path / "out") == 0
     payload = written(tmp_path / "out")
-    assert set(payload) == TOP and payload["v"] == 1 and payload["rack"] is None and payload["commit"] is None
+    assert (
+        set(payload) == TOP
+        and payload["v"] == 1
+        and payload["rack"] is None
+        and payload["felt"] is None
+        and payload["commit"] is None
+    )
     assert set(payload["protocol"]) == PROTOCOL
     assert payload["protocol"]["interval"] == {
         "level": 0.95,
@@ -281,6 +287,24 @@ def test_the_rack_block_is_measured_only_when_asked(lab, public_golden, tmp_path
     assert "rack     withheld" in capsys.readouterr().out
     assert bench.run(SUITE, lab.base, plan=plan, out_dir=tmp_path / "asked", day="2026-01-02", with_rack=True) == 0
     assert len(asked) == 1 and written(tmp_path / "asked")["rack"] == counts
+    assert written(tmp_path / "asked")["felt"] is None  # a store with no graded live sample has none
+    assert "felt     none" in capsys.readouterr().out
+
+
+def test_the_felt_block_rides_with_the_rack_and_is_numbers_only(lab, public_golden, tmp_path, monkeypatch, capsys):
+    """`metrics.felt` reaches the file only behind `--rack`, and passes the `leaked` guard: counts and rates alone."""
+    labelled_store(lab)
+    felt = json.loads((paths.REPO_ROOT / "bench" / "results" / "fixture.json").read_text(encoding="utf-8"))["felt"]
+    monkeypatch.setattr(bench.rack, "measure", lambda base, suite: (None, "no ledger"))
+    monkeypatch.setattr(bench, "measure_felt", lambda base, suite: felt)
+    plan = bench.Plan([fake("word", by_word)])
+    assert bench.run(SUITE, lab.base, plan=plan, out_dir=tmp_path / "quiet", day="2026-01-02") == 0
+    assert written(tmp_path / "quiet")["felt"] is None
+    capsys.readouterr()
+    assert bench.run(SUITE, lab.base, plan=plan, out_dir=tmp_path / "asked", day="2026-01-02", with_rack=True) == 0
+    assert written(tmp_path / "asked")["felt"] == felt
+    out = capsys.readouterr().out
+    assert "false ⚠️   5/100 [2.1, 10.1] (6 of 120)" in out and "💬 share   0.258 [0.205, 0.317] (62 of 240)" in out
 
 
 def test_a_voter_that_cannot_run_is_skipped_and_the_run_goes_on(lab, public_golden, tmp_path, capsys):

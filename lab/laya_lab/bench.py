@@ -73,9 +73,10 @@ from laya_lab import panel as panel_voter
 from laya_lab import floor as floor_voter
 from laya_lab.golden import SUITES, Suite, load_cases
 from laya_lab.latency import spread
+from laya_lab import metrics
 from laya_lab.metrics import at_cut, auc, brier, ece, fmt_num, pick_cut, reliability, warning_costs
 from laya_lab.registry import resolve_model, served_model, served_threshold
-from laya_bridge import agreement, files, lab_files, paths, review_log, rows
+from laya_bridge import agreement, files, lab_files, paths, review_data, review_log, rows
 
 REFUSED = 3
 RESULTS_VERSION = 1
@@ -1038,7 +1039,8 @@ def results(
     seed: int = BOOTSTRAP_SEED,
     resamples: int = BOOTSTRAP_RESAMPLES,
 ) -> dict[str, Any]:
-    """The whole file. `rack` (the rack's live use) is None here: `run` measures it (`rack.py` owns how)."""
+    """The whole file. `rack` (the rack's live use) and `felt` are None here: `run` measures them (`rack.py` and
+    `measure_felt` own how)."""
     voters = [voter for voter in plan.voters if voter.name in answered]
     scored = []
     for set_name, data in sets.items():
@@ -1065,6 +1067,7 @@ def results(
         "voters": [voter_entry(voter, answered) for voter in voters],
         "sets": scored,
         "rack": None,
+        "felt": None,
         "reproduce": {"command": REPRODUCE.format(suite=suite.name), "set": "golden"},
     }
 
@@ -1138,6 +1141,13 @@ def plan_lines(
     return lines
 
 
+def measure_felt(base: Path, suite: Suite) -> dict[str, Any] | None:
+    """`metrics.felt` on the surface's live sample, or None while nothing in it is graded. It rides with `rack`
+    (`--rack`): the same operator's live use of the rack, in counts, so it goes out only when they ask for it."""
+    found = metrics.felt(metrics.felt_turns(review_data.snapshot(base, suite.surface)))
+    return found if found["graded"] else None
+
+
 def result_lines(payload: Mapping[str, Any]) -> list[str]:
     lines = []
     for block in payload["sets"]:
@@ -1153,6 +1163,9 @@ def result_lines(payload: Mapping[str, Any]) -> list[str]:
                 f"{at['false_warnings']:>3} {at['missed_open']:>4}  {at['cost']['value']:>5}  "
                 f"{timed['p50_ms'] if timed else '—':>7}"
             )
+    if payload.get("felt"):
+        lines.append(f"  felt     live sample {payload['felt']['sampled']} verdicts · {payload['felt']['graded']} graded")
+        lines += metrics.felt_lines(payload["felt"])
     return lines
 
 
@@ -1209,6 +1222,9 @@ def run(
         payload["rack"], no_rack = rack.measure(base, suite)
         if no_rack:
             print(f"  rack     none: {no_rack}")
+        payload["felt"] = measure_felt(base, suite)
+        if payload["felt"] is None:
+            print("  felt     none: no graded live sample in the store")
     else:
         print("  rack     withheld: the rack's own use stays out of a published file unless --rack asks for it")
     try:

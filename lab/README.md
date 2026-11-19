@@ -57,6 +57,14 @@ challenger and the TF-IDF floor, the challenger shadow pass on the day's live ve
 readiness with a RE-SWEEP dry run at 40/10 and every 10 grades after. While it runs, a lab press waits behind it.
 Owned by `laya_lab/nightly.py` — see the note there.
 
+**What the operator feels.** `laya-lab status` prints three numbers, each from the operator's grades of live verdicts
+in the uniform `live_sample` stratum only, each with its n and a 95% interval, and a bare count under 20 rows:
+- **false ⚠️ per 100**: turns where the rack showed a ⚠️ and the operator graded the work not open, per 100 graded sampled turns.
+- **missed 🙋 per 100**: turns graded NEEDS YOU that drew no shown ⚠️, per 100 graded sampled turns, split by the mark drawn
+  instead (✅, the costly miss; 💬; a ⚠️ the rack held back); an OPEN graded without RUNNING or NEEDS YOU is counted apart.
+- **💬 share**: the sampled verdicts in the reply band, of every sampled verdict, then how many are graded and their open / done / read split.
+`bench --rack` writes the same block into the results file. Owned by `laya_lab/metrics.py` — see "Felt".
+
 **Two meters beside it.** `laya-lab latency agent-open-work` (a read: no model runs, no gpu slot)
 reads the decision ledger: `ms` by state length, machine load and cold start, and the token overflow of the states Laya
 is asked. `laya-lab stability agent-open-work` (a step of the pack; by hand it takes the gpu slot itself) is

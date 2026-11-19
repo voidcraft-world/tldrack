@@ -14,16 +14,32 @@ same p, so only the labels differ. It then refits one temperature on the operato
 "On Calibration of Modern Neural Networks": a single T fixes most miscalibration) and reports the ECE that T
 reaches out of fold, since a T fitted and scored on the same rows flatters itself. It is a measurement only:
 nothing here writes a temperature back to a checkpoint.
+
+**Felt** (`felt_turns`, `felt`, `felt_lines`). AUC, Brier and ECE say how well p ranks and how true it is; the operator
+feels two other things: how often the rack cries wolf, and how often it stays quiet when they were needed. Both are
+read from the operator's grades of LIVE verdicts in the `live_sample` stratum alone (`review_data.is_live_member`):
+every other lane is chosen by p, so a rate over its grades reads whichever lane was graded most (`review_data.live_rates`
+owns the same argument). One turn is one text: its NEWEST decision, banded by the cuts that decision was served with
+(`review_data.band_of`), and the text's live grade (`review_data.grade_of`). A ⚠️ is one the rack SHOWED. Each rate
+carries its count, its n and a 95% Jeffreys interval (`agreement.intervals`, the one the deck's precision draws), and
+under `FELT_MIN_N` in its denominator it is the count alone: a per-100 rate on a dozen turns is a guess.
+- **false ⚠️ per 100**: shown ⚠️ graded not open, per 100 graded sampled turns.
+- **missed 🙋 per 100**: turns graded NEEDS YOU that drew no shown ⚠️, per 100 graded sampled turns, split by what the
+  rack drew instead: ✅ (the costly miss: closed unread), 💬, or a ⚠️ the rack held back. An OPEN nobody split into
+  RUNNING or NEEDS YOU is counted apart (`unsplit`), so the missed count is a floor.
+- **💬 share**: the sampled verdicts in the reply band, of every sampled verdict, graded or not; then how many of those
+  are graded, and their split: open, done, read (a DONE from before `review_data.READ_SINCE` is counted done).
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from laya_lab import siblings  # noqa: F401  (puts laya_bridge on sys.path)
-from laya_bridge import agreement
+from laya_bridge import agreement, review_data
 from laya_bridge.agreement import cohens_kappa
 
 #: The golden suite's coarse sweep (its reports have always carried these seven).
@@ -316,3 +332,124 @@ def log_loss(probabilities: Sequence[float], expected: Sequence[bool], eps: floa
         q = min(max(p, eps), 1 - eps)
         total -= math.log(q if e else 1 - q)
     return round(total / len(probabilities), 4)
+
+
+# ── felt: what the operator feels (module note: Felt) ────────────────────────
+
+#: Under this many rows in its denominator a felt rate is its count alone.
+FELT_MIN_N = 20
+#: The 💬 band, and the bands a missed 🙋 can sit under instead of a shown ⚠️.
+REPLY = "reply"
+MISSED_UNDER = ("done", "reply", "held")
+
+
+@dataclass(frozen=True)
+class FeltTurn:
+    """One sampled live turn: the band its newest decision drew, whether the rack showed that ⚠️, and the text's live
+    grade: `open` None when ungraded, else the answer's open; `grade` the four-way class (`review_data.grade_of`)."""
+
+    band: str
+    shown: bool
+    open: bool | None
+    grade: str | None
+
+
+def felt_turns(snap: Any) -> list[FeltTurn]:
+    """Every `live_sample` member of a `review_data.Snapshot` with a live verdict and a text, as a `FeltTurn`."""
+    items, labels = snap.items, snap.fold.labels
+    newest = dict(items.recent)
+    turns = []
+    for key in items.decisions_of:
+        meta = newest.get(key)
+        if key not in items.items or meta is None or not review_data.is_live_member(snap.spec, key):
+            continue  # a text no card can show is nobody's to grade
+        verdict = items.verdicts.get(meta["decision_id"])
+        if verdict is None:
+            continue
+        answer = labels.get(key)
+        graded = answer is not None and isinstance(answer.get("open"), bool)
+        turns.append(
+            FeltTurn(
+                band=review_data.band_of(meta["p"], meta["threshold"], meta["done_threshold"]),
+                shown=verdict.shown,
+                open=answer["open"] if graded else None,
+                grade=review_data.grade_of(answer) if graded else None,
+            )
+        )
+    return turns
+
+
+def felt_rate(count: int, n: int, scale: float = 1.0, minimum: int = FELT_MIN_N) -> dict[str, Any]:
+    """`{count, n, value, lo, hi}`: `count / n × scale` with its 95% Jeffreys interval, the interval's ends pinned to 0
+    at a count of 0 and to `scale` at a count of n (Brown, Cai and DasGupta 2001). Under `minimum` rows the value and
+    the interval are None."""
+    if n < minimum or n == 0:
+        return {"count": count, "n": n, "value": None, "lo": None, "hi": None}
+    lo, hi = agreement.intervals((count, n - count, 0, 0))["precision"]
+    lo, hi = (0.0 if count == 0 else lo), (1.0 if count == n else hi)
+    value = count / n
+    lo, hi = min(lo, value), max(hi, value)
+    digits = 1 if scale >= 100 else 3
+    return {
+        "count": count,
+        "n": n,
+        "value": round(value * scale, digits),
+        "lo": round(lo * scale, digits),
+        "hi": round(hi * scale, digits),
+    }
+
+
+def felt(turns: Sequence[FeltTurn], minimum: int = FELT_MIN_N) -> dict[str, Any]:
+    """The three felt numbers over `felt_turns` (module note: Felt). Counts and rates only."""
+    graded = [turn for turn in turns if turn.open is not None]
+    n = len(graded)
+    unshown = [turn for turn in graded if not turn.shown]
+    you = [turn for turn in unshown if turn.open and turn.grade == "you"]
+
+    def under(name: str) -> int:  # a missed 🙋 in the open band drew a ⚠️ the rack held back
+        return sum(1 for turn in you if ("held" if turn.band == "open" else turn.band) == name)
+
+    replies = [turn for turn in turns if turn.band == REPLY]
+    replied = [turn for turn in replies if turn.open is not None]
+    split = {
+        "open": sum(1 for turn in replied if turn.open),
+        "read": sum(1 for turn in replied if not turn.open and turn.grade == "read"),
+    }
+    split["done"] = len(replied) - split["open"] - split["read"]
+    return {
+        "basis": "live_sample",
+        "min_n": minimum,
+        "sampled": len(turns),
+        "graded": n,
+        "false_warning": felt_rate(sum(1 for turn in graded if turn.shown and not turn.open), n, 100, minimum),
+        "missed_you": {
+            **felt_rate(len(you), n, 100, minimum),
+            **{name: felt_rate(under(name), n, 100, minimum) for name in MISSED_UNDER},
+            "unsplit": sum(1 for turn in unshown if turn.open and turn.grade is None),
+        },
+        "reply": {
+            **felt_rate(len(replies), len(turns), 1, minimum),
+            "graded": len(replied),
+            **{name: felt_rate(split[name], len(replied), 1, minimum) for name in ("open", "done", "read")},
+        },
+    }
+
+
+def fmt_rate(rate: Mapping[str, Any], unit: str = "") -> str:
+    """`3.8/100 [1.2, 9.6] (3 of 80)`, or `3 of 12, no rate` under the minimum n."""
+    if rate["value"] is None:
+        return f"{rate['count']} of {rate['n']}, no rate"
+    return f"{rate['value']:g}{unit} [{rate['lo']:g}, {rate['hi']:g}] ({rate['count']} of {rate['n']})"
+
+
+def felt_lines(found: Mapping[str, Any], indent: str = "    ") -> list[str]:
+    """`felt` as three readout lines, numbers first: what `laya-lab status` and the bench print."""
+    missed, reply = found["missed_you"], found["reply"]
+    return [
+        f"{indent}false ⚠️   {fmt_rate(found['false_warning'], '/100')}",
+        f"{indent}missed 🙋  {fmt_rate(missed, '/100')} · under ✅ {missed['done']['count']} · under 💬 "
+        f"{missed['reply']['count']} · held ⚠️ {missed['held']['count']} · {missed['unsplit']} open unsplit",
+        f"{indent}💬 share   {fmt_rate(reply)} · {reply['graded']} graded: open {fmt_num(reply['open']['value'])} / done "
+        f"{fmt_num(reply['done']['value'])} / read {fmt_num(reply['read']['value'])}"
+        f" ({reply['open']['count']}/{reply['done']['count']}/{reply['read']['count']})",
+    ]

@@ -48,6 +48,7 @@ from laya_lab.data import DEFAULT_EPOCHS, SURFACES, export_coordinator, tighten
 from laya_lab.golden import SUITES as GOLDEN_SUITES
 from laya_lab.heldout import LABEL_SOURCES
 from laya_lab.latency import DEFAULT_DAYS as DEFAULT_LATENCY_DAYS
+from laya_lab import metrics
 from laya_lab.metrics import fmt_kappa, fmt_num
 from laya_lab.registry import AS_CHOICES, CHALLENGER, DATA_DIRNAME, base_dir, read_registry, unregister
 
@@ -160,7 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--fleet",  # legacy (step 6.8): the flag's name before 0.1.0, taken for one release
         dest="rack",
         action="store_true",
-        help="also measure the rack's own use (rack.py) into the file, which is published; off by default",
+        help="also measure the rack's own use (rack.py) and the felt numbers (metrics.felt) into the file, which is published; off by default",
     )
     bench.add_argument(
         "--challenger",
@@ -455,7 +456,10 @@ def reads_only(args: argparse.Namespace) -> bool:
 def cmd_status(args: argparse.Namespace, base: Path | None) -> int:
     from laya_bridge.ops import ops_state
 
-    for line in status_lines(ops_state(base, None, [])):
+    state = ops_state(base, None, [])
+    for line in status_lines(state):
+        print(line)
+    for line in felt_status(base, [row["surface"] for row in state["review"]]):
         print(line)
     return 0
 
@@ -714,6 +718,20 @@ def main(argv: list[str] | None = None) -> int:
 
 
 # ── status ────────────────────────────────────────────────────────────────────
+
+
+def felt_status(base: Path | None, surfaces: list[str]) -> list[str]:
+    """The felt numbers of each review surface (`metrics.felt`), three short lines each: none without a store."""
+    if base is None:
+        return []
+    from laya_bridge import review_data
+
+    lines = []
+    for surface in surfaces:
+        found = metrics.felt(metrics.felt_turns(review_data.snapshot(base, surface)))
+        lines.append(f"  felt     {surface} · live sample {found['sampled']} verdicts · {found['graded']} graded")
+        lines += metrics.felt_lines(found)
+    return lines
 
 
 def status_lines(state: dict[str, Any]) -> list[str]:

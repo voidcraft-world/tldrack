@@ -28,8 +28,7 @@ def measures(n: int = 20) -> dict:
     return {
         "kappa": {**agreement.kappa_summary([(True, True), (False, False)] * (n // 2)), "private_text": SENTINEL},
         "live": {"warning_new": {"precision": rate, "recall": rate}},
-        "false": 2,
-        "sample": 20,
+        "felt": {"false_warning": {"count": 2, "n": 20, "value": 10.0, "lo": 2.6, "hi": 28.4}},
         "cut": 0.7,
         "latency": None,
         "shadow": None,
@@ -332,6 +331,7 @@ def test_the_headline_and_the_reproduce_numbers_come_from_the_newest_results_fil
     assert "| Public golden suite | 2 (1 open / 1 done) | 0.911 [0.848, 0.970] | 0.824 [0.761, 0.883] |" in verifier
     assert "0.555" not in verifier and "q3" not in verifier  # a challenger is measured, not served: off the card
     assert verifier.index("## The headline") < verifier.index("## Live sample")
+    assert "per 100 graded sampled turn ends: 10.0 (95% CI 2.6, 28.4; false=2, n=20)" in verifier  # metrics.felt's
     assert card.COMMAND in reproduce and "`laya-base`" in reproduce
     assert "| 0.824 [0.761, 0.883] | 0.203 | 0.156 | 0.70 | 4 | 78 | 86.0 |" in reproduce
     assert f"golden protocol `{golden_protocol()}`" in reproduce and "2,000 resamples, seed 20261113" in reproduce

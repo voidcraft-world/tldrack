@@ -221,6 +221,27 @@ export function make_fixture(): BenchResults {
       latency: { n: 2400, p50_ms: 38, p90_ms: 95 },
       next_step: { suggested: 610, taken: 205 },
     },
+    felt: {
+      basis: 'live_sample',
+      min_n: 20,
+      sampled: 240,
+      graded: 120,
+      false_warning: { count: 6, n: 120, value: 5.0, lo: 2.1, hi: 10.1 },
+      missed_you: {
+        count: 4, n: 120, value: 3.3, lo: 1.1, hi: 7.8,
+        done: { count: 1, n: 120, value: 0.8, lo: 0.1, hi: 3.9 },
+        reply: { count: 3, n: 120, value: 2.5, lo: 0.7, hi: 6.5 },
+        held: { count: 0, n: 120, value: 0, lo: 0, hi: 2.2 },
+        unsplit: 2,
+      },
+      reply: {
+        count: 62, n: 240, value: 0.258, lo: 0.205, hi: 0.317,
+        graded: 30,
+        open: { count: 9, n: 30, value: 0.3, lo: 0.162, hi: 0.474 },
+        done: { count: 15, n: 30, value: 0.5, lo: 0.33, hi: 0.671 },
+        read: { count: 6, n: 30, value: 0.2, lo: 0.087, hi: 0.361 },
+      },
+    },
     reproduce: { command: 'uv run --project lab laya-lab bench --set golden', set: 'golden' },
   });
 }
