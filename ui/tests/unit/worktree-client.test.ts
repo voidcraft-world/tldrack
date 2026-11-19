@@ -777,6 +777,22 @@ test('fetch_worktree_state reads each tree\'s PR, and a null one as none only on
     assert.deepEqual(unknown?.worktree_trees, [{ path: '~/w/b', branch: 'b' }], 'never fetched: unknown, never "no PR"');
 });
 
+test('fetch_worktree_state keeps a tree\'s landing when well-formed, and drops anything else', async () => {
+    const trees = [{ path: '~/w/a', branch: 'a', pr: null, landing: { how: 'ancestor', pr: 41 } },
+        { path: '~/w/b', branch: 'b', pr: null, landing: null },
+        { path: '~/w/c', branch: 'c', pr: null, landing: { how: 'teleport', pr: 1 } },
+        { path: '~/w/d', branch: 'd', pr: null, landing: { how: 'squash', pr: 'x' } }];
+    const state = await fetch_worktree_state((p) => p,
+        respond({ worktrees: [], root: '/wt', base: 'main', worktree_paths: [], worktree_trees: trees, pr_known: true }));
+    const none = { state: 'none', number: null, url: null };
+    assert.deepEqual(state?.worktree_trees, [
+        { path: '~/w/a', branch: 'a', pr: none, landing: { how: 'ancestor', pr: 41 } },
+        { path: '~/w/b', branch: 'b', pr: none },
+        { path: '~/w/c', branch: 'c', pr: none },
+        { path: '~/w/d', branch: 'd', pr: none, landing: { how: 'squash', pr: null } },
+    ]);
+});
+
 // ── CLEAN: `/state`'s landing fields and `POST /cleanup` ───────────────────
 
 import {

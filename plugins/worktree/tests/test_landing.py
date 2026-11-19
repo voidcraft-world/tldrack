@@ -425,6 +425,8 @@ def tier_script():
 
     return Script(
         [
+            # The fixture's one ancestor ("ancestor") is on the base's line: no merge brought it in.
+            (("git", "-C", REPO, "rev-list"), (0, "", "")),
             (("git", "-C", REPO, "merge-base"), (0, MB + "\n", "")),
             (("git", "-C", REPO, "cat-file", "--batch-check"), (0, "", "")),
             (("git", "-C", REPO, "log", "-p"), patch_log),
@@ -544,6 +546,144 @@ class TestContentTier:
         by = {r["branch"]: r for r in table}
         assert by["squashed"]["landed"] is True
         assert by["live"]["content"] == "measured" and by["live"]["ledger"]["missing"] == 1
+
+
+class TestIntroducedBy:
+    """Which parent carried a tip into the base's first-parent line. Shapes: `C` the base tip, `M` a merge on
+    the line, `B` the base before it, `H` a PR head, `T` the tip."""
+
+    T, H, M, B, C, D = oid("7"), oid("4"), oid("3e"), oid("b1"), oid("c1"), oid("d1")
+
+    def test_a_tip_merged_inside_another_branchs_pr_names_that_prs_head(self):
+        # T → H (a combined branch took T), merged into the base as M = (B, H), then C on top.
+        graph = {self.C: [self.M], self.M: [self.B, self.H], self.H: [self.T]}
+        assert L.introduced_by(self.T, self.C, graph) == self.H
+
+    def test_a_tip_merged_by_its_own_merge_commit_names_itself(self):
+        assert L.introduced_by(self.T, self.C, {self.C: [self.M], self.M: [self.B, self.T]}) == self.T
+
+    def test_a_tip_on_the_line_names_nothing(self):
+        # A branch cut from the base and never committed to: C → D → T on the first-parent line.
+        assert L.introduced_by(self.T, self.C, {self.C: [self.D], self.D: [self.T]}) == ""
+        # ... even when a merge sits above it: its first parent still descends from T.
+        graph = {self.C: [self.M], self.M: [self.D, self.H], self.D: [self.T]}
+        assert L.introduced_by(self.T, self.C, graph) == ""
+
+    def test_the_base_tip_itself_and_an_unreadable_graph_name_nothing(self):
+        assert L.introduced_by(self.C, self.C, {}) == ""
+        assert L.introduced_by(self.T, self.C, {}) == ""
+
+    def test_the_parser_keeps_first_parents_first_and_drops_junk(self):
+        text = f"{self.C} {self.M}\n{self.M} {self.B} {self.H}\nnot an oid\n\n"
+        assert L.parse_parent_lines(text) == {self.C: [self.M], self.M: [self.B, self.H]}
+        assert L.parse_parent_lines(None) == {}
+
+    def test_the_command_walks_from_the_tip_to_the_base_tip(self):
+        command = L.build_ancestry_path_command(REPO, self.T, self.C)
+        assert command[3:6] == ["rev-list", "--parents", "--ancestry-path"] and f"{self.T}..{self.C}" in command
+
+
+class TestAncestorNamedByItsMerge:
+    """The rule of 2026-11-14, over invented shapes: lanes merged into a combined branch whose PR merged
+    with a merge commit. Pulling that merge made every lane an ancestor, and nothing named the PR any more."""
+
+    LANE, FRESH, OLD = oid("1a"), oid("f5"), oid("01d")
+    HEAD, MERGE, BEFORE = oid("4ead"), oid("3e"), oid("b1")
+    BUILD = {"number": 41, "state": "merged", "base_ref": BASE, "head_oid": HEAD, "merged_at": "2026-11-14T00:00:00Z"}
+
+    def rows(self, **lane):
+        def ancestor(branch, tip, behind, **extra):
+            return {
+                "branch": branch,
+                "is_base": False,
+                "oid": tip,
+                "ahead": 0,
+                "behind": behind,
+                "landed": True,
+                "merged": True,
+                "committed_at": 1790000000,
+                **extra,
+            }
+
+        return [
+            {
+                "branch": "main",
+                "is_base": True,
+                "oid": BASE_TIP,
+                "ahead": 0,
+                "behind": 0,
+                "landed": False,
+                "merged": True,
+                "committed_at": 1,
+            },
+            ancestor("lane", self.LANE, 4, **lane),
+            ancestor("fresh", self.FRESH, 2),
+            ancestor("old", self.OLD, L.ANCESTRY_PATH_MAX_BEHIND + 1),
+        ]
+
+    def script(self):
+        graphs = {
+            self.LANE: f"{BASE_TIP} {self.MERGE}\n{self.MERGE} {self.BEFORE} {self.HEAD}\n{self.HEAD} {self.LANE}\n",
+            self.FRESH: f"{BASE_TIP} {self.FRESH}\n",
+        }
+
+        def rev_list(command, _input):
+            return 0, graphs[command[-2].split("..")[0]], ""
+
+        return Script([(("git", "-C", REPO, "rev-list"), rev_list)])
+
+    def judged(self, tmp_path, prs, **lane):
+        script, started = self.script(), []
+        tier = L.ContentTier(REPO, L.PatchIdStore(tmp_path / "pids.json"), runner=script, start_thread=started.append)
+        tier.judge(self.rows(**lane), base=BASE, prs=prs)
+        assert script.calls == [] and len(started) == 1, "judging never forks; one pass walks"
+        started.pop()()
+        assert tier.last_error is None
+        table = self.rows(**lane)
+        tier.judge(table, base=BASE, prs=prs)
+        assert started == [], "every walk is cached by tip"
+        self.tier = tier
+        return {r["branch"]: r for r in table}, script
+
+    def test_the_lane_names_the_pr_that_merged_it_and_a_fresh_branch_names_none(self, tmp_path):
+        by, script = self.judged(tmp_path, {"feat/build": self.BUILD})
+        assert by["lane"]["landing"] == {"how": "ancestor", "pr": 41}
+        assert L.work_landed(by["lane"]["landing"]) is True
+        assert by["fresh"]["landing"] == {"how": "ancestor", "pr": None}
+        assert L.work_landed(by["fresh"]["landing"]) is False
+        assert by["old"]["landing"] == {"how": "ancestor", "pr": None}
+        walked = [command[-2].split("..")[0] for command, _input in script.calls]
+        assert sorted(walked) == sorted([self.LANE, self.FRESH]), "too far behind is never walked"
+
+    def test_its_own_pr_still_wins(self, tmp_path):
+        own = {"number": 12, "state": "merged", "base_ref": BASE, "head_oid": self.LANE, "merged_at": "2026-11-01T00:00:00Z"}
+        script, started = self.script(), []
+        tier = L.ContentTier(REPO, L.PatchIdStore(tmp_path / "pids.json"), runner=script, start_thread=started.append)
+        table = self.rows(pr=own)
+        tier.judge(table, base=BASE, prs={"feat/build": self.BUILD})
+        assert {r["branch"]: r for r in table}["lane"]["landing"] == {"how": "ancestor", "pr": 12}
+
+    @pytest.mark.parametrize(
+        "pr",
+        [
+            {"base_ref": "release"},  # merged into another branch, not the base
+            {"merged_at": "2026-09-01T00:00:00Z"},  # the tip was committed after that merge
+            {"state": "closed"},
+            {"head_oid": oid("0ther")},  # the merge's other parent is no PR's head
+        ],
+    )
+    def test_anything_short_of_a_pr_merged_into_the_base_after_the_tip_names_nothing(self, tmp_path, pr):
+        by, _script = self.judged(tmp_path, {"feat/build": {**self.BUILD, **pr}})
+        assert by["lane"]["landing"] == {"how": "ancestor", "pr": None}
+
+    def test_a_fresh_pr_index_names_it_without_walking_again(self, tmp_path):
+        by, script = self.judged(tmp_path, {})
+        assert by["lane"]["landing"] == {"how": "ancestor", "pr": None}
+        calls = len(script.calls)
+        table = self.rows()
+        self.tier.judge(table, base=BASE, prs={"feat/build": self.BUILD})
+        assert {r["branch"]: r for r in table}["lane"]["landing"] == {"how": "ancestor", "pr": 41}
+        assert len(script.calls) == calls
 
 
 class TestBuilders:

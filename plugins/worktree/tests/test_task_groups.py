@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from worktree.task_groups import TaskGroups, new_group, releasable
+from worktree.task_groups import (
+    TaskGroups,
+    batch_due,
+    delivered,
+    follows_open_pr,
+    new_group,
+    publishable,
+    releasable,
+)
 from worktree import task_group_runner as runner
 
 PARENT = {"parent_id": str(uuid.uuid4()), "parent_name": "parent"}
@@ -338,3 +346,103 @@ def test_new_publication_pushes_the_tested_object_and_uses_body_file(store, repo
     monkeypatch.setattr(runner, "checked", checked)
     assert runner.publish(group, worker, [{"branch": worker["branch"], "path": str(path)}], "main").endswith("/13")
     assert calls[0][-1] == f"{head}:refs/heads/batch/lane-0"
+
+
+# ── delivered: a branch that landed inside another branch's PR ──────────────
+# The rule of 2026-11-14, over invented groups: lanes of one build merged through ONE combined PR read
+# `blocked` with no PR of its own, while the harbor said each had landed.
+
+LANDED = {"how": "ancestor", "pr": 41}
+
+
+def each_group(store, count=2):
+    return store.create(
+        new_group(
+            {
+                "label": "Build",
+                "start_sha": SHA,
+                "membership": "open",
+                "release": "each",
+                "workers": [{"branch": f"batch/lane-{i}"} for i in range(count)],
+            },
+            PARENT,
+        )
+    )
+
+
+def test_a_landed_worker_with_no_pr_is_delivered_not_a_blocker_and_not_publishable(store):
+    group = each_group(store)
+    store.report(group["id"], {"branch": "batch/lane-0", "stage": "blocked", "note": "waiting on the combined PR"})
+    ready(store, group, 1)
+    assert store.list()[0]["blockers"] == 1
+    store.reconcile_landing({"batch/lane-0": LANDED, "batch/lane-1": {"how": "commits", "pr": None}})
+    view = store.list()[0]
+    lane = view["workers"][0]
+    assert lane["landing"] == {**LANDED, "branch": "batch/lane-0"} and lane["error"] is None
+    assert delivered(lane) and not lane["pr_url"]
+    assert (view["blockers"], view["percent"], view["phase"]) == (0, 100, "complete")
+    assert not publishable(view, lane) and not publishable(view, view["workers"][1])
+    with pytest.raises(ValueError, match="frozen"):
+        ready(store, group)
+    assert not store.awaiting_delivery()
+
+
+def test_resuming_a_paused_group_never_publishes_a_landed_worker(store, monkeypatch):
+    group = each_group(store, 1)
+    store.control(group["id"], "pause")
+    ready(store, group)
+    store.reconcile_landing({"batch/lane-0": LANDED})
+    store.control(group["id"], "resume")
+    monkeypatch.setattr(runner, "checked", lambda *a, **k: pytest.fail("a landed worker is never published"))
+    monkeypatch.setattr(runner, "publish", lambda *a, **k: pytest.fail("a landed worker is never published"))
+    runner.GroupRunner(store, list, Path("/unused"), "main", print).tick()
+    assert store.list()[0]["phase"] == "complete"
+
+
+def test_a_batch_releases_without_the_landed_worker_and_never_publishes_it(store, monkeypatch):
+    group = make(store)
+    ready(store, group, 1)
+    store.reconcile_landing({"batch/lane-0": LANDED})
+    store.control(group["id"], "seal")
+    current = store.get(group["id"])
+    assert releasable(current), "a delivered worker waits on nothing"
+    assert [batch_due(w) for w in current["workers"]] == [False, True]
+    monkeypatch.setattr(runner, "checked", lambda *a, **k: "")
+    monkeypatch.setattr(runner, "preflight", lambda g, w, m, b: None)
+    published = []
+    monkeypatch.setattr(runner, "publish", lambda g, w, m, b: published.append(w["branch"]) or "https://github.com/o/r/pull/9")
+    runner.GroupRunner(store, list, Path("/unused"), "main", print).tick()
+    assert published == ["batch/lane-1"]
+    assert store.list()[0]["phase"] == "complete"
+
+
+def test_the_publication_branch_landing_delivers_the_worker_too(store):
+    group = make(store, 1)
+    branch = f"pr/{group['id'][:8]}/wt-batch-lane-0/clean"
+    ready(store, group, publication_branch=branch)
+    store.reconcile_landing({branch: {"how": "commits", "pr": None}})
+    assert store.list()[0]["workers"][0]["landing"]["branch"] == branch
+
+
+def test_a_landed_worker_stops_following_its_own_open_pr(store):
+    group = each_group(store, 1)
+    ready(store, group)
+    store.worker_result(group["id"], "batch/lane-0", pr_url="https://github.com/o/r/pull/5", pr_status="open", pr_state="open")
+    current = store.get(group["id"])
+    assert follows_open_pr(current, current["workers"][0])
+    store.reconcile_landing({"batch/lane-0": LANDED})
+    current = store.get(group["id"])
+    assert not follows_open_pr(current, current["workers"][0])
+
+
+def test_landing_is_final_and_waits_for_a_publication_in_flight(store):
+    group = make(store, 2)
+    store.worker_result(group["id"], "batch/lane-1", pr_status="opening")
+    store.reconcile_landing({"batch/lane-0": LANDED, "batch/lane-1": LANDED})
+    workers = store.list()[0]["workers"]
+    assert delivered(workers[0]) and not delivered(workers[1])
+    # A tree CLEANUP removed (its branch gone from every later sweep) never undoes it.
+    store.reconcile_landing({})
+    store.reconcile_landing({"other": LANDED})
+    assert delivered(store.list()[0]["workers"][0])
+    assert store.awaiting_delivery()

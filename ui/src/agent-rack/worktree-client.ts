@@ -490,11 +490,15 @@ export async function fetch_worktree_state(
 
 /**
  * A tree's `pr` as the island reads it (`WorktreeIsland.pr`): the plugin's `{number, state, url}`, `none` for its
- * null once the index has been fetched (`pr_known`), and left out while nothing is known, never guessed.
+ * null once the index has been fetched (`pr_known`), and left out while nothing is known, never guessed. Its
+ * `landing` rides along when the plugin sent a well-formed one (`island_pr` reads it first), and is dropped
+ * otherwise.
  */
 function with_pr(tree: WorktreeIsland, pr_known: boolean): WorktreeIsland {
     const raw = (tree as { pr?: unknown }).pr;
-    const { pr: _dropped, ...rest } = tree as WorktreeIsland & { pr?: unknown };
+    const { pr: _dropped, landing: _landing, ...base } = tree as WorktreeIsland & { pr?: unknown; landing?: unknown };
+    const landing = tree_landing((tree as { landing?: unknown }).landing);
+    const rest: WorktreeIsland = landing ? { ...base, landing } : base;
     if (raw && typeof raw === 'object') {
         const record = raw as Record<string, unknown>;
         if (record.state === 'open' || record.state === 'merged' || record.state === 'closed') {
@@ -509,6 +513,15 @@ function with_pr(tree: WorktreeIsland, pr_known: boolean): WorktreeIsland {
         }
     }
     return pr_known ? { ...rest, pr: { state: 'none', number: null, url: null } } : rest;
+}
+
+/** One tree's `landing` from `/state`: `{how, pr}` with a known `how`, else null. */
+function tree_landing(raw: unknown): BranchLanding | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const landing = raw as Record<string, unknown>;
+    return typeof landing.how === 'string' && LANDING_HOWS.has(landing.how)
+        ? { how: landing.how as BranchLandingHow, pr: pr_number_or_null(landing.pr) }
+        : null;
 }
 
 /** `capabilities.cleanup` on the `/state` document: the bridge has `POST /cleanup`. */

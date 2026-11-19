@@ -26,6 +26,20 @@ rung rather than passing it.
 3. **commits** — every commit on the branch is patch-identical to a commit on
    the base, or to one inside a merged PR's head range (rebased, then landed).
 
+── An ancestor names the merge that brought it in ─────────────────────────────
+A tip that is an ancestor of the base is landed outright, but `ancestor` alone
+cannot tell a branch whose work arrived through a merge commit from one cut
+from the base and never committed to (`work_landed` owns why that matters).
+Once a branch's PR is squashed its own name proves it; once ANOTHER branch's
+PR carries it with a merge commit (the lanes of one build through one
+combined PR), nothing named it, and pulling that merge turned "shipped inside
+#N" into a bare `ancestor`. So an ancestor no PR of its own names asks which
+commit of the base's first-parent line brought its tip in (`introduced_by`).
+If that commit's first parent IS the tip, the tip was on the line: no PR. If
+it is a merge whose other parent, the one on the tip's side, is the head of a
+PR merged into the base, that PR shipped it. One `rev-list --ancestry-path`
+per tip, kept by tip for good: the base's first-parent history only grows.
+
 ── `contained_in` is not landed, and says so ─────────────────────────────────
 A branch whose tip is an ancestor of another NOT-landed branch's tip loses
 nothing when deleted: its commits stay on the other one. That is not "in main",
@@ -105,6 +119,11 @@ OCCUPANT_POLL_SECONDS = 0.25
 VERSION_NAMED_BINARY = re.compile(r"^\d+\.\d+\.\d+$")
 VERSION_NAMED_AS = "claude"
 
+#: An ancestor further behind the base than this is not walked for the merge
+#: that brought it in (`introduced_by`): it keeps the bare `ancestor`, the
+#: refusing answer. The walk is every commit since the tip, so it bounds one fork.
+ANCESTRY_PATH_MAX_BEHIND = 5000
+
 #: The persisted cache's bounds. A full section is cleared, not evicted —
 #: re-measuring is a background cost, never a correctness one.
 STORE_FILE_VERSION = 1
@@ -148,6 +167,12 @@ def build_log_records_command(repo_root: Path | str, include: list[str], exclude
     if no_merges:
         command.append("--no-merges")
     return command + list(include) + ["--not"] + list(exclude) + ["--"]
+
+
+def build_ancestry_path_command(repo_root: Path | str, tip: str, base_tip: str) -> list[str]:
+    """Every commit after `tip` up to the base tip that descends from it, with
+    its parents — the graph `introduced_by` walks. Both are full object ids."""
+    return ["git", "-C", str(repo_root), "rev-list", "--parents", "--ancestry-path", f"{tip}..{base_tip}", "--"]
 
 
 def build_patch_log_command(repo_root: Path | str) -> list[str]:
@@ -252,6 +277,18 @@ def parse_log_records(text: object) -> list[dict]:
     return records
 
 
+def parse_parent_lines(text: object) -> dict[str, list[str]]:
+    """`rev-list --parents` lines → `{oid: [parents]}`, first parent first."""
+    graph: dict[str, list[str]] = {}
+    if not isinstance(text, str):
+        return graph
+    for line in text.splitlines():
+        oids = line.split()
+        if oids and all(is_full_oid(oid) for oid in oids):
+            graph[oids[0]] = oids[1:]
+    return graph
+
+
 def parse_missing_objects(text: object) -> set[str]:
     """`git cat-file --batch-check` → the ids it answered `missing` for."""
     if not isinstance(text, str):
@@ -352,6 +389,28 @@ def pr_reach(records: list[dict], heads: dict[str, dict]) -> dict[str, list[int]
                 reach[oid].append(number)
             stack.extend(by_oid[oid]["parents"])
     return reach
+
+
+def introduced_by(tip: str, base_tip: str, graph: dict[str, list[str]]) -> str:
+    """The parent that carried `tip` into the base's first-parent line: the
+    module's note "An ancestor names the merge that brought it in" owns why.
+
+    `graph` is every descendant of the tip up to the base tip
+    (`build_ancestry_path_command`). Walk the base's first parents down while
+    the next one still descends from the tip; the last, F, brought it in. F's
+    first parent is the tip → `""`, it was on the line. Else F is a merge, and
+    the answer is its parent on the tip's side: the tip, or a descendant of it.
+    A graph that cannot say also answers `""`: no PR is named, the refusing side.
+    """
+    current = base_tip
+    if tip == base_tip or current not in graph:
+        return ""
+    while graph[current] and graph[current][0] in graph:
+        current = graph[current][0]
+    parents = graph[current]
+    if not parents or parents[0] == tip:
+        return ""
+    return next((parent for parent in parents[1:] if parent == tip or parent in graph), "")
 
 
 def shipped_by(row: dict, reach: dict[str, list[int]], prs_by_number: dict[int, dict]) -> int | None:
@@ -616,7 +675,9 @@ class ContentTier(BackgroundTier):
     * merge-bases and each branch's commits — by (base tip, branch tip);
     * the base's records since the oldest merge-base, and every merged PR
       head's history minus the base — by (base tip, that set);
-    * patch-ids — persisted (`PatchIdStore`), per commit and per diff.
+    * patch-ids — persisted (`PatchIdStore`), per commit and per diff;
+    * the parent that carried an ancestor's tip in (`introduced_by`) — by tip
+      alone, since the base's first-parent history only grows.
     """
 
     backoff_seconds = CONTENT_BACKOFF_SECONDS
@@ -635,6 +696,7 @@ class ContentTier(BackgroundTier):
         self._branch_commits: dict[tuple[str, str], list[dict]] = {}
         self._base_records: tuple[tuple[str, str], list[dict]] | None = None
         self._pr_records: tuple[tuple[str, frozenset], list[dict]] | None = None
+        self._introducers: dict[str, str] = {}
 
     # -- the runner's half: read, decide, schedule ----------------------------
     def judge(self, rows: list[dict], *, base: str, prs: dict[str, dict]) -> None:
@@ -642,23 +704,28 @@ class ContentTier(BackgroundTier):
 
         Rows `branches.join_landing` already proved keep its answer
         (`how` ancestor/pr) and read `content: "skipped"`; so do the base and
-        every row with nothing main lacks."""
+        every row with nothing main lacks. An ancestor its own PR does not
+        name is named by the merge that brought it in, once a pass has walked
+        it (`_merged_in_by`)."""
         base_row = next((row for row in rows if row.get("is_base")), None)
         base_tip = (base_row or {}).get("oid")
         heads = merged_heads(prs, base)
         prs_by_number = {pr["number"]: pr for pr in heads.values()}
         open_rows: list[dict] = []
+        ancestors: list[str] = []
         for row in rows:
             row["ledger"] = None
             if row.get("landed") is True:
                 ancestor = row.get("merged") is True
-                # An ancestor names the PR only when that PR shipped THIS tip
+                # An ancestor names its own PR only when that PR shipped THIS tip
                 # (exact head, so no fork here): `work_landed` owns why.
                 shipped = not ancestor or shipped_by_pr(row, None, base)
-                row["landing"] = {
-                    "how": "ancestor" if ancestor else "pr",
-                    "pr": (row.get("pr") or {}).get("number") if shipped else None,
-                }
+                number = (row.get("pr") or {}).get("number") if shipped else None
+                if ancestor and number is None and not row.get("is_base"):
+                    number, unwalked = self._merged_in_by(row, heads)
+                    if unwalked:
+                        ancestors.append(row["oid"])
+                row["landing"] = {"how": "ancestor" if ancestor else "pr", "pr": number}
                 row["content"] = "skipped"
             elif row.get("is_base") or not isinstance(row.get("ahead"), int) or row["ahead"] <= 0:
                 row["landing"] = None
@@ -667,7 +734,11 @@ class ContentTier(BackgroundTier):
                 row["landing"] = None
                 row["content"] = "pending"
                 open_rows.append(row)
-        if not open_rows or not is_full_oid(base_tip):
+        if not is_full_oid(base_tip):
+            return
+        if not open_rows:
+            if ancestors:
+                self._schedule({"base": base, "base_tip": base_tip, "heads": sorted(heads), "rows": [], "ancestors": ancestors})
             return
 
         with self._lock:
@@ -744,15 +815,43 @@ class ContentTier(BackgroundTier):
             else:
                 row["ledger"] = ledger
 
-        if missing:
+        if missing or ancestors:
             self._schedule(
                 {
                     "base": base,
                     "base_tip": base_tip,
                     "heads": sorted(heads),
                     "rows": [(row["oid"], row.get("behind")) for row in open_rows if row.get("content") == "pending"],
+                    "ancestors": ancestors,
                 }
             )
+
+    def _merged_in_by(self, row: dict, heads: dict[str, dict]) -> tuple[int | None, bool]:
+        """`(PR, unwalked)` for an ancestor its own PR does not name: the PR
+        merged into the base whose head is the parent that carried this tip in
+        (`introduced_by`), committed no later than that merge (`shipped_by`'s
+        clock test). `unwalked` asks a pass for the walk; a row too far behind
+        is never walked and names no PR."""
+        tip, behind = row.get("oid"), row.get("behind")
+        if not isinstance(tip, str) or not is_full_oid(tip) or not isinstance(behind, int) or behind > ANCESTRY_PATH_MAX_BEHIND:
+            return None, False
+        with self._lock:
+            side = self._introducers.get(tip)
+        if side is None:
+            return None, True
+        pr = heads.get(side) if side else None
+        number = (pr or {}).get("number")
+        merged_at = parse_iso8601((pr or {}).get("merged_at"))
+        committed = row.get("committed_at")
+        if (
+            not isinstance(number, int)
+            or merged_at is None
+            or isinstance(committed, bool)
+            or not isinstance(committed, (int, float))
+            or not 0 < committed <= merged_at
+        ):
+            return None, False
+        return number, False
 
     @staticmethod
     def _oldest_needed(rows: list[dict], merge_bases: dict[str, str]) -> str | None:
@@ -777,6 +876,25 @@ class ContentTier(BackgroundTier):
         """One pass, cheapest first. False = git failed (the tier backs off)."""
         base_tip = want["base_tip"]
         repo = self._repo_root
+
+        # Cheapest first: one graph walk per ancestor (`introduced_by`).
+        for tip in want.get("ancestors", ()):
+            with self._lock:
+                walked = tip in self._introducers
+            if walked:
+                continue
+            if self._over(started):
+                return True
+            code, out, _err = self._run(build_ancestry_path_command(repo, tip, base_tip), GIT_TIMEOUT_SECONDS)
+            if code != 0:
+                self.last_error = f"git rev-list --ancestry-path failed for {tip[:9]}"
+                return False
+            side = introduced_by(tip, base_tip, parse_parent_lines(out))
+            with self._lock:
+                self._introducers[tip] = side
+        if not want["rows"]:
+            self.last_error = None
+            return True
 
         for tip, _behind in want["rows"]:
             if (base_tip, tip) in self._merge_bases:
@@ -985,7 +1103,8 @@ def work_landed(landing: dict | None) -> bool:
     worktree session would be offered CLEAN, and pressing it would kill its
     agent mid-turn. Every other proof is of commits the base did not have by
     tip (`pr`, `squash`, `commits`), so it carried work; an `ancestor` only
-    with the merged PR that shipped its tip (`ContentTier.judge` attaches it).
+    with the merged PR that shipped its tip, or whose merge commit carried it
+    in (`ContentTier.judge` attaches either).
     A branch merged into the base by hand, with no PR, therefore keeps its PR
     button — the harbor's CLEANUP still takes it.
     """
