@@ -85,7 +85,8 @@ fun LayaScreen(vm: LayaViewModel) {
     // A return refetches (the rack keeps judging while the phone is in a pocket); a rotation is not a return.
     LifecycleResumeEffect(Unit) {
         vm.load_on_return()
-        onPauseOrDispose { }
+        vm.watch_link()
+        onPauseOrDispose { vm.stop_watching() }
     }
     val now_ms = rememberMinuteClock().toInstant().toEpochMilli()
     val listing = ui.link == Link.linked && ui.loaded

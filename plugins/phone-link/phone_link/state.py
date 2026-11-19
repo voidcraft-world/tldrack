@@ -63,6 +63,8 @@ class LinkState:
         self._devices: dict[str, DeviceRow] = {}
         self._requests = _Requests()
         self._door: dict | None = None
+        #: Phones in adb's Wireless debugging pairing record (keeper.py reads it): 0 says "never paired".
+        self._paired = 0
         self._listener_watchers: list[Callable[[], None]] = []
 
     def on_listener_change(self, callback: Callable[[], None]) -> None:
@@ -76,6 +78,10 @@ class LinkState:
             self._adb, self._adb_error = status, error
             if status == "missing":
                 self._devices = {}
+
+    def set_paired(self, n: int) -> None:
+        with self._lock:
+            self._paired = n
 
     def set_adb_error(self, error: str | None) -> None:
         """Name what is failing without changing whether adb was found."""
@@ -159,4 +165,5 @@ class LinkState:
                 "devices": [asdict(row) for row in self._devices.values()],
                 "requests": asdict(self._requests),
                 "door": dict(self._door) if self._door is not None else None,
+                "wireless": {"paired": self._paired},
             }

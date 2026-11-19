@@ -21,10 +21,17 @@ is wrapped, and every log line goes through `logs.guarded`.
      rip out the owner's live tunnel, and a removal shows up in no `track-devices` frame, so the owner would
      only notice at its next timed check.
   3. read the token back; push it on stdin when it is missing or stale, then read it back again. The lock's
-     holder only.
+     holder only, and **over USB only**: a phone attached over Wi-Fi is tunnelled, never written to
+     (`USB_ONLY`). Why: owned by plugins/phone-link/README.md § Two limits — see the note there.
   At most every `MDNS_SECONDS` it also connects a phone paired over Wireless debugging that advertises itself
   on the network but is not connected: only an instance whose name EXACTLY matches a pairing record
-  (`adb.known_hosts`), at most once per `CONNECT_QUIET_S` per address.
+  (`adb.known_hosts`). An address that did not attach is asked again on `CONNECT_LADDER_S` (5 s, then slower),
+  and its ladder starts over once it attaches or stops advertising.
+
+**The wireless path is the operator's nightly one**: Android turns Wireless debugging off whenever the phone
+leaves its Wi-Fi, so the phone is not attached, the operator flips the tile, and the app should link within
+seconds. adb's own auto-connect usually does it at once (a `track-devices` frame wakes the reconciler); the poll
+here is the backstop for when it does not, so it is short while a paired phone is not attached over Wi-Fi.
 """
 
 from __future__ import annotations
@@ -57,8 +64,12 @@ from phone_link.state import DeviceRow, LinkState, now_iso
 from phone_link.token_store import TokenStore
 
 CHECK_SECONDS = 30.0
-MDNS_SECONDS = 60.0
-CONNECT_QUIET_S = 300.0
+MDNS_SECONDS = 15.0
+#: Seconds until one advertised address is connected again, by how many times it was tried: quick at first (the
+#: operator just flipped the tile), then slow (a phone that will not attach must not be hammered all night).
+CONNECT_LADDER_S = (5.0, 15.0, 60.0, 300.0)
+#: The row's `error` for a phone on Wi-Fi that does not hold the token yet.
+USB_ONLY = "plug in over USB once: the token is only written over USB"
 ADB_RETRY_S = 60.0
 TRACK_BACKOFF_S = (1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
 STABLE_RUN_S = 60.0
@@ -155,6 +166,7 @@ class Keeper:
         self._models: dict[str, str | None] = {}
         self._armed: set[str] = set()
         self._quiet: dict[str, float] = {}
+        self._tries: dict[str, int] = {}
         self._next_mdns = 0.0
         self._adb_found: bool | None = None
         self.track_starts = 0
@@ -295,11 +307,13 @@ class Keeper:
     def _next_wait(self) -> float | None:
         with self._lock:
             attached = list(self._attached)
+        waits = []
         if any(device.state == "device" for device in attached):
-            return self._check_seconds
-        if self._known():
-            return self._mdns_seconds
-        return None
+            waits.append(self._check_seconds)
+        # A paired phone that is not here over Wi-Fi may have just switched Wireless debugging on.
+        if self._known() and not any(device.state == "device" and device.transport == "wifi" for device in attached):
+            waits.append(self._mdns_seconds)
+        return min(waits) if waits else None
 
     def reconcile_once(self) -> None:
         adb = self._resolve()
@@ -364,7 +378,7 @@ class Keeper:
             self._armed.discard(serial)
         if serial not in self._models:  # once per attach: `devices -l` turns `AB-C123D` into `AB_C123D`
             self._models[serial] = adb.model(serial)
-        token, token_error = self._ensure_token(adb, serial)
+        token, token_error = self._ensure_token(adb, device)
         self._state.update_device(
             serial,
             reverse=armed,
@@ -388,8 +402,10 @@ class Keeper:
                 f" {scrub(removed.err or removed.out, None)}"
             )
 
-    def _ensure_token(self, adb: Adb, serial: str) -> tuple[str, str | None]:
-        """`(token, error)` for the row: `pushed` once the phone reads back exactly this Mac's token."""
+    def _ensure_token(self, adb: Adb, device: Seen) -> tuple[str, str | None]:
+        """`(token, error)` for the row: `pushed` once the phone reads back exactly this Mac's token. Read on any
+        transport (the read only brings the phone's bytes here), written over USB alone."""
+        serial = device.serial
         token = self._tokens.value()
         if token is None:
             return "error", f"no token on this Mac ({self._tokens.error or 'unreadable'})"
@@ -398,6 +414,8 @@ class Keeper:
             return "pushed", None
         if first.verdict not in ("missing", "differs"):
             return _token_field(first.verdict), first.message
+        if device.transport == "wifi":
+            return "error", USB_ONLY
         pushed = adb.push_token(serial, token)
         second = classify_read(adb.read_token(serial), token)
         if second.verdict == "match":
@@ -412,23 +430,33 @@ class Keeper:
         if now < self._next_mdns:
             return
         self._next_mdns = now + self._mdns_seconds
-        paired = self._known()
+        paired = self._known() or frozenset()
+        self._state.set_paired(len(paired))
         if not paired:
             return
         serials = [device.serial for device in attached]
+        waiting: set[str] = set()
         for service in adb.mdns_services():
             if service.instance not in paired:  # exact: the name a pairing record holds, nothing shorter or longer
                 continue
             if any(serial == service.address or serial.startswith(service.instance + ".") for serial in serials):
                 continue
+            waiting.add(service.address)
             if self._quiet.get(service.address, 0.0) > now:
                 continue
-            self._quiet[service.address] = now + CONNECT_QUIET_S
+            tries = self._tries.get(service.address, 0)
+            self._tries[service.address] = tries + 1
+            self._quiet[service.address] = now + CONNECT_LADDER_S[min(tries, len(CONNECT_LADDER_S) - 1)]
             result = adb.connect(service.address)
             self._log(
                 f"phone-link: connecting paired phone {service.instance} at {service.address}:"
                 f" {scrub(result.out or result.err, None) or result.code}"
             )
+        # An address that attached, or went away, starts its ladder over: Wireless debugging takes a new port each
+        # time it is switched on, so these would otherwise only ever grow.
+        for address in [address for address in self._tries if address not in waiting]:
+            self._tries.pop(address, None)
+            self._quiet.pop(address, None)
 
 
 def _token_field(verdict: str) -> str:

@@ -1,4 +1,4 @@
-"""The phone-link plugin: a token-gated door from the Android app to seven bridge routes, its keeper, and the
+"""The phone-link plugin: a token-gated door from the Android app to eight bridge routes, its keeper, and the
 daily grade door (door.py).
 
     GET /plugin/phone-link/state   adb, the listener, each phone and the request count — never the token
