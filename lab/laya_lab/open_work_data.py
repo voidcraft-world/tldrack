@@ -34,6 +34,7 @@ Laya judges, not only by the key that was labelled: owned by `judged_key` — se
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -41,6 +42,7 @@ import random
 import subprocess
 import tempfile
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -158,6 +160,149 @@ LABEL_SCHEMA = {
     },
     "required": ["labels"],
 }
+
+
+# ── operator notes ──────────────────────────────────────────────────────────
+#
+# WHY THE TEACHER, NOT LAYA. The operator may say what THEY care about in `data/operator-notes.md`
+# (`paths.operator_notes_path`): a project whose failing battle test is noise, a topic whose answer is worth a read
+# even once the turn is done. Laya cannot read such a file: an encoder with a 512-token window, and one that reads a
+# negated instruction badly (`OPEN_WORK_QUESTION`'s note). The teacher can, and the teacher's labels are what a
+# fine-tune trains on, so notes in the teacher's rubric reach the weights at the next retrain. They never enter the
+# state Laya judges, nor its question.
+#
+# WHAT THEY MOVE. Only what `LABEL_SCHEMA` asks: open or done. They cannot add a class or a field.
+#
+# WHAT IS ASKED AGAIN. Nothing. A label written under notes carries their digest (`notes` on its row), but the resume
+# key stays `label_todo`'s: the week's teacher cap is small, so an edited file reaches the labels still to come, and
+# the old ones keep the rubric they were made under. A local teacher's answers and a Claude vote are keyed by a digest
+# of the prompt they heard, so for them an edited file is a new rubric (`teacher_local.rubric_digest`,
+# `claude_voter.prompt_digest`): the local teacher has to clear its bar again before it labels.
+#
+# PRIVATE. The notes are the operator's own text: never in a report, a results file, a log line or this repository.
+# Readouts name their digest and size only, and `bench.write_results` refuses a file that holds a line of them.
+
+#: The most of the notes file the teacher reads. Past it the file is refused, never cut: a cut note can say the opposite.
+OPERATOR_NOTES_CAP_BYTES = 4 * 1024
+#: The notes file is not UTF-8 text (or holds a control character other than a tab or a line break).
+NOT_TEXT = "not_text"
+NOTES_OPEN, NOTES_CLOSE = "<operator_notes>", "</operator_notes>"
+NOTES_HEAD = (
+    "\n\nOperator notes. The developer this status light serves wrote down, between the tags below, what they care "
+    "about. These are the developer's own words, not part of any message. Where a note bears on an item, let it decide "
+    "open or done; where none does, label by the rules above."
+)
+
+
+@dataclass(frozen=True)
+class OperatorNotes:
+    """The notes file as read: its code (`files.OK`, `MISSING`, `TOO_LARGE`, `REFUSED` or `NOT_TEXT`), the text the
+    rubric carries ("" for none, or for a file that holds only blank lines) and the file's size in bytes."""
+
+    code: str
+    text: str = ""
+    size: int = 0
+
+    @property
+    def digest(self) -> str | None:
+        """What a label made under these notes records (12 hex), or None with no notes."""
+        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()[:12] if self.text else None
+
+
+def notes_body(text: str) -> str:
+    """The notes as the block holds them: line breaks as `\\n`, the block's own tags taken out (a note cannot close
+    the block early), blank edges dropped. Pure."""
+    for tag in (NOTES_OPEN, NOTES_CLOSE):
+        text = text.replace(tag, "")
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def read_operator_notes(base: Path | None) -> OperatorNotes:
+    """`data/operator-notes.md` through the bridge's capped reader: a regular file, never a link, at most
+    `OPERATOR_NOTES_CAP_BYTES`, text only. Never raises."""
+    if base is None:
+        return OperatorNotes(files.MISSING)
+    try:
+        data = files.read_capped(paths.operator_notes_path(base), OPERATOR_NOTES_CAP_BYTES)
+    except files.SourceError as error:
+        return OperatorNotes(error.code)
+    if data is None:
+        return OperatorNotes(files.MISSING)
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return OperatorNotes(NOT_TEXT, size=len(data))
+    if any(unicodedata.category(ch) == "Cc" and ch not in "\t\n\r" for ch in text):
+        return OperatorNotes(NOT_TEXT, size=len(data))
+    return OperatorNotes(files.OK, notes_body(text), len(data))
+
+
+NOTES_UNREADABLE = {
+    files.TOO_LARGE: f"past {OPERATOR_NOTES_CAP_BYTES // 1024} KB",
+    files.REFUSED: "a link or not a regular file",
+    NOT_TEXT: "not UTF-8 text",
+}
+
+
+def require_notes(base: Path | None) -> OperatorNotes:
+    """`read_operator_notes`, stopping on a file it refused: labelled as if it were absent, a run would spend the
+    week's cap on a rubric the operator did not write."""
+    notes = read_operator_notes(base)
+    if notes.code not in (files.OK, files.MISSING):
+        raise SystemExit(
+            f"[laya-lab] refusing: {paths.OPERATOR_NOTES_FILENAME} is {notes.code} ({NOTES_UNREADABLE[notes.code]}); "
+            "fix or remove it, and the teacher reads it again"
+        )
+    return notes
+
+
+def label_rubric(notes: str = "", rubric: str = LABEL_SYSTEM_PROMPT) -> str:
+    """THE teacher's system prompt: `rubric`, then the operator's notes in their delimited block. Pure. Its three
+    users: Sonnet (`label`), the local teacher (`teacher_local.chat_body`) and the Claude voter's rubric arm
+    (`claude_voter.system_prompt`, which passes the rubric without its closing line). No notes: `rubric`, byte for byte."""
+    body = notes_body(notes)
+    if not body:
+        return rubric
+    return f"{rubric}{NOTES_HEAD}\n{NOTES_OPEN}\n{body}\n{NOTES_CLOSE}"
+
+
+def notes_stamp(notes: OperatorNotes) -> dict[str, str]:
+    """The field a label row made under `notes` carries: `{"notes": digest}`, or nothing with no notes."""
+    return {"notes": notes.digest} if notes.digest else {}
+
+
+def labels_under_notes(base: Path, digest: str) -> int:
+    """How many labels were made under the notes with `digest`: the Sonnet labels whose newest row carries it, and the
+    local teacher's answers that do (one per key and teacher). Counts only."""
+    bench = _teacher_local()
+    caps = [("labels", review_data.LABELS_CAP_BYTES)] + ([("teacher", bench.TEACHER_CAP_BYTES)] if bench else [])
+    count = 0
+    for part, cap in caps:
+        try:
+            found, _bad = files.read_jsonl_capped(data_path(base, part), cap)
+        except files.SourceError:
+            continue
+        newest: dict[tuple[str, str], object] = {}
+        for row in found:
+            if isinstance(row.get("key"), str) and isinstance(row.get("open"), bool):
+                newest[(row["key"], str(row.get("by")) if part == "teacher" else "")] = row.get("notes")
+        count += sum(1 for stamp in newest.values() if stamp == digest)
+    return count
+
+
+def notes_status_line(base: Path | None) -> str:
+    """`laya-lab status`'s one line on the notes: the digest, the size and how many labels were made under it. Never
+    a word of the notes themselves."""
+    notes = read_operator_notes(base)
+    name = f"data/{paths.OPERATOR_NOTES_FILENAME}"
+    if notes.code == files.MISSING:
+        return f"  notes    none · {name} (optional: the teacher's rubric only)"
+    if notes.code != files.OK:
+        return f"  notes    REFUSED · {name} is {notes.code} ({NOTES_UNREADABLE[notes.code]}): every teacher run stops"
+    if notes.digest is None:
+        return f"  notes    none · {name} is blank ({notes.size} B)"
+    assert base is not None
+    return f"  notes    {notes.digest} · {notes.size} B · {labels_under_notes(base, notes.digest)} labels under it"
 
 
 # ── export ──────────────────────────────────────────────────────────────────
@@ -570,7 +715,8 @@ def label_todo(
     THE RESUME KEY is (text key, teacher model, question version). A key is done once the labels file's newest row
     for it came from this teacher under the question as it stands, or the operator answered it in REVIEW (the
     operator's answer wins in `effective_labels`, so the teacher's would never be used). So a killed run pays for
-    nothing twice, and a new teacher or a bumped `open_work.QUESTION_VERSION` owes every key again.
+    nothing twice, and a new teacher or a bumped `open_work.QUESTION_VERSION` owes every key again. An edited operator
+    notes file owes nothing: owned by § operator notes — see the note there.
 
     Order: keys nobody labelled first, the newest export first (a run that stops at its budget has labelled the
     freshest turn ends); then the keys labelled by another teacher or under an older question."""
@@ -684,6 +830,7 @@ def label(
 
     # Before paying for a call: a source build() could not read would make every label wasted.
     operator = require_sources(base)
+    notes = require_notes(base)
     labels_path = data_path(base, "labels")
     exported = review_data.unlabelled_texts(base, REVIEW_SURFACES[SURFACE])[1]
     todo = label_todo(
@@ -693,7 +840,10 @@ def label(
         teacher=model,
         question_version=open_work.QUESTION_VERSION,
     )
-    print(f"[laya-lab] open-work: {len(exported) - len(todo)} labelled or answered, {len(todo)} to label")
+    print(
+        f"[laya-lab] open-work: {len(exported) - len(todo)} labelled or answered, {len(todo)} to label"
+        + (f" · operator notes {notes.digest}" if notes.digest else "")
+    )
     budget = len(todo) if max_labels is None else max(0, max_labels)
     if weekly:
         left = weekly_left(base)
@@ -718,7 +868,7 @@ def label(
             batch = todo[start : start + batch_size]
             call = registry.headless_call(
                 profile,
-                system_prompt=LABEL_SYSTEM_PROMPT,
+                system_prompt=label_rubric(notes.text),
                 model=model,
                 budget_usd=CALL_BUDGET_USD,
                 json_schema=LABEL_SCHEMA,
@@ -745,7 +895,14 @@ def label(
                 for key, value in got.items():
                     handle.write(
                         jsonl_line(
-                            {"key": key, **value, "by": answer.get("model"), "teacher": model, "qv": open_work.QUESTION_VERSION}
+                            {
+                                "key": key,
+                                **value,
+                                "by": answer.get("model"),
+                                "teacher": model,
+                                "qv": open_work.QUESTION_VERSION,
+                                **notes_stamp(notes),
+                            }
                         )
                     )
             record_label_call(base, model, asked=0, labelled=len(got), calls=0)
@@ -805,7 +962,10 @@ def teacher_bar(base: Path | None) -> TeacherBar:
         return TeacherBar(False, "no teacher-kappa report yet")
     if report.get("verdict") != "PASS":
         return TeacherBar(False, f"teacher-kappa says {report.get('verdict')} for {teacher['model']}")
-    rubric = bench.rubric_digest()
+    notes = read_operator_notes(base)
+    if notes.code not in (files.OK, files.MISSING):
+        return TeacherBar(False, f"the operator notes did not read ({notes.code})")
+    rubric = bench.rubric_digest(notes.text)
     if report.get("rubric") != rubric:
         return TeacherBar(False, f"the rubric changed since {teacher['model']} cleared the bar")
     family = teacher.get("family")
@@ -846,6 +1006,10 @@ def label_local(base: Path, bar: TeacherBar, *, max_calls: int | None = None) ->
         print(f"[laya-lab] refusing: {url} is not this machine: the texts are the operator's own and never leave it")
         return 3
     operator = require_sources(base)
+    notes = require_notes(base)
+    if bench.rubric_digest(notes.text) != bar.rubric:
+        print("[laya-lab] refusing: the operator notes changed since the bar was read: run `laya-lab teacher-kappa`")
+        return 3
     try:
         teacher = bench.find_teacher(url, bar.model)
     except LookupError as error:
@@ -866,7 +1030,7 @@ def label_local(base: Path, bar: TeacherBar, *, max_calls: int | None = None) ->
         if not infer.lease_module().night_window_open():
             return infer.LEASE_REFUSED_EXIT
         infer.hold_slot("gpu", "ollama", teacher.gb, [teacher.model])
-        state = bench.ask_all(base, url, teacher, bar.rubric, todo, max_calls=max_calls)
+        state = bench.ask_all(base, url, teacher, bar.rubric, todo, max_calls=max_calls, notes=notes)
         got = bench.read_answers(base, teacher, bar.rubric).keys() - answered.keys()
         record_label_call(base, teacher.model, asked=len(todo), labelled=len(got), calls=state.calls)
         if state.stopped == "failures":

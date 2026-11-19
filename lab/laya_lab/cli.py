@@ -455,12 +455,14 @@ def reads_only(args: argparse.Namespace) -> bool:
 
 def cmd_status(args: argparse.Namespace, base: Path | None) -> int:
     from laya_bridge.ops import ops_state
+    from laya_lab.open_work_data import notes_status_line
 
     state = ops_state(base, None, [])
     for line in status_lines(state):
         print(line)
     for line in felt_status(base, [row["surface"] for row in state["review"]]):
         print(line)
+    print(notes_status_line(base))
     return 0
 
 

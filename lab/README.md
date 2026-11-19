@@ -194,6 +194,30 @@ Measurement only: nothing registers, serves or saves a stack, and its cut is the
 small to fold (fewer than ten rows, or a fold that leaves one class) prints `stack skipped` with the reason. Owned
 by `laya_lab/stack.py` — see the note there.
 
+## Operator notes (`data/operator-notes.md`)
+
+An optional markdown file in the laya store, beside the labels: what you care about, in your own words. Two
+invented lines:
+
+```markdown
+- A failing battle test in project zeta-prime is noise: that turn is done.
+- I am learning about vector clocks, so an answer about them is open until I have read it.
+```
+
+- **Where it goes.** The teacher's rubric, and nowhere else: Sonnet (`label-open-work`), the local teacher
+  (`teacher-kappa`) and the `rubric` arm of `claude-vote` read it as a delimited block after the rubric. Their
+  labels are what a fine-tune trains on, so your notes reach Laya's weights at the next retrain.
+- **What it never does.** It never enters the state Laya judges or Laya's question: an encoder with a 512-token
+  window reads no such file. It moves only what the teacher answers, open or done; it adds no class and no field.
+  It re-asks no old label (the week's teacher cap is small): a new label carries the notes' digest, and
+  `laya-lab status` prints the digest, the size and how many labels were made under it. Because the local teacher's
+  rubric changes with it, an edited file means `teacher-kappa` again before that teacher labels.
+- **What it must be.** A regular file, never a link, at most 4 KB, UTF-8 text. Anything else stops every teacher
+  run with its reason; a missing or blank file leaves every prompt byte-identical to no notes at all.
+- **Private.** Your notes stay on your machine like your labels: never in a report, a results file or a log line.
+  `bench` refuses to write a results file that holds a line of them. Owned by `laya_lab/open_work_data.py`
+  § operator notes — see the note there.
+
 ## The resource lease (optional)
 
 With nothing configured the lab just runs: no lease, no night window, no queue. On a machine that runs other

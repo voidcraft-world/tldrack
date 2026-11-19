@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from laya_lab import cli, infer, lease, teacher_local as T
+from laya_lab import cli, infer, lease, open_work_data, teacher_local as T
 from laya_bridge import lab_files, paths, rows
 
 from conftest import synthetic
@@ -85,7 +85,7 @@ def test_a_run_asks_the_teacher_sonnets_rubric_and_resumes_on_the_same_weights(l
     fake = FakeOllama()
     assert T.run(lab.base, post=fake, get=lambda url: tags()) == 0
     body = fake.bodies[0]
-    assert body["messages"][0]["content"] == T.LABEL_SYSTEM_PROMPT and body["format"] == T.LABEL_SCHEMA
+    assert body["messages"][0]["content"] == open_work_data.LABEL_SYSTEM_PROMPT and body["format"] == T.LABEL_SCHEMA
     assert (body["think"], body["options"]["temperature"], body["options"]["num_ctx"]) == ("low", 0, T.TEACHER_NUM_CTX)
     assert len(fake.bodies) == -(-44 // T.TEACHER_BATCH)
     stored = [json.loads(line) for line in T.teacher_path(lab.base).read_text().splitlines()]

@@ -68,7 +68,7 @@ from pathlib import Path
 from typing import Any
 
 from laya_lab import siblings  # noqa: F401  (puts laya_bridge on sys.path)
-from laya_lab import compare, rack, infer
+from laya_lab import compare, rack, infer, open_work_data
 from laya_lab import panel as panel_voter
 from laya_lab import floor as floor_voter
 from laya_lab.golden import SUITES, Suite, load_cases
@@ -1097,12 +1097,30 @@ def leaked(serialized: str, sets: Mapping[str, Sequence[Row]]) -> int:
     return found
 
 
-def write_results(payload: Mapping[str, Any], sets: Mapping[str, Sequence[Row]], out_dir: Path, day: str) -> Path:
-    """Write `<out_dir>/<day>.json` whole, or raise and write nothing when a row reached the payload."""
+def note_lines(notes: str) -> list[str]:
+    """The lines of the operator's notes the guard looks for: each one's words, without a list or heading mark, of at
+    least `GUARD_MIN_CHARS`. Pure."""
+    found = (line.strip().lstrip("-*#>").strip() for line in notes.splitlines())
+    return [line for line in found if len(line) >= GUARD_MIN_CHARS]
+
+
+def leaked_notes(serialized: str, notes: str) -> int:
+    """How many lines of the operator's notes are inside `serialized` (as written, or as JSON escapes them)."""
+    return sum(1 for line in note_lines(notes) if line in serialized or json.dumps(line)[1:-1] in serialized)
+
+
+def write_results(
+    payload: Mapping[str, Any], sets: Mapping[str, Sequence[Row]], out_dir: Path, day: str, notes: str = ""
+) -> Path:
+    """Write `<out_dir>/<day>.json` whole, or raise and write nothing when a row, or a line of the operator's notes
+    (`open_work_data` § operator notes), reached the payload."""
     text = json.dumps(payload, indent=2, allow_nan=False, ensure_ascii=False) + "\n"
     count = leaked(text, sets)
     if count:
         raise RuntimeError(f"{count} rows' ids or text reached the results file; nothing was written")
+    count = leaked_notes(text, notes)
+    if count:
+        raise RuntimeError(f"{count} lines of the operator notes reached the results file; nothing was written")
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{day}.json"
     tmp = out_dir / f".{day}.json.tmp"
@@ -1228,7 +1246,7 @@ def run(
     else:
         print("  rack     withheld: the rack's own use stays out of a published file unless --rack asks for it")
     try:
-        write_results(payload, sets, out_dir, day)
+        write_results(payload, sets, out_dir, day, open_work_data.read_operator_notes(base).text)
     except RuntimeError as error:
         print(f"[laya-lab] bench: {error}")
         return 1

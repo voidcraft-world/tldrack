@@ -125,6 +125,9 @@ Laya reviews finished turns locally. Your grades tune it on your machine; 40 lab
 The ROC above compares voters on held-out turns. Most labels were model-written; the operator-graded
 sample is smaller. The turns stay private; the reproducible public suite contains 200 invented cases.
 
+Your notes tune it too: a short markdown file where you say what you care about, which the teacher reads
+when it labels (`lab/README.md` § Operator notes).
+
 <details>
 <summary><b>What your labels buy</b>: the base model against each fine-tune, metric by metric</summary>
 
