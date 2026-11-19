@@ -1,11 +1,13 @@
 <script setup lang="ts">
 /** Shared office renderer. The window supplies the rack it hears on the channel; the Canvas supplies its own. */
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { PerspectiveCamera, Raycaster, Scene, Vector2, WebGLRenderer } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AgentOfficeScene } from '../engine/terminal/agent-office-scene.ts';
 import { build_office, type OfficeAgent, type OfficeLayout } from '../engine/terminal/agent-office-logic.ts';
-import type { OfficeRack } from '../engine/terminal/agent-office-link.ts';
+import { office_worktree_for, type OfficeAction, type OfficeRack } from '../engine/terminal/agent-office-link.ts';
+import { useArmedAction } from '../composables/useArmedAction.ts';
+import { office_menu, office_menu_key, OFFICE_MENU_ARM_MS, type OfficeMenuItem, type OfficeMenuItemId } from './office-menu.ts';
 import AgentActivityMap from '../agent-rack/AgentActivityMap.vue';
 import IslandMark from '../agent-rack/IslandMark.vue';
 import { island_status } from '../engine/terminal/island-status.ts';
@@ -19,7 +21,11 @@ import { office_pixel_ratio } from './office-render-quality.ts';
 const OVERLOOK_PITCH_DEG = 52;
 
 const props = defineProps<{ rack: OfficeRack | null; stale?: boolean; embedded?: boolean }>();
-const emit = defineEmits<{ (event: 'select', session: string): void }>();
+const emit = defineEmits<{
+    (event: 'select', session: string): void;
+    /** A menu verb. Whoever holds the rack's transport re-checks it (`agent-office-link.ts` `office_action_allowed`). */
+    (event: 'action', action: OfficeAction, session: string): void;
+}>();
 const rack = computed(() => props.rack);
 const stale = computed(() => props.stale === true);
 const layout = computed<OfficeLayout | null>(() =>
@@ -63,13 +69,100 @@ function update_labels(now: number): void {
     labels_dirty = false;
     office.update_labels(camera, host.value.clientWidth, host.value.clientHeight);
 }
+/** Can the rack take a click right now? */
+const usable = computed(() => rack.value?.reachable === true && !rack.value.frozen && !stale.value);
 function select_session(session: string | null): void {
-    if (!session || !rack.value?.reachable || rack.value.frozen || stale.value) return;
+    if (!session || !usable.value) return;
     emit('select', session);
     sent.value = session;
     dismissed_map.value = null;
 }
 const gesture = office_pointer_gesture(props.embedded === true);
+
+// ── the right-click menu ────────────────────────────────────────────────
+//
+// What it offers and in whose words: owned by office-menu.ts — see the note there.
+/** The robot whose menu is open, and where on the page the menu is pinned. */
+const menu = ref<{ session: string; x: number; y: number } | null>(null);
+const menu_el = ref<HTMLElement | null>(null);
+const menu_arm = useArmedAction(OFFICE_MENU_ARM_MS);
+const menu_agent = computed(() => (menu.value ? agent_for(menu.value.session) : null));
+const menu_items = computed<OfficeMenuItem[]>(() => {
+    const agent = menu_agent.value;
+    if (!agent) return [];
+    const armed = (['select', 'kill', 'pr', 'cleanup'] as const)
+        .find((id: OfficeMenuItemId) => menu_arm.armed.value === office_menu_key(agent.session, id)) ?? null;
+    return office_menu(agent, office_worktree_for(rack.value, agent.session), armed, usable.value);
+});
+// An arm must not outlive its entry: a PR? that became CLEAN, a rack gone stale, a robot gone.
+watch(menu_items, (items) => {
+    const session = menu.value?.session;
+    if (session && !menu_agent.value) return close_menu();
+    menu_arm.retain(session ? items.filter(item => item.press === 'arm').map(item => office_menu_key(session, item.id)) : []);
+}, { flush: 'sync' });
+
+function menu_buttons(): HTMLButtonElement[] {
+    return [...(menu_el.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
+}
+function open_menu(session: string | null, event: PointerEvent): void {
+    close_menu();
+    if (!session || !agent_for(session)) return;
+    menu.value = { session, x: event.clientX, y: event.clientY };
+    hovered.value = null;
+    office?.set_hovered(session);
+    void nextTick(() => {
+        const el = menu_el.value;
+        if (!el || !menu.value) return;
+        // Pinned at the pointer, pulled back inside the page where it would hang off it.
+        const box = el.getBoundingClientRect();
+        menu.value = { session, x: Math.max(4, Math.min(menu.value.x, window.innerWidth - box.width - 4)),
+            y: Math.max(4, Math.min(menu.value.y, window.innerHeight - box.height - 4)) };
+        menu_buttons()[0]?.focus({ preventScroll: true });
+    });
+}
+function close_menu(): void {
+    if (!menu.value) return;
+    menu.value = null;
+    menu_arm.disarm();
+    office?.set_hovered(null);
+}
+function press_menu_item(item: OfficeMenuItem): void {
+    const session = menu.value?.session;
+    if (!session || item.press === 'none') return;
+    if (item.press === 'open') {
+        if (item.url) window.open(item.url, '_blank', 'noopener');
+        return close_menu();
+    }
+    if (item.id === 'select') {
+        select_session(session);
+        return close_menu();
+    }
+    const action = item.id;
+    menu_arm.press(office_menu_key(session, action), () => {
+        emit('action', action, session);
+        close_menu();
+    });
+}
+function on_menu_key(event: KeyboardEvent): void {
+    if (event.key === 'Escape' || event.key === 'Tab') {
+        event.preventDefault();
+        close_menu();
+        renderer?.domElement.focus({ preventScroll: true });
+        return;
+    }
+    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+    const buttons = menu_buttons();
+    if (!buttons.length || (!step && event.key !== 'Home' && event.key !== 'End')) return;
+    event.preventDefault();
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+        : (at + step + buttons.length) % buttons.length;
+    buttons[next].focus({ preventScroll: true });
+}
+/** A press anywhere off the menu leaves it. Capture phase: the canvas's own handlers still run. */
+function on_document_press(event: Event): void {
+    if (menu.value && !menu_el.value?.contains(event.target as Node | null)) close_menu();
+}
 
 function agent_for(session: string | null): OfficeAgent | null {
     if (!session || !layout.value) return null;
@@ -116,7 +209,8 @@ function on_pointer_move(event: PointerEvent): void {
         parent.scrollTop += scroll;
         scroll -= parent.scrollTop - before;
     }
-    if (!office || gesture.pressed() || event.pointerType === 'touch') return;
+    // An open menu holds the ring on its robot: the pointer is on its way to the menu.
+    if (!office || gesture.pressed() || event.pointerType === 'touch' || menu.value) return;
     ray_at(event);
     const session = office.pick(raycaster);
     office.set_hovered(session);
@@ -131,10 +225,17 @@ function on_pointer_down(event: PointerEvent): void {
 }
 
 function on_pointer_up(event: PointerEvent): void {
-    if (!gesture.up(event) || !office) return;
+    const tap = gesture.up(event);
+    if (!tap || !office) return;
     ray_at(event);
     const session = office.pick(raycaster);
-    select_session(session);
+    if (tap === 'menu') open_menu(session, event);
+    else select_session(session);
+}
+
+/** The menu is ours (`office-pointer.ts` decides it on release), never the browser's. */
+function on_context_menu(event: Event): void {
+    event.preventDefault();
 }
 
 function on_pointer_cancel(event?: PointerEvent): void {
@@ -143,7 +244,7 @@ function on_pointer_cancel(event?: PointerEvent): void {
 }
 
 function on_pointer_leave(): void {
-    office?.set_hovered(null);
+    if (!menu.value) office?.set_hovered(null);
     hovered.value = null;
 }
 
@@ -186,6 +287,7 @@ function update_running(): void {
         frame = 0;
         if (document.hidden) on_pointer_cancel();
         else on_pointer_leave();
+        close_menu();
     }
 }
 
@@ -251,6 +353,13 @@ onMounted(() => {
     renderer.domElement.addEventListener('pointerup', on_pointer_up);
     renderer.domElement.addEventListener('pointerleave', on_pointer_leave);
     renderer.domElement.addEventListener('pointercancel', on_pointer_cancel);
+    renderer.domElement.addEventListener('contextmenu', on_context_menu);
+    renderer.domElement.addEventListener('wheel', close_menu, { passive: true });
+    // Focusable, so Escape can hand the keyboard back to where the menu came from.
+    renderer.domElement.tabIndex = -1;
+    document.addEventListener('pointerdown', on_document_press, true);
+    window.addEventListener('blur', close_menu);
+    window.addEventListener('resize', close_menu);
 
     visibility = new IntersectionObserver(([entry]) => {
         visible = entry.isIntersecting;
@@ -266,6 +375,9 @@ onBeforeUnmount(() => {
     stop_density_watch?.();
     visibility?.disconnect();
     document.removeEventListener('visibilitychange', update_running);
+    document.removeEventListener('pointerdown', on_document_press, true);
+    window.removeEventListener('blur', close_menu);
+    window.removeEventListener('resize', close_menu);
     controls?.dispose();
     office?.dispose();
     if (renderer) {
@@ -275,6 +387,8 @@ onBeforeUnmount(() => {
         canvas.removeEventListener('pointerup', on_pointer_up);
         canvas.removeEventListener('pointerleave', on_pointer_leave);
         canvas.removeEventListener('pointercancel', on_pointer_cancel);
+        canvas.removeEventListener('contextmenu', on_context_menu);
+        canvas.removeEventListener('wheel', close_menu);
         renderer.dispose();
         canvas.remove();
     }
@@ -309,8 +423,43 @@ function state_color(agent: OfficeAgent): string {
             <AgentActivityMap :agent="inspected_agent" :stale="stale || !rack?.reachable || rack?.frozen" />
         </aside>
 
+        <!-- The right-click menu. Entries and words: owned by office-menu.ts — see the note there. -->
         <div
-            v-if="hovered"
+            v-if="menu && menu_agent"
+            ref="menu_el"
+            class="fui-panel office__menu"
+            role="menu"
+            :aria-label="`Actions for ${menu_agent.label}`"
+            :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+            @keydown="on_menu_key"
+            @contextmenu.prevent
+        >
+            <span class="office__menu-name">{{ menu_agent.label }}</span>
+            <span class="office__menu-state" :style="{ color: state_color(menu_agent) }">
+                ● {{ state_label(menu_agent.state) }}<template v-if="menu_agent.island"> · <span
+                    :style="{ color: island_status(menu_agent.island).color }">{{ island_status(menu_agent.island).label }}</span></template>
+            </span>
+            <button
+                v-for="item in menu_items"
+                :key="item.id"
+                type="button"
+                role="menuitem"
+                :class="['office__menu-item', {
+                    'office__menu-item--danger': item.tone === 'danger' || item.tone === 'error',
+                    'office__menu-item--open': item.tone === 'open',
+                    'office__menu-item--armed': item.armed,
+                }]"
+                :disabled="item.press === 'none'"
+                @click="press_menu_item(item)"
+            >
+                <span class="office__menu-label">{{ item.label }}</span>
+                <span class="office__menu-detail">{{ item.detail }}</span>
+            </button>
+            <span v-if="!usable" class="office__menu-hint">the rack cannot take a click right now</span>
+        </div>
+
+        <div
+            v-if="hovered && !menu"
             class="fui-panel office__tip"
             :style="{ left: `${tip.x + 14}px`, top: `${tip.y + 14}px` }"
             role="tooltip"
@@ -327,9 +476,9 @@ function state_color(agent: OfficeAgent): string {
                 <span :style="{ color: island_status(hovered.island).color }">{{ island_status(hovered.island).label }}</span>
             </template>
             <span class="office__tip-hint">
-                {{ stale || !rack?.reachable || rack?.frozen
+                {{ !usable
                     ? 'the rack cannot take a click right now'
-                    : sent === hovered.session ? 'in the rack’s pane' : 'click: open in the rack' }}
+                    : `${sent === hovered.session ? 'in the rack’s pane' : 'click: open in the rack'} · right-click: actions` }}
             </span>
         </div>
     </div>
@@ -344,6 +493,8 @@ function state_color(agent: OfficeAgent): string {
     overflow: hidden;
 }
 .office__stage { position: absolute; inset: 0; }
+/* The canvas takes focus only to hand the keyboard back from the menu: no ring for that. */
+.office__stage :deep(canvas:focus) { outline: none; }
 .office__fit { position: absolute; z-index: 3; top: 8px; right: 8px; min-height: 32px; }
 .office__stale { position: absolute; left: 8px; bottom: 8px; }
 @media (pointer: coarse) { .office__fit { min-height: 44px; min-width: 44px; } }
@@ -396,4 +547,54 @@ function state_color(agent: OfficeAgent): string {
     font-size: 0.72rem;
     opacity: 0.55;
 }
+.office__menu {
+    position: fixed;
+    z-index: 6;
+    display: grid;
+    gap: 2px;
+    padding: 8px;
+    width: min(320px, calc(100vw - 8px));
+    font-size: 0.8rem;
+}
+.office__menu-name {
+    padding: 0 6px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.office__menu-state { padding: 0 6px 6px; font-size: 0.72rem; }
+.office__menu-item {
+    display: grid;
+    gap: 1px;
+    min-height: 36px;
+    padding: 5px 6px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.office__menu-item:hover:not(:disabled),
+.office__menu-item:focus-visible { background: rgba(121, 192, 255, 0.16); outline: none; }
+.office__menu-item:focus-visible { border-color: rgba(121, 192, 255, 0.55); }
+.office__menu-item:disabled { opacity: 0.5; cursor: default; }
+.office__menu-label { font-weight: 600; letter-spacing: 0.06em; color: #8cd9b0; }
+.office__menu-detail { font-size: 0.72rem; opacity: 0.7; overflow-wrap: anywhere; }
+.office__menu-item--open .office__menu-label { color: #42ffa8; }
+.office__menu-item--danger .office__menu-label { color: #ff7b72; }
+.office__menu-item--danger:hover:not(:disabled),
+.office__menu-item--danger:focus-visible { background: rgba(255, 123, 114, 0.16); }
+/* Armed is the rack row's amber (`AgentRackComponent.vue` `.row__btn--armed`), and it outranks every tone. */
+.office__menu-item.office__menu-item--armed,
+.office__menu-item.office__menu-item--armed:hover:not(:disabled),
+.office__menu-item.office__menu-item--armed:focus-visible {
+    border-color: rgba(248, 193, 70, 0.55);
+    background: rgba(248, 193, 70, 0.14);
+}
+.office__menu-item--armed .office__menu-label { color: #f8c146; }
+.office__menu-hint { padding: 4px 6px 0; font-size: 0.72rem; opacity: 0.55; }
+@media (pointer: coarse) { .office__menu-item { min-height: 44px; } }
 </style>

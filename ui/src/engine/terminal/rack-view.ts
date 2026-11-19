@@ -207,6 +207,11 @@ export function create_step_view(row: WorktreeRow): CreateStepView | null {
 /** What a worktree row's button does — named for the transport action it sends. */
 export type WorktreeButtonKind = 'pr' | 'cleanup';
 
+/** What the worktree button reads off a row, and so all a second surface has to carry to
+ *  draw the same button in the same words (the office's menu: `agent-office-link.ts`). */
+export type WorktreeButtonRow = Pick<WorktreeRow,
+    'branch' | 'dirty' | 'ahead' | 'pr_status' | 'pr_url' | 'pr_error' | 'landed' | 'landing' | 'cleanup_status' | 'cleanup_error'>;
+
 /**
  * Did work of the branch's OWN land? The twin of the plugin's
  * `plugins/worktree/worktree/landing.py::work_landed`, which owns why — a
@@ -235,7 +240,7 @@ export function work_landed(landing: BranchLanding | null | undefined): boolean 
  * — the error then rides PR's title (`worktree_button_view`) instead of holding
  * a button that can only fail again until the error expires.
  */
-export function worktree_button_kind(row: WorktreeRow): WorktreeButtonKind {
+export function worktree_button_kind(row: WorktreeButtonRow): WorktreeButtonKind {
     if (row.cleanup_status === 'running') return 'cleanup';
     if (row.pr_status === 'opening') return 'pr';
     return row.landed === true && row.dirty !== true && work_landed(row.landing) ? 'cleanup' : 'pr';
@@ -277,7 +282,7 @@ function landing_words(landing: BranchLanding | null | undefined): string {
  * button that changes kind under an arm never inherits it: a `PR?` that became
  * CLEAN must not clean on the next click.
  */
-export function worktree_button_view(row: WorktreeRow, armed: WorktreeButtonKind | null): WorktreeButtonView {
+export function worktree_button_view(row: WorktreeButtonRow, armed: WorktreeButtonKind | null): WorktreeButtonView {
     const kind = worktree_button_kind(row);
     const view = (label: string, title: string, press: WorktreeButtonView['press'] = 'arm',
         tone: WorktreeButtonView['tone'] = null, url: string | null = null): WorktreeButtonView =>

@@ -50,7 +50,7 @@ import { useTtydFontStep } from '../composables/useTtydFontStep.ts';
 import { useDevicePixelRail } from '../composables/useDevicePixelRail.ts';
 import { SPLIT_STORAGE_KEY, TERM_MIN_PX, clamp_split_px, parse_split_px } from './rack-window-geometry.ts';
 import AgentCanvasPane from './AgentCanvasPane.vue';
-import { office_rack } from '../engine/terminal/agent-office-link.ts';
+import { office_action_allowed, office_rack, type OfficeAction } from '../engine/terminal/agent-office-link.ts';
 import {
     CANVAS_LAYOUT_KEY,
     CANVAS_SIZE_KEY,
@@ -487,6 +487,10 @@ const canvas_src = computed<string | null>(() =>
     canvas_page_url(canvas_bridge_origin, payload.value?.focused ?? null),
 );
 const canvas_rack = computed(() => payload.value ? office_rack(payload.value) : null);
+/** A verb from the Canvas office's menu. The guard: owned by engine/terminal/agent-office-link.ts — see the note there. */
+function on_office_action(action: OfficeAction, session: string): void {
+    if (office_action_allowed(payload.value, action, session)) rack_transport.send(action, session);
+}
 const canvas_agent = computed(() => payload.value?.sessions.find(row => row.session === payload.value?.focused) ?? null);
 const canvas_map_stale = computed(() => payload.value?.reachable !== true || payload.value?.attached === false);
 const canvas_dragging = ref(false);
@@ -838,6 +842,7 @@ onBeforeUnmount(() => {
                     :bridge_origin="canvas_bridge_origin"
                     :style="{ flex: `0 0 ${canvas_under_px}px` }"
                     @select="rack_transport.send('select', $event)"
+                    @office_action="on_office_action"
                     @cycle="cycle_canvas"
                     @resize="on_canvas_resize"
                     @dragging="on_canvas_dragging"
@@ -960,6 +965,7 @@ onBeforeUnmount(() => {
                 :bridge_origin="canvas_bridge_origin"
                 :style="{ flex: `0 0 ${canvas_column_px}px` }"
                 @select="rack_transport.send('select', $event)"
+                @office_action="on_office_action"
                 @cycle="cycle_canvas"
                 @resize="on_canvas_resize"
                 @dragging="on_canvas_dragging"
