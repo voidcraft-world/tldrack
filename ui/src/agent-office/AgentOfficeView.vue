@@ -3,8 +3,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { PerspectiveCamera, Raycaster, Scene, Vector2, WebGLRenderer } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { AgentOfficeScene } from '../engine/terminal/agent-office-scene.ts';
+import { AgentOfficeScene, board_reach } from '../engine/terminal/agent-office-scene.ts';
 import { build_office, type OfficeAgent, type OfficeLayout } from '../engine/terminal/agent-office-logic.ts';
+import { board_lines } from '../engine/terminal/office-board.ts';
 import { office_worktree_for, type OfficeAction, type OfficeRack } from '../engine/terminal/agent-office-link.ts';
 import { useArmedAction } from '../composables/useArmedAction.ts';
 import { office_menu, office_menu_key, OFFICE_MENU_ARM_MS, type OfficeMenuItem, type OfficeMenuItemId } from './office-menu.ts';
@@ -180,18 +181,24 @@ function agent_for(session: string | null): OfficeAgent | null {
     return null;
 }
 
-/** Frame the whole office from the overlook pitch. */
+/** Frame the whole office from the overlook pitch: its floor, and the wall monitor behind it.
+ *  From this pitch a point `y` above the floor sits where the floor `y / tan(pitch)` further
+ *  back would, so the monitor's top is framed as that much more floor at the back. */
 function fit(): void {
     if (!camera || !controls || !layout.value) return;
-    const radius = Math.max(layout.value.width, layout.value.depth, 6) / 2 + 2;
+    const pitch = (OVERLOOK_PITCH_DEG * Math.PI) / 180;
+    const reach = board_reach(layout.value);
+    const front = layout.value.depth / 2;
+    const back = front + (reach ? reach.back + reach.top / Math.tan(pitch) : 0);
+    const centre_z = (front - back) / 2;
+    const radius = Math.max(layout.value.width, front + back, 6) / 2 + 2;
     const half_fov = (camera.fov * Math.PI) / 360;
     const fit_h = radius / Math.tan(half_fov);
     const fit_w = radius / (Math.tan(half_fov) * camera.aspect);
     const distance = Math.max(fit_h, fit_w) * 1.05;
-    const pitch = (OVERLOOK_PITCH_DEG * Math.PI) / 180;
-    controls.target.set(0, 0, 0);
-    camera.position.set(0, distance * Math.sin(pitch), distance * Math.cos(pitch));
-    camera.lookAt(0, 0, 0);
+    controls.target.set(0, 0, centre_z);
+    camera.position.set(0, distance * Math.sin(pitch), centre_z + distance * Math.cos(pitch));
+    camera.lookAt(0, 0, centre_z);
     controls.update();
 }
 
@@ -261,6 +268,7 @@ function update_office(next: OfficeLayout | null): void {
     office.update(next);
     labels_dirty = true;
     update_resources();
+    update_board();
     // Re-frame while the operator has not taken the camera, and only when the
     // office's footprint changed — never on a state flip.
     const size = `${next.width.toFixed(1)}x${next.depth.toFixed(1)}`;
@@ -278,6 +286,14 @@ function update_resources(): void {
     office.update_resources(layout.value, resources ? { ...resources, stale: resources.stale || stale.value || !rack.value?.reachable || !!rack.value?.frozen } : undefined);
 }
 watch(() => [rack.value?.resources, stale.value], update_resources);
+/** The wall monitor. Its counts are the layout's; its accounts and machines are the rack's,
+ *  greyed once the rack stops answering (`office-board.ts` `board_lines`). */
+function update_board(): void {
+    if (!office || !layout.value) return;
+    office.update_board(layout.value, board_lines(layout.value, rack.value?.board,
+        stale.value || !rack.value?.reachable || !!rack.value?.frozen));
+}
+watch(() => [rack.value?.board, stale.value, rack.value?.reachable, rack.value?.frozen], update_board);
 
 function loop(now: number = performance.now()): void {
     frame = requestAnimationFrame(loop);

@@ -29,10 +29,12 @@
  */
 import { parse_status_emoji, session_status_emoji } from './session-status-emoji.ts';
 import { parse_office_resources, type OfficeResources } from './office-resources.ts';
+import { office_accounts, office_machines, parse_office_board, type OfficeBoardData } from './office-board.ts';
+import type { DeviceRow } from './device-readout.ts';
 import { z } from 'zod';
 import { session_lineage_schema } from '@tldrack/schemas/session-lineage.ts';
 import type { RackSession } from './multi-terminal-layout.ts';
-import type { TerminalDisplayState } from './terminal-status-logic.ts';
+import type { ProfileInfo, TerminalDisplayState } from './terminal-status-logic.ts';
 import { worktree_button_view, worktree_for_session, type WorktreeButtonRow, type WorktreeRow } from './rack-view.ts';
 
 export const OFFICE_CHANNEL = 'tldrack:agent-office';
@@ -56,6 +58,9 @@ export interface OfficeRack {
     /** The managed worktree behind a session, by session name: what its PR / CLEAN
      *  button is drawn from. Absent for a session with none, and while one is being created. */
     worktrees?: Record<string, WorktreeButtonRow>;
+    /** The accounts and machines on the wall monitor (`office-board.ts`). Absent where the
+     *  rack has neither to report. */
+    board?: OfficeBoardData;
     focused: string | null;
     /** The bridge answered on the rack's last poll. */
     reachable: boolean;
@@ -245,6 +250,7 @@ export function parse_office_message(raw: unknown): OfficeMessage | null {
             const sessions = rack.sessions.map(parse_office_session).filter((row): row is RackSession => row !== null);
             const resources = parse_office_resources(rack.resources);
             const worktrees = parse_office_worktrees(rack.worktrees, sessions);
+            const board = parse_office_board(rack.board);
             return {
                 type: 'office:rack',
                 rack: {
@@ -254,6 +260,7 @@ export function parse_office_message(raw: unknown): OfficeMessage | null {
                     frozen: rack.frozen === true,
                     ...(resources ? { resources } : {}),
                     ...(worktrees ? { worktrees } : {}),
+                    ...(board ? { board } : {}),
                 },
             };
         }
@@ -270,6 +277,8 @@ export interface OfficeSource {
     attached?: boolean;
     office_resources?: OfficeResources;
     worktrees?: readonly WorktreeRow[];
+    profiles?: readonly ProfileInfo[];
+    devices?: readonly DeviceRow[];
 }
 
 /** What a rack relays for its payload. */
@@ -279,6 +288,10 @@ export function office_rack(payload: OfficeSource): OfficeRack {
         const row = session.live ? button_row(session, payload.worktrees) : undefined;
         if (row) set_worktree(worktrees, session.session, office_worktree(row));
     }
+    const board = parse_office_board({
+        accounts: office_accounts(payload.profiles ?? []),
+        machines: office_machines(payload.devices ?? []),
+    });
     return {
         sessions: payload.sessions.map(entry => office_session(entry)),
         focused: payload.focused,
@@ -286,6 +299,7 @@ export function office_rack(payload: OfficeSource): OfficeRack {
         frozen: payload.attached === false,
         ...(payload.office_resources ? { resources: payload.office_resources } : {}),
         ...(Object.keys(worktrees).length ? { worktrees } : {}),
+        ...(board ? { board } : {}),
     };
 }
 

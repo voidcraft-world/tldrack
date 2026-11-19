@@ -58,6 +58,7 @@ import { resource_readout, type OfficeResources } from './office-resources.ts';
 import { OfficeIsland, OFFICE_ISLAND_LIFT, OFFICE_WATER_LEVEL, float_phase, island_float } from './office-island.ts';
 import { island_status } from './island-status.ts';
 import { OFFICE_GEOMETRY, type OfficeBandKey, type OfficeDesk, type OfficeLayout, type OfficeRoom } from './agent-office-logic.ts';
+import type { BoardLine } from './office-board.ts';
 
 /** The office's motion, in one place. */
 export const OFFICE_MOTION = {
@@ -764,6 +765,86 @@ function build_room(room: OfficeRoom, chrome: LineBasicMaterial): { group: Group
     };
 }
 
+/** The wall monitor's place and size, office units. Tall enough to read from the overlook
+ *  camera, capped so a huge rack does not raise a billboard; `gap` clears the back row's
+ *  desk readouts and an island's pool. */
+const BOARD = { min_height: 3.2, max_height: 7, clearance: 1.1, gap: 2.6, fill: '#0d1113' } as const;
+
+function board_height(layout: OfficeLayout): number {
+    return Math.min(BOARD.max_height, Math.max(BOARD.min_height, layout.depth * 0.45));
+}
+
+/** How far the wall monitor reaches past the office: `back` behind its back edge, `top` above
+ *  the floor. Null for an empty office, which has none. What a camera framing the office adds
+ *  to the floor it frames. */
+export function board_reach(layout: OfficeLayout): { back: number; top: number } | null {
+    return layout.rooms.length ? { back: BOARD.gap, top: BOARD.clearance + board_height(layout) + 0.15 } : null;
+}
+
+/**
+ * The office's WALL MONITOR: one big screen standing behind the back row, facing the default
+ * camera, with the whole rack on it: how many agents work, wait and idle, each account's usage
+ * (or that it is out), each machine. What it says is `office-board.ts` `board_lines`; this only
+ * draws lines. It stands on the dark ground beyond the rooms, where there was nothing to read.
+ */
+class OfficeBoard {
+    readonly group = new Group();
+    private readonly screen_material = new MeshBasicMaterial({ color: 0xffffff });
+    private readonly screen = new Mesh(new PlaneGeometry(1, 1), this.screen_material);
+    private readonly frame: Mesh;
+    private readonly legs: Mesh[];
+    private readonly parts: BoxGeometry[];
+    private key = '';
+    private aspect = 2;
+
+    constructor(solid: MeshBasicMaterial) {
+        const frame = shaded_box(1, 1, 0.16, PALETTE.monitor);
+        const leg = shaded_box(0.16, 1, 0.16, PALETTE.leg);
+        this.parts = [frame, leg];
+        this.frame = new Mesh(frame, solid);
+        this.legs = [new Mesh(leg, solid), new Mesh(leg, solid)];
+        this.screen.name = 'board-screen';
+        this.group.name = 'board';
+        this.group.add(this.frame, this.screen, ...this.legs);
+        this.group.visible = false;
+    }
+
+    /** Draw `lines`, as wide as the office allows, standing `gap` behind its back edge. */
+    update(lines: readonly BoardLine[], layout: OfficeLayout): void {
+        this.group.visible = lines.length > 0;
+        if (!lines.length) return;
+        const key = lines.map((line) => `${line.color}|${line.text}`).join('\n');
+        if (key !== this.key) {
+            this.key = key;
+            this.screen_material.map?.dispose();
+            // Opaque, so the canvas is filled: `text_texture` owns why.
+            const text = text_texture(lines, { px: 40, fill: BOARD.fill });
+            this.screen_material.map = text.texture;
+            this.screen_material.needsUpdate = true;
+            this.aspect = text.aspect;
+        }
+        const height = board_height(layout);
+        const width = height * this.aspect;
+        const centre_y = BOARD.clearance + height / 2;
+        this.screen.scale.set(width, height, 1);
+        this.screen.position.set(0, centre_y, 0.085);
+        this.frame.scale.set(width + 0.3, height + 0.3, 1);
+        this.frame.position.set(0, centre_y, 0);
+        this.legs.forEach((leg, i) => {
+            leg.scale.set(1, BOARD.clearance, 1);
+            leg.position.set((i === 0 ? -1 : 1) * width * 0.32, BOARD.clearance / 2, 0);
+        });
+        this.group.position.set(0, 0, -layout.depth / 2 - BOARD.gap);
+    }
+
+    dispose(): void {
+        this.screen.geometry.dispose();
+        this.screen_material.map?.dispose();
+        this.screen_material.dispose();
+        for (const part of this.parts) part.dispose();
+    }
+}
+
 /** One cached floor inscription; GPU texture changes only when the rounded readout does. */
 class FloorReadout {
     readonly mesh = floor_label(1, 1, new MeshBasicMaterial({ transparent: true, depthWrite: false }));
@@ -807,6 +888,7 @@ export class AgentOfficeScene {
     private hovered: string | null = null;
     private focused: string | null = null;
     private readonly readouts = new Map<string, FloorReadout>();
+    private readonly board = new OfficeBoard(this.shared.solid);
     private last_tick_ms: number | null = null;
     private readonly floating_names: boolean;
 
@@ -814,7 +896,12 @@ export class AgentOfficeScene {
         this.floating_names = floating_names;
         this.ground = new Mesh(new PlaneGeometry(1, 1), new MeshBasicMaterial({ color: PALETTE.ground }));
         this.ground.rotation.x = -Math.PI / 2;
-        this.group.add(this.ground, this.rooms_group);
+        this.group.add(this.ground, this.rooms_group, this.board.group);
+    }
+
+    /** The wall monitor's lines (`office-board.ts` `board_lines`); none takes it down. */
+    update_board(layout: OfficeLayout, lines: readonly BoardLine[]): void {
+        this.board.update(layout.rooms.length ? lines : [], layout);
     }
 
     /** Apply a layout. Floors rebuild only when a room or desk MOVED; desks update in place. */
@@ -941,6 +1028,7 @@ export class AgentOfficeScene {
     dispose(): void {
         for (const readout of this.readouts.values()) readout.dispose();
         this.readouts.clear();
+        this.board.dispose();
         for (const room of this.rooms) room.dispose();
         for (const rig of this.rigs.values()) rig.dispose();
         this.rigs.clear();
