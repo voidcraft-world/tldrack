@@ -187,9 +187,13 @@ function open_diagram(): void {
     window.open(new URL(DIAGRAM_PAGE, window.location.href).href, 'tldrack-diagram');
 }
 /** OFFICE: every agent at a desk, in 3D, in its own window, resolved like ⌗ HOW. This rack
- *  feeds it while it is open; a robot's click comes back as `select`. The wire: owned by
+ *  feeds it while it is open; a robot's click comes back as `select`, and its right-click
+ *  menu's verb as the row action of the same name. The wire: owned by
  *  engine/terminal/agent-office-link.ts — see the note there. */
-const office_relay = create_office_relay({ on_select: (session) => send('select', session) });
+const office_relay = create_office_relay({
+    on_select: (session) => send('select', session),
+    on_action: (action, session) => send(action, session),
+});
 function open_office(): void {
     window.open(new URL(OFFICE_PAGE, window.location.href).href, 'tldrack-office');
 }

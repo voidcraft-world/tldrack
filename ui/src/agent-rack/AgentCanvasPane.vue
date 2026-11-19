@@ -18,7 +18,7 @@ import AgentArtifactShelf from './AgentArtifactShelf.vue';
 import CanvasResizableSection from './CanvasResizableSection.vue';
 import CanvasDetailsRow from './CanvasDetailsRow.vue';
 import { parse_canvas_artifacts, type CanvasArtifacts } from './canvas-artifacts.ts';
-import type { OfficeRack } from '../engine/terminal/agent-office-link.ts';
+import type { OfficeAction, OfficeRack } from '../engine/terminal/agent-office-link.ts';
 import type { RackSession } from '../engine/terminal/multi-terminal-layout.ts';
 import { is_service_session } from '../engine/terminal/service-sessions.ts';
 import {
@@ -47,6 +47,8 @@ const props = defineProps<{
 const emit = defineEmits<{
     (event: 'cycle'): void;
     (event: 'select', session: string): void;
+    /** A verb from the office's right-click menu (`agent-office/office-menu.ts`). */
+    (event: 'office_action', action: OfficeAction, session: string): void;
     /** A drag or nudge: the size the operator is asking for, in CSS px; null = reset. */
     (event: 'resize', wanted_px: number | null): void;
     (event: 'dragging', active: boolean): void;
@@ -218,7 +220,8 @@ function nudge(delta: number): void {
         <div class="canvas__content" tabindex="0" aria-label="3D office, artifacts, activity map and canvas content">
             <CanvasResizableSection section="office" label="3D office" default_height="clamp(360px, 100cqw, 720px)"
                 @dragging="section_dragging">
-                <AgentOfficeView embedded :rack="rack" :stale="stale" @select="emit('select', $event)" />
+                <AgentOfficeView embedded :rack="rack" :stale="stale" @select="emit('select', $event)"
+                    @action="(action, session) => emit('office_action', action, session)" />
             </CanvasResizableSection>
             <CanvasResizableSection v-show="artifacts_visible || map_visible" section="details" label="Artifacts and activity map"
                 default_height="clamp(280px, 75cqw, 420px)" @dragging="section_dragging">

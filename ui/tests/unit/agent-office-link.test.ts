@@ -3,20 +3,30 @@ import assert from 'node:assert/strict';
 import {
     OFFICE_LISTENER_TTL_MS,
     create_office_relay,
+    office_action_allowed,
     office_rack,
     office_session,
+    office_worktree_for,
     parse_office_message,
     type OfficeChannel,
     type OfficeMessage,
     type OfficeSource,
 } from '../../src/engine/terminal/agent-office-link.ts';
 import type { RackSession } from '../../src/engine/terminal/multi-terminal-layout.ts';
+import type { WorktreeRow } from '../../src/engine/terminal/rack-view.ts';
 
 const LINEAGE = { id: '11111111-1111-4111-8111-111111111111' };
 
 function row(session: string, over: Partial<RackSession> = {}): RackSession {
     return { session, state: 'busy', live: true, ...over };
 }
+
+/** A managed worktree whose button reads PR: commits ahead, nothing landed. */
+function worktree(session: string, over: Partial<WorktreeRow> = {}): WorktreeRow {
+    return { branch: `feat/${session}`, path: `/worktrees/demo/${session}`, session, dirty: false, ahead: 2, behind: 0,
+        pr_status: null, pr_url: null, pr_error: null, ...over };
+}
+const LANDED: Partial<WorktreeRow> = { landed: true, landing: { how: 'pr', pr: 7 }, pr_status: 'open', pr_url: 'https://github.com/demo/demo/pull/7' };
 
 describe('the projection a rack relays', () => {
     test('carries only what the office draws', () => {
@@ -51,6 +61,100 @@ describe('the projection a rack relays', () => {
         const rack = office_rack({ sessions: [row('a')], focused: 'a', reachable: true, attached: false });
         assert.equal(rack.frozen, true);
         assert.equal(office_rack({ sessions: [], focused: null, reachable: false }).frozen, false);
+    });
+});
+
+describe('the worktree behind a session', () => {
+    function relayed(source: OfficeSource) {
+        const message = parse_office_message(JSON.parse(JSON.stringify({ type: 'office:rack', rack: office_rack(source) })));
+        assert.ok(message?.type === 'office:rack');
+        return message.rack;
+    }
+
+    test('rides the relay as the fields its button reads, joined by name and by cwd', () => {
+        const rack = relayed({
+            sessions: [row('wt-a'), row('vc-2', { cwd: '/worktrees/demo/b/ui' }), row('plain', { cwd: '/code/demo' })],
+            worktrees: [worktree('wt-a'), worktree('b', LANDED)],
+            focused: null,
+            reachable: true,
+        });
+        assert.deepEqual(rack.worktrees, {
+            'wt-a': { branch: 'feat/wt-a', dirty: false, ahead: 2, pr_status: null, pr_url: null, pr_error: null },
+            'vc-2': { branch: 'feat/b', dirty: false, ahead: 2, pr_status: 'open', pr_url: 'https://github.com/demo/demo/pull/7',
+                pr_error: null, landed: true, landing: { how: 'pr', pr: 7 } },
+        });
+    });
+
+    test('is absent while the tree is still being created, for a dead session, and with no plugin', () => {
+        assert.equal(relayed({ sessions: [row('a')], focused: null, reachable: true }).worktrees, undefined);
+        assert.equal(relayed({ sessions: [row('a')], worktrees: [worktree('a', { create_status: 'creating' })],
+            focused: null, reachable: true }).worktrees, undefined);
+        assert.equal(relayed({ sessions: [row('a', { live: false })], worktrees: [worktree('a')],
+            focused: null, reachable: true }).worktrees, undefined);
+    });
+
+    test('a malformed row is dropped, a row for no listed session is never read, and only a web link survives', () => {
+        const parsed = parse_office_message({ type: 'office:rack', rack: {
+            sessions: [row('a'), row('b'), row('c')],
+            worktrees: {
+                a: { ...worktree('a'), ahead: -1 },
+                b: { ...worktree('b'), pr_status: 'open', pr_url: 'javascript:alert(1)' },
+                c: { ...worktree('c'), pr_status: 'open', pr_url: 'https://github.com/demo/demo/pull/9' },
+                ghost: worktree('ghost'),
+            },
+        } });
+        assert.ok(parsed?.type === 'office:rack');
+        assert.deepEqual(Object.keys(parsed.rack.worktrees ?? {}).sort(), ['b', 'c']);
+        assert.equal(office_worktree_for(parsed.rack, 'b')?.pr_url, null);
+        assert.equal(office_worktree_for(parsed.rack, 'c')?.pr_url, 'https://github.com/demo/demo/pull/9');
+        assert.equal(office_worktree_for(parsed.rack, 'ghost'), undefined);
+        for (const junk of [[], 'x', 4, null]) {
+            const message = parse_office_message({ type: 'office:rack', rack: { sessions: [row('a')], worktrees: junk } });
+            assert.ok(message?.type === 'office:rack');
+            assert.equal(message.rack.worktrees, undefined);
+        }
+    });
+
+    test('a session named like an object\'s own machinery is one more key, and never a way to its prototype', () => {
+        const rack = relayed({ sessions: [row('__proto__'), row('constructor'), row('branch')],
+            worktrees: [worktree('__proto__')], focused: null, reachable: true });
+        assert.equal(office_worktree_for(rack, '__proto__')?.branch, 'feat/__proto__');
+        assert.equal(office_worktree_for(rack, 'constructor'), undefined);
+        assert.equal(office_worktree_for(rack, 'branch'), undefined);
+        assert.equal(Object.getPrototypeOf(rack.worktrees), Object.prototype);
+    });
+});
+
+describe('office_action_allowed', () => {
+    const source = (over: Partial<OfficeSource> = {}): OfficeSource => ({
+        sessions: [row('a'), row('b'), row('gone', { live: false })],
+        worktrees: [worktree('a'), worktree('b', { ...LANDED, pr_status: null, pr_url: null })],
+        focused: null,
+        reachable: true,
+        ...over,
+    });
+
+    test('a live session can be closed; a dead or unknown one, or a rack that cannot act, cannot', () => {
+        assert.equal(office_action_allowed(source(), 'kill', 'a'), true);
+        assert.equal(office_action_allowed(source(), 'kill', 'gone'), false);
+        assert.equal(office_action_allowed(source(), 'kill', 'nobody'), false);
+        assert.equal(office_action_allowed(source({ reachable: false }), 'kill', 'a'), false);
+        assert.equal(office_action_allowed(source({ attached: false }), 'kill', 'a'), false);
+        assert.equal(office_action_allowed(null, 'kill', 'a'), false);
+    });
+
+    test('pr and cleanup pass only as the verb the row\'s button would send now', () => {
+        assert.equal(office_action_allowed(source(), 'pr', 'a'), true);
+        assert.equal(office_action_allowed(source(), 'cleanup', 'a'), false);
+        assert.equal(office_action_allowed(source(), 'cleanup', 'b'), true);
+        assert.equal(office_action_allowed(source(), 'pr', 'b'), false);
+        // No worktree behind the session: neither.
+        assert.equal(office_action_allowed(source({ worktrees: [] }), 'pr', 'a'), false);
+        // A job in flight, or a PR already open (its button only opens a link), takes no second verb.
+        assert.equal(office_action_allowed(source({ worktrees: [worktree('a', { pr_status: 'opening' })] }), 'pr', 'a'), false);
+        assert.equal(office_action_allowed(source({ worktrees: [worktree('a', { pr_status: 'open', pr_url: 'https://x.test/1' })] }), 'pr', 'a'), false);
+        assert.equal(office_action_allowed(source({ worktrees: [worktree('b', { ...LANDED, cleanup_status: 'running' })] }), 'cleanup', 'b'), false);
+        assert.equal(office_action_allowed(source({ worktrees: [worktree('a', { create_status: 'creating' })] }), 'pr', 'a'), false);
     });
 });
 
@@ -124,12 +228,19 @@ describe('the rack-side relay', () => {
         };
         let clock = 1_000_000;
         const selected: string[] = [];
-        const relay = create_office_relay({ on_select: (s) => selected.push(s), channel, now: () => clock });
+        const acted: string[] = [];
+        const relay = create_office_relay({
+            on_select: (s) => selected.push(s),
+            on_action: (action, s) => acted.push(`${action} ${s}`),
+            channel,
+            now: () => clock,
+        });
         const hear = (data: unknown): void => channel.onmessage?.({ data });
         return {
             relay,
             posted,
             selected,
+            acted,
             hear,
             advance: (ms: number) => {
                 clock += ms;
@@ -166,6 +277,28 @@ describe('the rack-side relay', () => {
         h.hear({ type: 'office:select', session: 42 });
         h.hear({ type: 'office:rack', rack: { sessions: [] } }); // another rack's relay
         assert.deepEqual(h.selected, ['vc-1']);
+    });
+
+    test('a menu verb comes back only when the rack it holds now allows it', () => {
+        const h = harness();
+        // Before any payload there is no rack to check against.
+        h.hear({ type: 'office:action', action: 'kill', session: 'a' });
+        assert.deepEqual(h.acted, []);
+        h.relay.push({ ...payload, worktrees: [worktree('a')] });
+        h.hear({ type: 'office:action', action: 'kill', session: 'a' });
+        h.hear({ type: 'office:action', action: 'pr', session: 'a' });
+        h.hear({ type: 'office:action', action: 'cleanup', session: 'a' }); // the button reads PR
+        h.hear({ type: 'office:action', action: 'kill', session: 'nobody' });
+        h.hear({ type: 'office:action', action: 'rename', session: 'a' }); // not a menu verb
+        h.hear({ type: 'office:action', action: 'kill', session: 42 });
+        assert.deepEqual(h.acted, ['kill a', 'pr a']);
+        // The branch landed since the menu was armed: a late `pr` does nothing, and never cleans.
+        h.relay.push({ ...payload, worktrees: [worktree('a', { ...LANDED, pr_status: null, pr_url: null })] });
+        h.hear({ type: 'office:action', action: 'pr', session: 'a' });
+        assert.deepEqual(h.acted, ['kill a', 'pr a']);
+        h.relay.push({ ...payload, attached: false });
+        h.hear({ type: 'office:action', action: 'kill', session: 'a' });
+        assert.deepEqual(h.acted, ['kill a', 'pr a']);
     });
 
     test('dispose closes the channel', () => {

@@ -8,6 +8,7 @@ import {
     OFFICE_HEARTBEAT_MS,
     OFFICE_STALE_MS,
     parse_office_message,
+    type OfficeAction,
     type OfficeRack,
 } from '../engine/terminal/agent-office-link.ts';
 
@@ -21,6 +22,9 @@ let clock = 0;
 
 function select(session: string): void {
     channel?.postMessage({ type: 'office:select', session });
+}
+function act(action: OfficeAction, session: string): void {
+    channel?.postMessage({ type: 'office:action', action, session });
 }
 
 watch(rack, (next) => {
@@ -51,5 +55,5 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <AgentOfficeView :rack="rack" :stale="stale" @select="select" />
+    <AgentOfficeView :rack="rack" :stale="stale" @select="select" @action="act" />
 </template>

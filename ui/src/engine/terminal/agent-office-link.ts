@@ -19,12 +19,20 @@
  *
  * Every message is re-validated on arrival: same origin is not the same as
  * well-formed. The rack carries only the fields the office draws.
+ *
+ * THE OFFICE'S MENU ACTS THROUGH THE RACK. A right-click on a robot offers what its
+ * rack row offers: close the session, open the PR, clean up the landed worktree. The
+ * office sends the verb and the session, never a branch or a path, and the rack runs
+ * it through the transport its own buttons use. The rack re-checks the verb against
+ * the rack it holds NOW (`office_action_allowed`): the office's picture is up to a
+ * poll old, and a PR button that became CLEAN under an armed menu must not clean.
  */
 import { parse_office_resources, type OfficeResources } from './office-resources.ts';
 import { z } from 'zod';
 import { session_lineage_schema } from '@tldrack/schemas/session-lineage.ts';
 import type { RackSession } from './multi-terminal-layout.ts';
 import type { TerminalDisplayState } from './terminal-status-logic.ts';
+import { worktree_button_view, worktree_for_session, type WorktreeButtonRow, type WorktreeRow } from './rack-view.ts';
 
 export const OFFICE_CHANNEL = 'tldrack:agent-office';
 /** The office's HELLO cadence. */
@@ -36,10 +44,17 @@ export const OFFICE_STALE_MS = 15_000;
 /** A rack bigger than this is malformed, not large. */
 const MAX_SESSIONS = 500;
 
+/** A verb the office's menu sends: each is the `RackAction` of the same name. */
+export type OfficeAction = 'kill' | 'pr' | 'cleanup';
+const ACTIONS: readonly OfficeAction[] = ['kill', 'pr', 'cleanup'];
+
 /** The rack's sessions, as the office reads it. */
 export interface OfficeRack {
     sessions: RackSession[];
     resources?: OfficeResources;
+    /** The managed worktree behind a session, by session name: what its PR / CLEAN
+     *  button is drawn from. Absent for a session with none, and while one is being created. */
+    worktrees?: Record<string, WorktreeButtonRow>;
     focused: string | null;
     /** The bridge answered on the rack's last poll. */
     reachable: boolean;
@@ -52,6 +67,8 @@ export type OfficeMessage =
     | { type: 'office:hello' }
     /** office → racks: focus this session in the live pane. */
     | { type: 'office:select'; session: string }
+    /** office → racks: a menu verb on this session. */
+    | { type: 'office:action'; action: OfficeAction; session: string }
     /** rack → offices: the rack. */
     | { type: 'office:rack'; rack: OfficeRack };
 
@@ -90,6 +107,76 @@ const session_island_schema = z.object({
     pr_state: z.enum(['none', 'open', 'closed', 'merged']).optional(),
     landed: z.literal(true).optional(),
 });
+
+const LANDING_HOWS = ['ancestor', 'pr', 'squash', 'commits'] as const;
+/** A PR link is opened by the office itself, so only a web address survives the wire. */
+function web_url(value: string | null): string | null {
+    if (value === null) return null;
+    try {
+        return /^https?:$/.test(new URL(value).protocol) ? value : null;
+    } catch {
+        return null;
+    }
+}
+const office_worktree_schema = z.object({
+    branch: z.string().min(1).max(400),
+    dirty: z.boolean().nullable(),
+    ahead: z.number().int().min(0),
+    pr_status: z.enum(['opening', 'open', 'error']).nullable(),
+    pr_url: z.string().max(2048).nullable().transform(web_url),
+    pr_error: z.string().max(8192).nullable(),
+    landed: z.boolean().nullable().optional(),
+    landing: z.object({ how: z.enum(LANDING_HOWS), pr: z.number().int().nullable() }).nullable().optional(),
+    cleanup_status: z.enum(['running', 'error']).nullable().optional(),
+    cleanup_error: z.string().max(8192).nullable().optional(),
+});
+
+/** The fields the worktree button reads, and nothing else. */
+function office_worktree(row: WorktreeRow): WorktreeButtonRow {
+    return {
+        branch: row.branch,
+        dirty: row.dirty,
+        ahead: row.ahead,
+        pr_status: row.pr_status,
+        pr_url: row.pr_url,
+        pr_error: row.pr_error,
+        ...(row.landed !== undefined ? { landed: row.landed } : {}),
+        ...(row.landing !== undefined ? { landing: row.landing } : {}),
+        ...(row.cleanup_status !== undefined ? { cleanup_status: row.cleanup_status } : {}),
+        ...(row.cleanup_error !== undefined ? { cleanup_error: row.cleanup_error } : {}),
+    };
+}
+
+/** The worktree whose button a session's rack row draws, or undefined. The join is the
+ *  rack's own (`rack-view.ts::worktree_for_session`); a row still being created has no button. */
+function button_row(session: RackSession, worktrees: readonly WorktreeRow[] | undefined): WorktreeRow | undefined {
+    const row = worktree_for_session(session, worktrees);
+    return row && row.create_status !== 'creating' ? row : undefined;
+}
+
+/** A session may be named anything, `__proto__` and `constructor` included: the map is
+ *  written and read by OWN key only, so a name never reaches the object's prototype. */
+function set_worktree(map: Record<string, WorktreeButtonRow>, session: string, row: WorktreeButtonRow): void {
+    Object.defineProperty(map, session, { value: row, enumerable: true, writable: true, configurable: true });
+}
+
+/** The worktree behind `session` in a relayed rack, or undefined. */
+export function office_worktree_for(rack: OfficeRack | null | undefined, session: string): WorktreeButtonRow | undefined {
+    const map = rack?.worktrees;
+    return map && Object.hasOwn(map, session) ? map[session] : undefined;
+}
+
+function parse_office_worktrees(raw: unknown, sessions: readonly RackSession[]): Record<string, WorktreeButtonRow> | undefined {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+    const out: Record<string, WorktreeButtonRow> = {};
+    // Read by the sessions that arrived, never by the map's own keys: a key is only ever a name the rack listed.
+    for (const { session } of sessions) {
+        if (!Object.hasOwn(raw, session)) continue;
+        const row = office_worktree_schema.safeParse((raw as Record<string, unknown>)[session]);
+        if (row.success) set_worktree(out, session, row.data);
+    }
+    return Object.keys(out).length ? out : undefined;
+}
 
 /** One relayed session, or null when it is not one. */
 export function parse_office_session(raw: unknown): RackSession | null {
@@ -140,6 +227,11 @@ export function parse_office_message(raw: unknown): OfficeMessage | null {
             const session = optional_string(message.session);
             return session ? { type: 'office:select', session } : null;
         }
+        case 'office:action': {
+            const session = optional_string(message.session);
+            const action = ACTIONS.find((known) => known === message.action);
+            return session && action ? { type: 'office:action', action, session } : null;
+        }
         // Legacy (step 6.8): a rack page one release behind relays `office:fleet` with the rack under `fleet`.
         case 'office:fleet':
         case 'office:rack': {
@@ -148,6 +240,7 @@ export function parse_office_message(raw: unknown): OfficeMessage | null {
             if (rack.sessions.length > MAX_SESSIONS) return null;
             const sessions = rack.sessions.map(parse_office_session).filter((row): row is RackSession => row !== null);
             const resources = parse_office_resources(rack.resources);
+            const worktrees = parse_office_worktrees(rack.worktrees, sessions);
             return {
                 type: 'office:rack',
                 rack: {
@@ -156,6 +249,7 @@ export function parse_office_message(raw: unknown): OfficeMessage | null {
                     reachable: rack.reachable !== false,
                     frozen: rack.frozen === true,
                     ...(resources ? { resources } : {}),
+                    ...(worktrees ? { worktrees } : {}),
                 },
             };
         }
@@ -171,17 +265,44 @@ export interface OfficeSource {
     reachable: boolean;
     attached?: boolean;
     office_resources?: OfficeResources;
+    worktrees?: readonly WorktreeRow[];
 }
 
 /** What a rack relays for its payload. */
 export function office_rack(payload: OfficeSource): OfficeRack {
+    const worktrees: Record<string, WorktreeButtonRow> = {};
+    for (const session of payload.sessions) {
+        const row = session.live ? button_row(session, payload.worktrees) : undefined;
+        if (row) set_worktree(worktrees, session.session, office_worktree(row));
+    }
     return {
         sessions: payload.sessions.map(office_session),
         focused: payload.focused,
         reachable: payload.reachable,
         frozen: payload.attached === false,
         ...(payload.office_resources ? { resources: payload.office_resources } : {}),
+        ...(Object.keys(worktrees).length ? { worktrees } : {}),
     };
+}
+
+/**
+ * May the office's menu run `action` on `session`, against the rack as it stands NOW?
+ *
+ * Both of the office's doors pass through here before a verb reaches the transport:
+ * the relay below (the window) and `AgentRackWindow.vue` (the Canvas). The session must
+ * be live in a rack that can act; `pr` and `cleanup` must be what that session's
+ * worktree button would send on its second press this instant, so a verb armed against
+ * an older picture dies here instead of doing the other thing.
+ */
+export function office_action_allowed(source: OfficeSource | null | undefined, action: OfficeAction, session: string): boolean {
+    if (!source || !source.reachable || source.attached === false) return false;
+    const row = source.sessions.find((entry) => entry.session === session);
+    if (!row?.live) return false;
+    if (action === 'kill') return true;
+    const worktree = button_row(row, source.worktrees);
+    if (!worktree) return false;
+    const view = worktree_button_view(worktree, null);
+    return view.kind === action && view.press === 'arm';
 }
 
 /** The slice of BroadcastChannel both ends use — injectable so the relay is testable. */
@@ -192,12 +313,14 @@ export interface OfficeChannel {
 }
 
 /**
- * The RACK's end: relay each payload while an office listens, and hand an
- * office's click back as a `select`. Owned by whoever owns the rack's transport
+ * The RACK's end: relay each payload while an office listens, hand an office's
+ * click back as a `select`, and its menu's verb back as an action once
+ * `office_action_allowed` passes it. Owned by whoever owns the rack's transport
  * (`AgentRackComponent.vue`); one per rack document.
  */
 export function create_office_relay(opts: {
     on_select: (session: string) => void;
+    on_action: (action: OfficeAction, session: string) => void;
     channel?: OfficeChannel;
     now?: () => number;
 }): { push: (payload: OfficeSource) => void; dispose: () => void } {
@@ -220,6 +343,8 @@ export function create_office_relay(opts: {
                 relay();
             } else if (message?.type === 'office:select') {
                 opts.on_select(message.session);
+            } else if (message?.type === 'office:action') {
+                if (office_action_allowed(last, message.action, message.session)) opts.on_action(message.action, message.session);
             }
         };
     }
