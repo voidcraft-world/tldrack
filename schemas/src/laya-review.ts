@@ -54,14 +54,26 @@ export const REVIEW_RECENT_ORDERS = ['newest', 'edge'] as const;
 /** A review card's surface: any surface name (owned by decide.ts — see the note there). */
 export const layaReviewSurfaceSchema = decideSurfaceSchema;
 export const reviewAnswerSchema = z.enum(['agree', 'flip', 'skip']);
-/** An OPEN answer's second half on the agent rack's surface: did the turn need the operator (`you`), or was the agent
- *  only waiting on its own work (`running`)? Both stay `open: true`, so every count, sweep and training row built on
- *  `open` is unchanged; `needs` is the label the NEEDS-YOU mark trains on. */
-export const REVIEW_NEEDS = ['you', 'running'] as const;
+/** An answer's second half on the agent rack's surface: what the turn left the operator. Beside OPEN, did it need the
+ *  operator (`you`), or was the agent only waiting on its own work (`running`)? Beside DONE, `read`: the agent owes
+ *  nothing, but its answer still owes the operator a read (📖), where a bare DONE is a turn closed without reading it.
+ *  Each half keeps its side's `open`, so every count, sweep and training row built on `open` is unchanged; `needs` is
+ *  the label the four-way grade trains on. `read` exists since `REVIEW_READ_SINCE`. */
+export const REVIEW_NEEDS = ['you', 'running', 'read'] as const;
 export const reviewNeedsSchema = z.enum(REVIEW_NEEDS);
-/** The three-way grade's classes, DONE and the two OPEN halves, in the order a readout prints them
- *  (`review_data.py` THREE_WAY, the twin; `grade_of` owns which row is which). */
-export const REVIEW_THREE_WAY = ['done', 'running', 'you'] as const;
+/** The halves that ride beside `open: true`; every other one rides beside `open: false`. */
+export const REVIEW_NEEDS_OPEN: readonly ReviewNeeds[] = ['you', 'running'];
+/** Does `needs` sit on its own side of `open`? Absent always does. Python twin: review_log.py `needs_ok`. */
+export function needs_side_ok(needs: ReviewNeeds | undefined, open: boolean | null | undefined): boolean {
+  return needs === undefined || open === REVIEW_NEEDS_OPEN.includes(needs);
+}
+/** When `read` became a grade (`review_data.py` READ_SINCE, the twin). A DONE recorded before it could not say
+ *  whether the answer needed a read, so the four-way grade does not count it as DONE; the open/done label keeps it. */
+export const REVIEW_READ_SINCE = '2026-11-19T00:00:00Z';
+/** The four-way grade's classes, DONE, its READ half and the two OPEN halves, in the order a readout prints them
+ *  (`review_data.py` GRADES, the twin; `grade_of` owns which row is which). */
+export const REVIEW_GRADES = ['done', 'read', 'running', 'you'] as const;
+const NEEDS_SIDE = 'needs rides on its own side: read beside DONE, you and running beside OPEN';
 /** The most blind retests one queue page carries (`review_data.py` `retest_cards`: one per 10 cards of a 50-card page). */
 export const REVIEW_RETEST_PAGE_MAX = 5;
 /** The lab verbs the plugin runs as jobs; TRAIN and LABEL never are: owned by
@@ -231,11 +243,20 @@ export const reviewStatsSchema = z.object({
   // The class a sweep is shortest of clean labels, which the `uncertain` cards lean toward; null once both have enough.
   // Absent from an older bridge.
   deficit: z.enum(['open', 'done']).nullable().optional(),
-  // The three-way grade (`review_data.py` `three_way` owns the rule): live labels per class, the floor each class needs,
-  // the class shortest of it (`deficit`: what a NEEDS-YOU test waits on) and the OPEN half the live cards lean toward
-  // (`lean`). Null on a surface without `needs`; absent from an older bridge.
+  // The four-way grade (`review_data.py` `three_way` owns the rule; the field's name predates READ): live labels per
+  // class, the floor each class needs, the class shortest of it (`deficit`: what the challenger test waits on) and the
+  // half the live cards lean toward (`lean`). `read` is absent from an older bridge. Null on a surface without `needs`;
+  // absent from an older bridge.
   three_way: z
-    .object({ done: n, running: n, you: n, min: n, deficit: z.enum(REVIEW_THREE_WAY).nullable(), lean: reviewNeedsSchema.nullable() })
+    .object({
+      done: n,
+      read: n.optional(),
+      running: n,
+      you: n,
+      min: n,
+      deficit: z.enum(REVIEW_GRADES).nullable(),
+      lean: reviewNeedsSchema.nullable(),
+    })
     .nullable()
     .optional(),
   // The blind retest (`review_data.py` `retest_due`, `intra_rater`): how many labels are due one, and the operator's
@@ -265,7 +286,7 @@ export const reviewRetestCardSchema = z.object({
   text_chars: n,
   truncated: z.boolean(),
   at: iso.nullable(), // when the turn ended, for the conversation round it; null without a live verdict
-  needs: z.array(reviewNeedsSchema).max(REVIEW_NEEDS.length), // the OPEN halves this surface takes; [] = OPEN or DONE only
+  needs: z.array(reviewNeedsSchema).max(REVIEW_NEEDS.length), // the halves this surface takes; [] = OPEN or DONE only
 });
 export const reviewQueueSchema = z.object({
   ...envelope,
@@ -283,21 +304,21 @@ export const reviewAnswerRequestSchema = z.strictObject({
   key: z.string().regex(REVIEW_KEY),
   answer: reviewAnswerSchema,
   reference_open: z.boolean(),
-  needs: reviewNeedsSchema.optional(), // only on an answer that records OPEN
+  needs: reviewNeedsSchema.optional(), // on its own side of the open this answer records (`needs_side_ok`)
   // A wave card's other keys, exactly as the card listed them: each records the verdict this answer means on `key`.
   wave: z.array(textKey).max(REVIEW_WAVE_MAX - 1).optional(),
 });
-/** A blind retest's answer: `open` true (with `needs` where the surface takes it), false, or null for "cannot say".
- *  `of` is the card's, so a label replaced since the card was dealt is refused (`review.py` `retest`). */
+/** A blind retest's answer: `open` true or false (with `needs` on its side, where the surface takes it), or null for
+ *  "cannot say". `of` is the card's, so a label replaced since the card was dealt is refused (`review.py` `retest`). */
 export const reviewRetestRequestSchema = z
   .strictObject({
     surface: layaReviewSurfaceSchema,
     key: z.string().regex(REVIEW_KEY),
     of: z.string().regex(REVIEW_ANSWER_ID),
     open: z.boolean().nullable(),
-    needs: reviewNeedsSchema.optional(), // only beside open: true
+    needs: reviewNeedsSchema.optional(), // on its own side of open (`needs_side_ok`)
   })
-  .refine((body) => body.needs === undefined || body.open === true, { path: ['needs'], message: 'needs rides only on an OPEN retest' });
+  .refine((body) => needs_side_ok(body.needs, body.open), { path: ['needs'], message: NEEDS_SIDE });
 /** The agent rack's grade of one live verdict, from the ⚠️'s own menu: ✗ NOT OPEN is `open: false`, ✓ STILL OPEN
  *  `open: true`. Never an HTTP body: tldrack sends it to the plugin in process (`review.py` `rack` owns what
  *  it records, `plugin.py` why it has no HTTP door). The answer comes back as `reviewResultSchema`. */
@@ -370,7 +391,9 @@ const bandTallySchema = z.object({ n, reviewed: n, right: n.nullable(), open: n 
 export const reviewRecentSummarySchema = z.object({
   n,
   skipped: n,
-  needs: z.object({ you: n, running: n }).optional(), // the OPEN answers split; absent from an older bridge
+  // The answers' halves: the OPEN split, and the DONE answers that owed a read (`read`, absent from an older bridge).
+  // Absent from an older bridge.
+  needs: z.object({ you: n, running: n, read: n.optional() }).optional(),
   done_at: p01, // the done cut a row with no recorded one is graded at
   bands: z.object({ done: bandTallySchema, reply: bandTallySchema, open: bandTallySchema }),
   // How the page was cut, and from how many verdicts (every live one, or every unanswered one with `todo`). Absent
@@ -417,7 +440,7 @@ export const operatorAnswerRowSchema = z.discriminatedUnion('op', [
       stratum: z.string().max(32),
       answer: reviewAnswerSchema,
       open: z.boolean().optional(), // present iff agree/flip: agree → against.open, flip → !against.open
-      needs: reviewNeedsSchema.optional(), // only beside open: true
+      needs: reviewNeedsSchema.optional(), // on its own side of open (`needs_side_ok`)
       wave_id: z.string().regex(REVIEW_WAVE_ID).optional(), // one press graded a wave: every row it wrote carries this
       challenger: z.strictObject(challengerBlock).optional(), // only on an answer to a `challenger` card: what it showed
       against: z.strictObject({ by: z.string().min(1).max(120), open: z.boolean(), case_id: z.string().max(64).optional() }),
@@ -436,7 +459,7 @@ export const operatorAnswerRowSchema = z.discriminatedUnion('op', [
       (row) => (row.answer === 'skip' ? row.open === undefined : row.open === (row.answer === 'agree' ? row.against.open : !row.against.open)),
       { path: ['open'], message: 'open is against.open on agree, its negation on flip, and absent on skip' }
     )
-    .refine((row) => row.needs === undefined || row.open === true, { path: ['needs'], message: 'needs rides only on an OPEN answer' }),
+    .refine((row) => needs_side_ok(row.needs, row.open), { path: ['needs'], message: NEEDS_SIDE }),
   // A blind second look at a graded text: never a label, never counted (`review_log.py` owns why: RETEST).
   z
     .strictObject({
@@ -445,9 +468,9 @@ export const operatorAnswerRowSchema = z.discriminatedUnion('op', [
       key: z.string().regex(REVIEW_KEY),
       of: z.string().regex(REVIEW_ANSWER_ID), // the answer it re-tests
       open: z.boolean().optional(), // absent: the operator could not say
-      needs: reviewNeedsSchema.optional(), // only beside open: true
+      needs: reviewNeedsSchema.optional(), // on its own side of open (`needs_side_ok`)
     })
-    .refine((row) => row.needs === undefined || row.open === true, { path: ['needs'], message: 'needs rides only on an OPEN retest' }),
+    .refine((row) => needs_side_ok(row.needs, row.open), { path: ['needs'], message: NEEDS_SIDE }),
   z.strictObject({ ...operatorRowHead, op: z.literal('undo') }),
 ]);
 

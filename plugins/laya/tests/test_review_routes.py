@@ -267,16 +267,34 @@ def test_an_open_answer_records_whether_it_needed_the_operator(plugin, tree, lab
     assert review_log.fold([row]).labels[labelled[0]]["open"] is True  # every count built on `open` is unchanged
 
 
+def test_a_done_answer_records_that_its_answer_owes_a_read(plugin, tree, labelled):
+    """📖 READ: FLIP against an OPEN reference records DONE, and `read` says the answer still owes the operator a
+    read. To the open/done label it is a DONE like any other."""
+    status, body = post(
+        plugin,
+        "/review/answer",
+        {"surface": SURFACE, "key": labelled[0], "answer": "flip", "reference_open": True, "needs": "read"},
+    )
+    assert status == 200 and body["answer"]["open"] is False and body["answer"]["needs"] == "read"
+    [row] = review_log.read_operator_log(review_log.operator_path(tree.base, SURFACE))[0]
+    assert row["open"] is False and row["needs"] == "read"
+    assert review_log.fold([row]).labels[labelled[0]]["open"] is False
+    assert body["stats"]["three_way"]["read"] == 1
+
+
 @pytest.mark.parametrize(
     "answer, reference_open, needs",
     [
         ("flip", True, "you"),  # records DONE
         ("agree", False, "you"),  # records DONE
+        ("agree", True, "read"),  # records OPEN
+        ("flip", False, "read"),  # records OPEN
         ("skip", True, "running"),  # records nothing
+        ("skip", False, "read"),  # records nothing
         ("agree", True, "maybe"),  # not a value
     ],
 )
-def test_needs_is_refused_anywhere_but_an_open_answer(plugin, tree, labelled, answer, reference_open, needs):
+def test_needs_is_refused_off_its_own_side(plugin, tree, labelled, answer, reference_open, needs):
     assert_refusal(
         post(
             plugin,
@@ -289,19 +307,20 @@ def test_needs_is_refused_anywhere_but_an_open_answer(plugin, tree, labelled, an
     assert review_log.read_operator_log(review_log.operator_path(tree.base, SURFACE))[0] == []
 
 
-def test_a_row_carrying_needs_beside_done_is_not_folded():
+@pytest.mark.parametrize("needs, answer", [("you", "flip"), ("read", "agree")])
+def test_a_row_carrying_needs_off_its_side_is_not_folded(needs, answer):
     row = review_log.answer_row(
         answer_id="a_0123456789abcdef",
         at="2026-11-04T00:00:00Z",
         surface=SURFACE,
         key="0123456789abcdef",
         stratum="sample",
-        answer="flip",
+        answer=answer,
         against={"by": "claude-sonnet-5-5", "open": True},
         laya=None,
         decision_id=None,
         held_out=None,
-        needs="you",
+        needs=needs,
     )
     assert review_log.fold([row]).bad_lines == 1
 
@@ -799,7 +818,9 @@ def test_a_retest_is_refused_unless_it_is_the_live_label_and_due(plugin, tree, g
         {"key": "not-a-key"},
         {"surface": "nope"},
         {"open": False, "needs": "you"},
+        {"open": True, "needs": "read"},
         {"open": None, "needs": "you"},
+        {"open": None, "needs": "read"},
         {"needs": "later"},
         {"extra": 1},
     ):

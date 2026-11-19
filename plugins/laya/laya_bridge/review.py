@@ -235,8 +235,8 @@ def _wave(value: Any) -> tuple[str, ...]:
 
 
 def answer(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = None, now: datetime | None = None) -> Response:
-    """POST /review/answer: record AGREE, FLIP or SKIP against the reference the deck showed, and on an OPEN
-    answer optionally whether the turn needed the operator (`needs`, schemas/src/laya-review.ts owns why).
+    """POST /review/answer: record AGREE, FLIP or SKIP against the reference the deck showed, and optionally what the
+    turn left the operator (`needs`, on its own side of the recorded open: schemas/src/laya-review.ts owns why).
 
     `wave`: the riders a wave card showed (`review_data.py` owns waves). The press records the verdict it means on
     the lead (`open`, from AGREE or FLIP against the lead's reference) on every rider too, each as agree or flip
@@ -257,8 +257,8 @@ def answer(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = N
             if needs not in REVIEW_SURFACES[surface].needs:
                 raise bad_request("bad_body", "needs is not one this surface takes")
             records_open = body["reference_open"] if body["answer"] == "agree" else not body["reference_open"]
-            if body["answer"] == "skip" or not records_open:
-                raise bad_request("bad_body", "needs rides only on an answer that records OPEN")
+            if body["answer"] == "skip" or not review_log.needs_ok(needs, records_open):
+                raise bad_request("bad_body", "needs rides on its own side: read on a DONE answer, you or running on an OPEN")
     except Refusal as refusal:
         return refusal_response(refusal, **NO_RESULT)
     if not params_ready(base):
@@ -347,7 +347,7 @@ def answer(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = N
 
 def retest(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = None, now: datetime | None = None) -> Response:
     """POST /review/retest {surface, key, of, open, needs?}: the operator's second, blind look at a text they graded
-    (`review_data.py`: THE BLIND RETEST). `open` is true, false, or null for "cannot say"; `needs` rides only on true.
+    (`review_data.py`: THE BLIND RETEST). `open` is true, false, or null for "cannot say"; `needs` rides on its own side of it.
 
     Written as a `retest` row, never an answer (`review_log.py` owns why), so the label, every count and every other
     κ stay exactly as they were. `of` must still be the text's live label (409 `retest_stale`: it was undone or
@@ -364,8 +364,8 @@ def retest(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = N
         if said is not None and not isinstance(said, bool):
             raise bad_request("bad_body", "open must be true, false or null")
         needs = body.get("needs")
-        if needs is not None and (needs not in REVIEW_SURFACES[surface].needs or said is not True):
-            raise bad_request("bad_body", "needs rides only on an OPEN retest, on a surface that takes it")
+        if needs is not None and (needs not in REVIEW_SURFACES[surface].needs or not review_log.needs_ok(needs, said)):
+            raise bad_request("bad_body", "needs rides on its own side of a retest, on a surface that takes it")
     except Refusal as refusal:
         return refusal_response(refusal, **NO_RETEST)
     if not params_ready(base):

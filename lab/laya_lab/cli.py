@@ -130,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--full", action="store_true", help="score every key again (default: only keys with no p under this digest and device)"
     )
     review.add_argument("--device", default="mps", help=DEVICE_HELP)
-    needs_you = commands.add_parser("needs-you", help="gated three-way head; shadow only")
+    needs_you = commands.add_parser("needs-you", help="gated four-way head; shadow only")
     needs_you.add_argument("--device", choices=("mps", "cuda", "cpu"), default="mps")
     needs_you.add_argument("--train", action="store_true", help="train if the grade, reliability and attention gates pass")
     card = commands.add_parser(

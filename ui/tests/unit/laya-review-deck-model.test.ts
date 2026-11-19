@@ -590,8 +590,8 @@ describe('the three-way grade on the deck', () => {
         assert.equal(is_three_way(null), false);
     });
 
-    it('reads D, R, N, S and U, and leaves A and F to the two-answer deck', () => {
-        assert.deepEqual(['KeyD', 'KeyR', 'KeyN', 'KeyS', 'KeyU'].map((code) => verdict_key(key_event(code))), ['done', 'running', 'you', 'skip', 'undo']);
+    it('reads D, B, R, N, S and U, and leaves A and F to the two-answer deck', () => {
+        assert.deepEqual(['KeyD', 'KeyB', 'KeyR', 'KeyN', 'KeyS', 'KeyU'].map((code) => verdict_key(key_event(code))), ['done', 'read', 'running', 'you', 'skip', 'undo']);
         assert.equal(verdict_key(key_event('KeyA')), null);
         assert.equal(verdict_key(key_event('KeyD', { metaKey: true })), null);
         assert.equal(verdict_key(key_event('KeyD', { repeat: true })), null);
@@ -616,15 +616,15 @@ describe('the three-way grade on the deck', () => {
         assert.match(verdict_caption(card(KEY_A), 'done'), / · overruling SONNET · counts toward κ$/);
         assert.match(verdict_caption(card(KEY_A, { stratum: 'flagged', wave: WAVE }), 'running'), / · same as SONNET · on all 3$/);
         assert.doesNotMatch(verdict_caption(card(KEY_A), 'skip'), /SONNET/);
-        assert.ok(explain_card(card(KEY_A), true).some((line) => line.endsWith('RUNNING and NEEDS YOU keep that label (both are OPEN); DONE overrules it.')));
-        assert.ok(explain_card(card(KEY_B, { reference: { by: 'sonnet-4.6', open: false, why: null } }), true).some((line) => line.endsWith('DONE keeps that label; RUNNING and NEEDS YOU (both OPEN) overrule it.')));
+        assert.ok(explain_card(card(KEY_A), true).some((line) => line.endsWith('RUNNING and NEEDS YOU keep that label (both are OPEN); DONE and READ overrule it.')));
+        assert.ok(explain_card(card(KEY_B, { reference: { by: 'sonnet-4.6', open: false, why: null } }), true).some((line) => line.endsWith('DONE and READ keep that label; RUNNING and NEEDS YOU (both OPEN) overrule it.')));
         assert.ok(explain_card(card(KEY_A)).some((line) => /AGREE keeps and FLIP reverses/.test(line)));
     });
 
     it('says which class is short of its floor, and nothing once each has it', () => {
         const short = three_way_readout(THREE);
         assert.equal(short?.text, 'NEEDS YOU 2/20 ▲');
-        assert.match(short?.title ?? '', /22 DONE, 5 RUNNING and 2 NEEDS YOU labels so far.*live cards likely to be NEEDS YOU come first$/);
+        assert.match(short?.title ?? '', /22 DONE, 0 READ, 5 RUNNING and 2 NEEDS YOU labels so far.*live cards likely to be NEEDS YOU come first$/);
         assert.equal(three_way_readout({ ...THREE, three_way: { ...THREE.three_way!, running: 0, deficit: 'running', lean: 'running' } })?.text, 'RUNNING 0/20 ▲');
         assert.equal(three_way_readout({ ...THREE, three_way: { ...THREE.three_way!, deficit: null, lean: null } }), null);
         assert.equal(three_way_readout(STATS), null);
@@ -634,12 +634,14 @@ describe('the three-way grade on the deck', () => {
         // DONE the shortest class while the halves are short too: the deck leans toward a half, so the tag names that half.
         const mixed = three_way_readout({ ...THREE, three_way: { done: 1, running: 3, you: 2, min: 20, deficit: 'done', lean: 'you' } });
         assert.equal(mixed?.text, 'NEEDS YOU 2/20 ▲');
-        assert.match(mixed?.title ?? '', /^1 DONE, 3 RUNNING and 2 NEEDS YOU labels so far.*likely to be NEEDS YOU come first$/);
+        assert.match(mixed?.title ?? '', /^1 DONE, 0 READ, 3 RUNNING and 2 NEEDS YOU labels so far.*likely to be NEEDS YOU come first$/);
         // Both halves hold the floor: DONE keeps the test waiting, and no live card leans toward it.
         const gate = three_way_readout({ ...THREE, three_way: { done: 14, running: 20, you: 21, min: 20, deficit: 'done', lean: null } });
         assert.equal(gate?.text, 'DONE 14/20');
         assert.doesNotMatch(gate?.title ?? '', /come first/);
-        assert.match(gate?.title ?? '', /each needs 20 before a NEEDS-YOU mark can be tested$/);
+        assert.match(gate?.title ?? '', /each needs 20 before the four-way challenger can be tested$/);
+        const read = three_way_readout({ ...THREE, three_way: { done: 24, read: 3, running: 20, you: 21, min: 20, deficit: 'read', lean: null } });
+        assert.equal(read?.text, 'READ 3/20', 'READ short: the gate waits on it, nothing leans');
         assert.ok(explain_stats(THREE).some((line) => line.startsWith('NEEDS YOU 2/20 ▲: ')));
     });
 });
@@ -647,21 +649,23 @@ describe('the three-way grade on the deck', () => {
 describe('the blind retest on the deck', () => {
     const BLIND = reviewRetestCardSchema.parse({
         item_id: `agent_open_work:retest:${KEY_A}`, key: KEY_A, surface: 'agent_open_work', of: 'a_0123456789abcdef',
-        text: 'Hand-off: the migration is written; the deploy is still owed.', text_chars: 61, truncated: false, at: null, needs: ['you', 'running'],
+        text: 'Hand-off: the migration is written; the deploy is still owed.', text_chars: 61, truncated: false, at: null, needs: ['you', 'running', 'read'],
     });
     const AGREEMENT = { n: 0, kappa: null, agree_rate: null, basis: 'retest', kappa_ci: null };
     const retest = (over: object = {}) => ({ percent: 10, after_days: 7, due: 2, pairs: 0, open: AGREEMENT, needs: { you: AGREEMENT, running: AGREEMENT }, ...over });
 
     it('offers the three-way verdicts where the surface takes the halves, else DONE, OPEN and SKIP', () => {
         assert.deepEqual(retest_choices(BLIND).map((c) => [c.id, c.key, c.open, c.needs]), [
-            ['done', 'D', false, undefined], ['running', 'R', true, 'running'], ['you', 'N', true, 'you'], ['skip', 'S', null, undefined],
+            ['done', 'D', false, undefined], ['read', 'B', false, 'read'], ['running', 'R', true, 'running'], ['you', 'N', true, 'you'],
+            ['skip', 'S', null, undefined],
         ]);
         assert.deepEqual(retest_choices({ needs: [] }).map((c) => [c.id, c.key, c.open]), [['done', 'D', false], ['open', 'O', true], ['skip', 'S', null]]);
         assert.deepEqual(retest_choices({ needs: ['you'] }).map((c) => c.id), ['done', 'you', 'skip']);
     });
 
     it('sends only what the second look said, and never a reference', () => {
-        const [done, running, , skip] = retest_choices(BLIND);
+        const [done, read, running, , skip] = retest_choices(BLIND);
+        assert.deepEqual(retest_request(BLIND, read!), { surface: 'agent_open_work', key: KEY_A, of: 'a_0123456789abcdef', open: false, needs: 'read' });
         assert.deepEqual(retest_request(BLIND, done!), { surface: 'agent_open_work', key: KEY_A, of: 'a_0123456789abcdef', open: false });
         assert.deepEqual(retest_request(BLIND, running!), { surface: 'agent_open_work', key: KEY_A, of: 'a_0123456789abcdef', open: true, needs: 'running' });
         assert.deepEqual(retest_request(BLIND, skip!), { surface: 'agent_open_work', key: KEY_A, of: 'a_0123456789abcdef', open: null });

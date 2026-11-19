@@ -299,8 +299,10 @@ describe('the blind retest', () => {
     const RETEST_CARD = { item_id: 'agent_open_work:retest:0123456789abcdef', key: '0123456789abcdef', surface: 'agent_open_work', of: 'a_0123456789abcdef', text: 'Phase two is not started.', text_chars: 25, truncated: false, at: null, needs: ['you', 'running'] };
     const AGREEMENT = { n: 0, kappa: null, agree_rate: null, basis: 'retest', kappa_ci: null };
 
-    it('is its own row in the operator log: no reference, no stratum, and `needs` only beside OPEN', () => {
+    it('is its own row in the operator log: no reference, no stratum, and each `needs` on its own side', () => {
         assert.deepEqual(operatorAnswerRowSchema.parse(RETEST_ROW), RETEST_ROW);
+        assert.ok(operatorAnswerRowSchema.safeParse({ ...RETEST_ROW, open: false, needs: 'read' }).success, '📖 READ rides beside DONE');
+        assert.equal(operatorAnswerRowSchema.safeParse({ ...RETEST_ROW, needs: 'read' }).success, false, 'and never beside OPEN');
         const { open: _open, needs: _needs, ...cannot_say } = RETEST_ROW;
         assert.ok(operatorAnswerRowSchema.safeParse(cannot_say).success, 'no `open`: the operator could not say');
         assert.ok(operatorAnswerRowSchema.safeParse({ ...cannot_say, open: false }).success);
@@ -322,7 +324,8 @@ describe('the blind retest', () => {
         const request = { surface: 'agent_open_work', key: '0123456789abcdef', of: 'a_0123456789abcdef', open: true, needs: 'running' };
         assert.ok(reviewRetestRequestSchema.safeParse(request).success);
         assert.ok(reviewRetestRequestSchema.safeParse({ ...request, open: null, needs: undefined }).success, 'cannot say');
-        for (const bad of [{ ...request, open: false }, { ...request, open: null }, { ...request, reference_open: true }, { ...request, of: 'nope' }]) {
+        assert.ok(reviewRetestRequestSchema.safeParse({ ...request, open: false, needs: 'read' }).success, 'READ beside DONE');
+        for (const bad of [{ ...request, open: false }, { ...request, open: null }, { ...request, needs: 'read' }, { ...request, open: null, needs: 'read' }, { ...request, reference_open: true }, { ...request, of: 'nope' }]) {
             assert.equal(reviewRetestRequestSchema.safeParse(bad).success, false, JSON.stringify(bad));
         }
         const result = { v: 1, ok: true, message: 'recorded', retest: { answer_id: 'a_00000000000000aa', key: '0123456789abcdef', of: 'a_0123456789abcdef', open: true, needs: 'running' }, stats: STATS };

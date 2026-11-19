@@ -180,7 +180,8 @@ console.log(JSON.stringify({
     recent: { default: review.REVIEW_RECENT_DEFAULT, max: review.REVIEW_RECENT_MAX, orders: review.REVIEW_RECENT_ORDERS,
               offset_max: review.REVIEW_RECENT_OFFSET_MAX },
     wave_max: review.REVIEW_WAVE_MAX, rack_stratum: review.REVIEW_RACK_STRATUM,
-    three_way: review.REVIEW_THREE_WAY, needs: review.REVIEW_NEEDS, retest_page_max: review.REVIEW_RETEST_PAGE_MAX,
+    grades: review.REVIEW_GRADES, needs: review.REVIEW_NEEDS, needs_open: review.REVIEW_NEEDS_OPEN,
+    read_since: review.REVIEW_READ_SINCE, retest_page_max: review.REVIEW_RETEST_PAGE_MAX,
     live: { split: review.REVIEW_LANDING_SPLIT, free: review.REVIEW_FREE_CLASSES, audiences: review.REVIEW_AUDIENCES },
   },
 }));
@@ -423,14 +424,14 @@ def test_every_python_shape_parses_as_the_schema_says(built):
     assert [row["answer"] for row in built["operator"] if row["op"] == "answer"] == ["agree", "skip"]
     assert "open" not in built["operator"][1], "a skip has no open"
     assert built["operator"][0]["needs"] == "you" and built["result"][0]["answer"]["needs"] == "you"
-    assert built["recent"][1]["summary"]["needs"] == {"you": 0, "running": 0}, "the needs answer was undone"
+    assert built["recent"][1]["summary"]["needs"] == {"you": 0, "running": 0, "read": 0}, "the needs answer was undone"
     # Every route names a live answer by ONE ref (review_log.answer_ref): a RECENT row's `operator` is exactly what
     # /review/answer returned for it, `key` included, or the page's safeParse refuses the whole list.
     answered = {row["key"]: row["operator"] for row in built["recent"][3]["rows"] if row["operator"] is not None}
     graded = [result["answer"] for result in built["result"][-2:]]
     assert answered == {ref["key"]: ref for ref in graded} and len(answered) == 2
     assert [(ref["open"], ref["needs"]) for ref in graded] == [(True, "running"), (None, None)]
-    assert built["recent"][3]["summary"]["needs"] == {"you": 0, "running": 1} and built["recent"][3]["summary"]["skipped"] == 1
+    assert built["recent"][3]["summary"]["needs"] == {"you": 0, "running": 1, "read": 0} and built["recent"][3]["summary"]["skipped"] == 1
     assert built["recent"][0]["summary"]["offset"] == 0 and built["recent"][4]["summary"]["offset"] == 1
     assert [row["key"] for row in built["recent"][4]["rows"]] == [built["recent"][3]["rows"][1]["key"]]
     assert [row["key"] for row in built["recent"][6]["rows"]] == [built["recent"][3]["rows"][1]["key"]], "after = offset 1 here"
@@ -683,8 +684,9 @@ def test_the_python_enums_mirror_the_typescript_ones():
         "free": list(review_data.FREE_CLASSES),
         "audiences": list(review_data.AUDIENCES),
     }
-    assert enums["three_way"] == list(review_data.THREE_WAY) and enums["needs"] == list(review_log.NEEDS)
-    assert set(enums["three_way"]) == {"done", *enums["needs"]}, "DONE and the OPEN halves, nothing else"
+    assert enums["grades"] == list(review_data.GRADES) and enums["needs"] == list(review_log.NEEDS)
+    assert enums["needs_open"] == list(review_log.NEEDS_OPEN) and enums["read_since"] == review_data.READ_SINCE
+    assert set(enums["grades"]) == {"done", *enums["needs"]}, "DONE and the halves, nothing else"
     assert enums["retest_page_max"] == review.MAX_LIMIT // review_data.RETEST_DEAL_EVERY, (
         "the largest page's retests fit the wire"
     )
@@ -729,7 +731,8 @@ def test_a_blind_retest_its_card_its_row_and_its_undo_parse_as_the_schema_says(t
     queue = plugin.handle_request("GET", "/review/queue", {"limit": ["50"]}, None, headers)[1]
     assert len(queue["retests"]) == 5 and queue["surfaces"][0]["retest"]["due"] == 6
     assert queue["surfaces"][0]["three_way"] == {
-        "done": 3,
+        "done": 0,  # a month old: from before READ, so no class (review_data.py READ_SINCE)
+        "read": 0,
         "running": 0,
         "you": 3,
         "min": 20,
@@ -738,12 +741,12 @@ def test_a_blind_retest_its_card_its_row_and_its_undo_parse_as_the_schema_says(t
     }
     requests = [
         {"surface": SURFACE, "key": card["key"], "of": card["of"], "open": said, **needs}
-        for card, (said, needs) in zip(queue["retests"], [(True, {"needs": "you"}), (False, {}), (None, {})])
+        for card, (said, needs) in zip(queue["retests"], [(True, {"needs": "you"}), (False, {"needs": "read"}), (None, {})])
     ]
     done = [post("/review/retest", body) for body in requests]
     assert [(out["ok"], out["retest"]["open"], out["retest"]["needs"]) for out in done] == [
         (True, True, "you"),
-        (True, False, None),
+        (True, False, "read"),
         (True, None, None),
     ]
     again = post("/review/retest", requests[0])
@@ -772,6 +775,7 @@ def test_a_blind_retest_its_card_its_row_and_its_undo_parse_as_the_schema_says(t
                 ],
                 "retest_request": [
                     {**requests[1], "needs": "you"},
+                    {**requests[0], "needs": "read"},
                     {**requests[0], "answer": "agree"},
                     {k: v for k, v in requests[0].items() if k != "open"},
                 ],
@@ -779,7 +783,9 @@ def test_a_blind_retest_its_card_its_row_and_its_undo_parse_as_the_schema_says(t
         }
     )
     assert out["failures"] == []
-    assert out["refused"] == [True] * 7, "needs beside DONE, a bad `of`, an answer's field, no `of`; then the request's own three"
+    assert out["refused"] == [True] * 8, (
+        "you beside DONE, a bad `of`, an answer's field, no `of`; then you beside DONE, read beside OPEN, and the request's own two"
+    )
 
 
 WAVE_PROBES = [

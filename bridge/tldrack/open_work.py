@@ -30,7 +30,9 @@ So a ✅ whose turn was opened by a question carries a second, separate signal: 
 The rack draws it as 📖 in the ✅'s place (`ui/src/config/terminal-status-flags.ts`).
 LAYA REVIEW's list draws the same 📖 on a ✅ the operator asked for, from the joined turn's `asked`
 (`ledger/reader.py` `turn_asked`), and keeps it after the read: that list records what a turn was.
-It is not a label and not a band; Laya's question, cuts, golden set and labels do not move.
+The mark is not a band; Laya's question, cuts and golden set do not move. The operator's grade of it
+IS a label: 📖 READ on LAYA REVIEW records DONE with `needs: read`, the four-way challenger's fourth
+class (schemas/src/laya-review.ts `REVIEW_NEEDS` owns why).
   · The rule (`asks_question`): the prompt that opened the turn (`turn_request`) is a question,
     its last non-empty line ending in `?` (the `ends_on_question` rule the landing trace already
     applies to the closing). A turn a hook, a task or a child woke has no prompt: no mark.

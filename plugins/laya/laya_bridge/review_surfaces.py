@@ -46,9 +46,10 @@ class ReviewSurface:
     unflagged_percent: int = 20
     #: The share of live verdicts in `live_sample`, by `bucket(key, 'review-live')` (`review_data.py` owns why).
     live_percent: int = 10
-    #: What an OPEN answer may add (schemas/src/laya-review.ts `REVIEW_NEEDS` owns why); () = no second half.
+    #: The second halves an answer may add, each on its own side of open (schemas/src/laya-review.ts `REVIEW_NEEDS`
+    #: owns why); () = no second half.
     needs: tuple[str, ...] = ()
-    #: The three-way grade's floor: the deck leans toward the class shortest of this many grades until DONE and each
+    #: The four-way grade's floor: the deck leans toward the class shortest of this many grades until DONE and each
     #: of `needs` hold it (`review_data.three_way` owns the rule).
     needs_min_per_class: int = 20
     #: The blind retest (`review_data.retest_due` owns the rule): the share of graded texts shown again, by
@@ -91,7 +92,7 @@ REVIEW_SURFACES: dict[str, ReviewSurface] = {
             ("flagged", 1),
             ("rest", 1),
         ),
-        needs=("you", "running"),
+        needs=("you", "running", "read"),
         rejects=CUT_OFF_NOTICES,
     ),
 }

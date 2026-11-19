@@ -53,7 +53,7 @@
                 </button>
             </nav>
             <LayaUndoButton v-if="stats && view === 'deck'" class="lr-undo--head" :disabled="!can_undo" :title="undo_title" @undo="undo" />
-            <p v-if="view === 'recent' || three_way" class="lr-question">Did this turn finish its task, keep working, or need your help?</p>
+            <p v-if="view === 'recent' || three_way" class="lr-question">Is this turn done, done with an answer for you to read, still working, or waiting on you?</p>
             <p v-else-if="stats?.question" class="lr-question">{{ stats.question }}</p>
         </header>
 
@@ -282,7 +282,7 @@
                     </section>
 
                     <div class="lr-bar">
-                        <!-- A three-way surface answers DONE · RUNNING · NEEDS YOU (`review-deck-model.ts` `is_three_way`). -->
+                        <!-- A four-way surface answers DONE · READ · RUNNING · NEEDS YOU (`review-deck-model.ts` `is_three_way`). -->
                         <div v-if="three_way" class="lr-actions lr-actions--four" role="group" aria-label="Answer">
                             <button
                                 v-for="v in RECENT_VERDICTS"
@@ -351,10 +351,12 @@
                     between options and assign scores; this page does not review those.
                 </p>
                 <p v-if="view === 'recent' || three_way">
-                    <strong>DONE</strong>: the turn finished its task. <strong>RUNNING</strong>: work remains,
-                    but the agent is waiting on its own agents or jobs. <strong>NEEDS YOU</strong>: it needs your
-                    answer, decision, permission, or help with a blocker. These are your grades, not three
-                    categories the current open-work model distinguishes.
+                    <strong>DONE</strong>: the turn finished its task and you can close it without reading it.
+                    <strong>📖 READ</strong>: the agent is done, but its answer is for you to read (a question it
+                    answered, a finding). <strong>RUNNING</strong>: work remains, but the agent is waiting on its own
+                    agents or jobs. <strong>NEEDS YOU</strong>: it needs your answer, decision, permission, or help
+                    with a blocker. These are your grades, not four categories the current open-work model
+                    distinguishes: it reads DONE and READ as done.
                 </p>
                 <p v-if="view === 'recent'">
                     <strong>LAYA’s number</strong> is its score for “yes,” not a task completion percentage;
@@ -367,7 +369,7 @@
                     or child sessions as ⏳, so a warning here may have reached you as ⏳.
                 </p>
                 <p v-if="view === 'recent'">
-                    <strong>Keys:</strong> D done · R running · N needs you · S skip · U undo · J/K move · Enter open ·
+                    <strong>Keys:</strong> D done · B read · R running · N needs you · S skip · U undo · J/K move · Enter open ·
                     E edge.
                 </p>
                 <template v-if="view === 'deck'">
@@ -379,7 +381,7 @@
                         </template>
                     </dl>
                     <p>
-                        <strong>Keys:</strong> {{ three_way ? 'D done · R running · N needs you' : 'A agree · F flip' }} · S skip · U
+                        <strong>Keys:</strong> {{ three_way ? 'D done · B read · R running · N needs you' : 'A agree · F flip' }} · S skip · U
                         undo. <strong>UNDO</strong> takes back your last answer and deals that card again.
                     </p>
                     <p v-if="stats?.retest">
@@ -1335,6 +1337,10 @@ onBeforeUnmount(() => {
     /* Four answers (the three-way grade and SKIP) are two rows of two: four across would cut NEEDS YOU on a phone. */
     .lr-actions--four {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    /* Five answers on two columns: the odd one out (SKIP) takes the whole last row. */
+    .lr-actions--four > :last-child:nth-child(odd) {
+        grid-column: 1 / -1;
     }
     .lr-act {
         --lr-btn-h: 48px;

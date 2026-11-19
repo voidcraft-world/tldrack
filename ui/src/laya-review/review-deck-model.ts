@@ -5,6 +5,7 @@
  */
 import { DECIDE_SURFACES } from '@tldrack/schemas/decide.ts';
 import {
+    REVIEW_GRADES,
     layaReviewSurfaceSchema,
     type ReviewAgreement,
     type ReviewAnswer,
@@ -229,14 +230,14 @@ const DEAL_USE: Readonly<Partial<Record<DealStratum, string>>> = {
     challenger: 'each label takes a side, and a promotion reads how often you sided with the challenger.',
 };
 
-/** The card's own lines: why it was dealt, then what each mark on it means. `three_way`: its answers are DONE, RUNNING
- *  and NEEDS YOU (`is_three_way`), so the reference line says what those do to the label. */
+/** The card's own lines: why it was dealt, then what each mark on it means. `three_way`: its answers are DONE, READ,
+ *  RUNNING and NEEDS YOU (`is_three_way`), so the reference line says what those do to the label. */
 export function explain_card(card: ReviewCard, three_way = false): string[] {
     const source = reference_source(card);
     const lines = [`Why this card: ${stratum_label(card.stratum).why}.`];
     const said = card.reference.why ? `, because “${card.reference.why}”` : '';
     const keeps = three_way
-        ? `${card.reference.open ? 'RUNNING and NEEDS YOU keep that label (both are OPEN); DONE' : 'DONE keeps that label; RUNNING and NEEDS YOU (both OPEN)'} overrule${card.reference.open ? 's' : ''} it.`
+        ? `${card.reference.open ? 'RUNNING and NEEDS YOU keep that label (both are OPEN); DONE and READ' : 'DONE and READ keep that label; RUNNING and NEEDS YOU (both OPEN)'} overrule it.`
         : 'That label is what AGREE keeps and FLIP reverses.';
     lines.push(`${source} labelled it ${verdict_word(card.surface, card.reference.open)}${said}. ${keeps}`);
     if (card.laya) {
@@ -592,12 +593,12 @@ export function deck_down(f: LayaFail<unknown>, access: LocalAccessState): DeckD
     }
 }
 
-// ── the three-way grade ──────────────────────────────────────────────────────
+// ── the four-way grade ───────────────────────────────────────────────────────
 
 /**
- * A surface with a three-way grade (`stats.three_way`: `review_data.py` owns the rule) answers every card DONE,
- * RUNNING or NEEDS YOU, the RECENT list's own verdicts and keys, so each OPEN label says which OPEN it was. AGREE and
- * FLIP stay the answers of a surface without one. The request is still agree or flip against the card's reference
+ * A surface with a four-way grade (`stats.three_way`, a name older than READ: `review_data.py` owns the rule) answers
+ * every card DONE, READ, RUNNING or NEEDS YOU, the RECENT list's own verdicts and keys, so each label says which DONE or
+ * which OPEN it was. AGREE and FLIP stay the answers of a surface without one. The request is still agree or flip against the card's reference
  * (`verdict_request`), so κ and every count read it as before.
  */
 export function is_three_way(stats: ReviewStats | null): boolean {
@@ -611,18 +612,18 @@ const VERDICT_KEYS: ReadonlyMap<string, VerdictAction> = new Map([
     ['KeyU', 'undo'],
 ]);
 
-/** D, R, N, S, U: a three-way deck's keys, and a retest card's (`plain_key` owns which presses count). */
+/** D, B, R, N, S, U: a four-way deck's keys, and a retest card's (`plain_key` owns which presses count). */
 export function verdict_key(e: DeckKeyEvent): VerdictAction | null {
     return plain_key(e, VERDICT_KEYS);
 }
 
-/** The `/review/answer` body for a three-way press on a deck card; a wave card names the riders it showed. */
+/** The `/review/answer` body for a four-way press on a deck card; a wave card names the riders it showed. */
 export function verdict_request(card: ReviewCard, verdict: RecentVerdict): ReviewAnswerRequest {
     const request = answer_request(card, card.surface, verdict, card.reference.open) as ReviewAnswerRequest;
     return card.wave ? { ...request, wave: card.wave.members.map((m) => m.key) } : request;
 }
 
-/** EXPLAIN's caption under a three-way button: what it means, then whether it keeps or overrules the reference. */
+/** EXPLAIN's caption under a four-way button: what it means, then whether it keeps or overrules the reference. */
 export function verdict_caption(card: ReviewCard, verdict: RecentVerdict): string {
     const said = RECENT_VERDICTS.find((v) => v.verdict === verdict)?.caption ?? '';
     if (verdict === 'skip') return card.wave ? `${said} · none of the ${card.wave.n} is labelled` : said;
@@ -632,22 +633,23 @@ export function verdict_caption(card: ReviewCard, verdict: RecentVerdict): strin
     return `${said} · ${side}${all}${card.stratum === 'sample' ? ' · counts toward κ' : ''}`;
 }
 
-const THREE_WAY_WORDS: Readonly<Record<'done' | 'running' | 'you', string>> = { done: 'DONE', running: 'RUNNING', you: 'NEEDS YOU' };
+const GRADE_WORDS: Readonly<Record<(typeof REVIEW_GRADES)[number], string>> = { done: 'DONE', read: 'READ', running: 'RUNNING', you: 'NEEDS YOU' };
 
 /**
  * `NEEDS YOU 2/20 ▲` while an OPEN half is short of its floor: the live cards lean its way until it has it, so the
- * tag names the half the deck leans toward (`three_way.lean`), not the gate's shortest class. `DONE 14/20`, with no
- * ▲, once both halves hold the floor and DONE alone keeps the NEEDS-YOU test waiting: nothing leans toward DONE
- * (`review_data.py` `three_way` owns both readings).
+ * tag names the half the deck leans toward (`three_way.lean`), not the gate's shortest class. `DONE 14/20` or
+ * `READ 3/20`, with no ▲, once both OPEN halves hold the floor and a DONE class alone keeps the challenger test
+ * waiting: nothing leans toward them (`review_data.py` `three_way` owns both readings).
  */
 export function three_way_readout(stats: ReviewStats): { text: string; title: string } | null {
     const grades = stats.three_way;
     if (!grades?.deficit) return null;
     const shown = grades.lean ?? grades.deficit;
-    const word = THREE_WAY_WORDS[shown];
-    const counts = `${grades.done} DONE, ${grades.running} RUNNING and ${grades.you} NEEDS YOU labels so far: each needs ${grades.min} before a NEEDS-YOU mark can be tested`;
+    const word = GRADE_WORDS[shown];
+    const read = grades.read ?? 0;
+    const counts = `${grades.done} DONE, ${read} READ, ${grades.running} RUNNING and ${grades.you} NEEDS YOU labels so far: each needs ${grades.min} before the four-way challenger can be tested`;
     return {
-        text: `${word} ${grades[shown]}/${grades.min}${grades.lean ? ' ▲' : ''}`,
+        text: `${word} ${shown === 'read' ? read : grades[shown]}/${grades.min}${grades.lean ? ' ▲' : ''}`,
         title: grades.lean ? `${counts}, so live cards likely to be ${word} come first` : counts,
     };
 }
@@ -670,13 +672,13 @@ export interface RetestChoice {
 const PLAIN_OPEN: RetestChoice = { id: 'open', label: 'OPEN', key: 'O', title: 'Something is still not done', caption: 'Something is still not done', open: true };
 
 /**
- * A retest card's answers: the RECENT list's verdicts where the surface takes the OPEN halves (so both looks can be
+ * A retest card's answers: the RECENT list's verdicts where the surface takes the halves (so both looks can be
  * compared class for class), else DONE, OPEN and SKIP. SKIP is "cannot say": it spends the retest and pairs with nothing.
  */
 export function retest_choices(card: Pick<ReviewRetestCard, 'needs'>): RetestChoice[] {
     const choices: RetestChoice[] = [];
     for (const v of RECENT_VERDICTS) {
-        const half = v.verdict === 'running' || v.verdict === 'you' ? v.verdict : null;
+        const half = v.verdict === 'running' || v.verdict === 'you' || v.verdict === 'read' ? v.verdict : null;
         if (half !== null && !card.needs.includes(half)) continue;
         const choice: RetestChoice = { id: v.verdict, label: v.label, key: v.key, title: v.title, caption: v.caption, open: v.verdict === 'skip' ? null : is_open_verdict(v.verdict) };
         if (half !== null) choice.needs = half;
