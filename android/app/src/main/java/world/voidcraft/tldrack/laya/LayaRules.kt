@@ -36,10 +36,10 @@ sealed interface Fail : Call<Nothing> {
 }
 
 /**
- * What the operator says a turn was. The first four are presses; `open` only reads back an OPEN answer recorded
+ * What the operator says a turn was. The first five are presses; `open` only reads back an OPEN answer recorded
  * without its half (the deck's). `skip` leaves the text out of every count, as on the deck.
  */
-enum class Verdict { done, running, you, skip, open }
+enum class Verdict { done, read, running, you, skip, open }
 
 enum class Grade { right, wrong }
 
@@ -181,6 +181,7 @@ object LayaRules {
             else -> ReviewAnswer.flip
         }
         val needs = when (verdict) {
+            Verdict.read -> Needs.read
             Verdict.running -> Needs.running
             Verdict.you -> Needs.you
             else -> null
@@ -193,15 +194,15 @@ object LayaRules {
         val f = operator ?: return null
         val open = f.open
         if (f.answer == ReviewAnswer.skip || open == null) return Verdict.skip
-        if (!open) return Verdict.done
+        if (!open) return if (f.needs == Needs.read) Verdict.read else Verdict.done
         return when (f.needs) {
             Needs.running -> Verdict.running
             Needs.you -> Verdict.you
-            null -> Verdict.open
+            Needs.read, null -> Verdict.open // READ beside OPEN is no row the bridge writes
         }
     }
 
-    /** RIGHT or WRONG against the band; a 💬 row said "unsure", so it has no right answer. RUNNING and NEEDS YOU both grade as open. */
+    /** RIGHT or WRONG against the band; a 💬 row said "unsure", so it has no right answer. RUNNING and NEEDS YOU both grade as open, DONE and READ as done. */
     fun grade(row: RecentRow): Grade? {
         val verdict = operator_verdict(row.operator)
         if (verdict == null || verdict == Verdict.skip || row.band == Band.reply) return null
@@ -233,6 +234,7 @@ object LayaRules {
             )
             if (verdict == Verdict.running) needs[Needs.running] = needs.getValue(Needs.running) + 1
             if (verdict == Verdict.you) needs[Needs.you] = needs.getValue(Needs.you) + 1
+            if (verdict == Verdict.read) needs[Needs.read] = needs.getValue(Needs.read) + 1
         }
         return RecentTally(n = rows.size, reviewed = reviewed, skipped = skipped, bands = bands, needs = needs)
     }
@@ -404,7 +406,7 @@ object LayaRules {
     fun sendable(request: AnswerRequest): Boolean {
         val records_open = request.answer != ReviewAnswer.skip &&
             (if (request.answer == ReviewAnswer.agree) request.reference_open else !request.reference_open)
-        return SURFACE.matches(request.surface) && REVIEW_KEY.matches(request.key) && (request.needs == null || records_open)
+        return SURFACE.matches(request.surface) && REVIEW_KEY.matches(request.key) && (request.needs == null || records_open == (request.needs != Needs.read))
     }
 
     fun sendable(request: UndoRequest): Boolean = SURFACE.matches(request.surface) && ANSWER_ID.matches(request.answer_id)
