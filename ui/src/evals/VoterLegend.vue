@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import { type ScoredVoter } from './evals-model.ts';
+import { rest_head, type ScoredVoter } from './evals-model.ts';
 
 /**
  * A chart's legend, as a table: one row per voter with its colour key and the chart's own
  * numbers, so every value is readable without a hover. A row is a button: it picks the voter
- * every chart draws bold. The voters with no colour of their own (the ensembles) sit in a
- * closed second table, so a run with fifteen voters still has a legend the size of its chart.
+ * every chart draws bold. The voters with no colour of their own (the ensembles, and any model
+ * past the eighth) sit in a closed second table, so a run with fifteen voters still has a legend
+ * the size of its chart.
  */
 const props = defineProps<{
     scored: ScoredVoter[];
@@ -18,12 +19,7 @@ defineEmits<{ focus: [name: string] }>();
 
 const groups = computed(() => {
     const rest = props.scored.filter((entry) => entry.rest);
-    const all_means = rest.every((entry) => entry.voter.kind === 'ensemble');
-    return {
-        main: props.scored.filter((entry) => !entry.rest),
-        rest,
-        rest_head: all_means ? `${rest.length} ensembles · each the mean of two voters` : `${rest.length} more voters`,
-    };
+    return { main: props.scored.filter((entry) => !entry.rest), rest, rest_head: rest_head(rest) };
 });
 </script>
 

@@ -29,6 +29,8 @@ uv run laya-lab bench                       # every available voter on the publi
                                             # aggregates only, AUC with a bootstrap 95% interval (bench.py)
 uv run laya-lab bench --panel served --panel base   # also the panel voter: many questions of each turn, one fitted
                                             # line over the answers (panel.py); `served` or `base` answers the new ones
+uv run laya-lab bench --panel served/3q     # also three questions and no line: the most confident answers
+                                            # (`served/3q-mean`: their equal-weight mean)
 uv run laya-lab question-challenger agent_open_work --version 3   # the served rows refitted at another question
                                             # version, never registered; `bench --challenger` scores it (question.py)
 uv run laya-lab card                        # preview the verifier card; `--publish --digest D` writes the reviewed
@@ -153,7 +155,14 @@ and never once the selection is covered.
 uv run laya-lab claude-vote --dry-run     # how many states it would ask; calls nothing
 uv run laya-lab claude-vote               # ask claude-opus-5-5 p(open) of every state the bench scores, both arms
 uv run laya-lab bench --voter opus=votes:claude-opus-5-5/rubric --voter opus-q=votes:claude-opus-5-5/question
+uv run laya-lab claude-vote --model claude-fable-5-2 --arm question   # another model, one arm
 ```
+
+**Measured 2026-11-20** (`bench/results/2026-11-20.json`, the `question` arm of both). Held out, `fable` (Claude Fable
+5.2) ranks at AUC 0.911 [0.860, 0.953] and `opus` (Claude Opus 5.5) at 0.902 [0.845, 0.949]; on golden 0.995 and 0.993.
+A vote costs 263 ms against 530 ms, amortized over a batch of 25. Paired on the file's own draws, and not in the file:
+Fable against Opus is +0.009 [−0.014, +0.035] held out, a tie. On the 43 held-out turns the operator graded by hand,
+Fable 0.711, Opus 0.680 and the served fine-tune 0.694: Fable against the fine-tune is +0.017 [−0.098, +0.149].
 
 `compare` and `bench` refuse a voter that is not on this machine, and they still do. `claude-vote` is the
 one command that sends: each state, exactly as Laya is asked it, to a Claude model on the subscription login,
@@ -301,8 +310,8 @@ of fold on the held-out rows: owned by `laya_lab/panel.py` — see the note ther
 uv run laya-lab bench --labels merged --panel served --panel base
 ```
 
-`laya-panel` has the served model answer every question; `laya-panel-base` has the base model answer the 17 new
-ones. Each prints its fitted weights (never written to the file) and a verdict against the served voter by the rule
+`laya-panel` (LAYA · 18 QUESTIONS in a legend) has the served model answer every question; `laya-panel-base` (LAYA ·
+18 Q · BASE) has the base model answer the 17 new ones. Each prints its fitted weights (never written to the file) and a verdict against the served voter by the rule
 above: the held-out ΔAUC interval sits above zero and golden accuracy does not fall. A panel costs every ask it makes:
 its latency in the file is the sum for one turn. A store with no held-out rows has no panel, so the reproduce command
 (the public set, the base model) is unchanged.
@@ -310,7 +319,8 @@ its latency in the file is the sum for one turn. A store with no held-out rows h
 **Measured 2026-11-20: a no, by the rule** (`bench/results/2026-11-20.json`). `laya-panel`: held-out ΔAUC against the
 served model −0.088 [−0.144, −0.035] (AUC 0.743 against 0.831), accuracy 0.772 → 0.690; golden ΔAUC −0.013 [−0.059,
 +0.032], accuracy 0.770 → 0.745. `laya-panel-base`: −0.117 [−0.184, −0.058] held out (AUC 0.714) and −0.076 [−0.132,
-−0.024] on golden. A turn costs about 750 ms against the served question's 62 ms.
+−0.024] on golden. A turn costs about 750 ms against the served question's 61 ms. The second run that day, which
+added the voters below, measured both again and moved neither number.
 
 Why, from the run's own inputs. These were read after the fact on the same 171 rows, so they explain the verdict and
 decide nothing; none is in the results file.
@@ -326,6 +336,38 @@ decide nothing; none is in the results file.
 
 The limit is question v4's: most labels came from a teacher that read the closing alone, so a request or a fact cannot
 predict a label it was never part of. Re-measure once rows are relabelled with both in view, and there are more of them.
+
+### Three questions and no line (`bench --panel served/3q`)
+
+The 18 questions lost to their own fitted line, so the second shape fits nothing: three questions of the closing,
+equal weights. The served question; whether the closing asks the reader to decide or approve (a yes says open); whether
+it says the work was finished and checked (a yes says done). A no to either of the last two is "cannot tell", never the
+opposite verdict. `3q` answers with the most confident of the three votes, `3q-mean` with the equal-weight mean of
+their logits. Nothing is fitted, so it scores a store with no held-out rows too. The votes and both rules: owned by
+`laya_lab/panel.py` — see the note there.
+
+```bash
+uv run laya-lab bench --labels merged --panel served/3q --panel served/3q-mean
+```
+
+`laya-panel-3q` (LAYA · 3 QUESTIONS) and `laya-panel-3q-mean` (LAYA · 3 Q · MEAN); `base/3q` has the base model answer
+the two new questions. Each prints, per set, what each vote was worth alone, and a verdict by the same rule.
+
+**Measured 2026-11-20: a no, by the rule, and level with the served question** (`bench/results/2026-11-20.json`).
+`laya-panel-3q`: held-out ΔAUC against the served model +0.015 [−0.012, +0.046] (AUC 0.846 against 0.831), accuracy
+0.772 → 0.784; golden ΔAUC −0.025 [−0.065, +0.010], accuracy 0.770 → 0.750. `laya-panel-3q-mean`: +0.016 [−0.011,
++0.047] held out (AUC 0.847) and −0.008 [−0.036, +0.020] on golden, accuracy 0.770 → 0.745. The rule asks for a held-out
+interval above zero and a golden accuracy that holds; neither rule clears either half. A turn costs 188 ms against 61 ms.
+
+Why, from the votes the run printed (read on the same rows, so they explain and decide nothing):
+- **The served question is the most confident vote on 92% of the held-out turns**, so on those the panel is the served
+  verdict. The two rules differ by 0.001.
+- **"Asks for a decision" ranks at chance alone** (AUC 0.47 held out, 0.49 golden), and says yes on 15% of the held-out
+  turns. The fine-tune answers its own question whatever it is asked, as it did above.
+- **"Finished and checked" carries a little** (0.61 held out, 0.57 golden): the one new vote that ranks above chance.
+
+So three questions cost a quarter of what eighteen do and lose nothing past the interval, and they do not win. The
+limit is the one above: one model trained on one question has one opinion.
 
 ## Tests
 
