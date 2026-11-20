@@ -133,14 +133,17 @@ parked with ⏸ draws nothing until you next prompt that session.
 
 The same held-out turns, one curve per voter. Up and to the left is better.
 
-Claude Opus 5.5 is on the chart as a reference: a frontier cloud model, asked the same question with no
-training. Most of these held-out labels were written by a Claude model, so its curve is partly Claude
-agreeing with Claude. On the 43 turns the operator graded by hand, it and the fine-tune tie (AUC 0.68
-against 0.69, the difference well inside the interval), and Opus is several times slower per verdict.
+Claude Opus 5.5 and Claude Fable 5.2 are on the chart as references: frontier cloud models, asked the same
+question with no training. Most of these held-out labels were written by a Claude model, so their curves
+are partly Claude agreeing with Claude. The two tie with each other (AUC 0.90 and 0.91). On the 43 turns
+the operator graded by hand, both tie with the fine-tune (0.68 and 0.71 against 0.69, each difference well
+inside its interval), and each is several times slower per verdict.
 
-LAYA · PANEL is an experiment, not a served model: the same fine-tune asked 18 questions of each turn
-in place of one, with the turn's facts, and one fitted line over the answers. It ranks below the single
-question (AUC 0.74 against 0.83) and costs twelve times the time. `lab/README.md` has the breakdown.
+LAYA · 18 QUESTIONS and LAYA · 3 QUESTIONS are experiments, not served models: the same fine-tune asked
+more than its one question of each turn. Eighteen questions, the turn's facts and one fitted line over
+the answers rank below the single question (AUC 0.74 against 0.83) at twelve times the time. Three
+questions with nothing fitted, the most confident answer taken, rank level with it (0.85 against 0.83,
+the difference inside the interval) at three times the time. `lab/README.md` has the breakdown.
 
 <p align="center">
   <picture>

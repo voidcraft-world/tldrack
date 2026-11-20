@@ -38,6 +38,21 @@ no panel.
 The served question goes to the served model. The new questions go to `others`: the served fine-tune again (the same
 model, asked more) or the base model. The fine-tune was trained on one question, so which of the two reads the new
 questions better is itself measured; `bench --panel served --panel base` scores both.
+
+── Three questions and no line (`THREE`) ─────────────────────────────────────
+The line above pays for every input it is given, and it needs labelled rows to be fitted at all. The second shape
+spends neither: three questions of the closing, equal weights, nothing fitted, so it scores any set as it stands, a
+store with no held-out rows included. The three are the ways a closing settles the verdict, and each is one of
+`ASKS`, worded there and nowhere else:
+- `open`: the served question. A yes says open and a no says done.
+- `decide`: the closing asks the reader to decide or approve. A yes says open: the turn waits on the operator.
+- `finished`: the closing says the work was finished and checked. A yes says done.
+A no to either of the last two is "cannot tell" (0.5), never the opposite verdict: a closing that asks for no decision
+is not thereby done, and one that names no check is not thereby open. Without that, the rule below would be decided by
+the question that most turns confidently say no to.
+Two rules turn the three votes into one p (`RULES`), and `bench` scores each as its own voter:
+- `confident`: the vote farthest from 0.5 answers. Between equals the first of `THREE` does, so the served question.
+- `mean`: the equal-weight mean of the three logits, a "cannot tell" counting as 0.
 """
 
 from __future__ import annotations
@@ -54,6 +69,7 @@ import numpy as np
 from laya_lab import siblings  # noqa: F401  (puts tldrack on sys.path)
 from laya_lab import infer
 from laya_lab.floor import fit_logistic, sigmoid
+from laya_lab.metrics import auc, fmt_num
 from tldrack import open_work
 from tldrack.transcript import ends_on_question
 
@@ -97,6 +113,7 @@ TEXT_SIGNALS = ("has_request", "request_asks", "closing_asks", "length", "code")
 FACT_SIGNALS = ("has_facts", "ran_tests", "tests_passed", "tests_failed", "edited_files", "made_commit", "opened_pr")
 SIGNALS = TEXT_SIGNALS + FACT_SIGNALS
 FEATURES = tuple(ask.name for ask in ASKS) + SIGNALS
+BY_NAME = {ask.name: ask for ask in ASKS}
 
 FOLDS = 5
 #: A p is clipped to [EPS, 1 − EPS] before its logit, so a saturated answer is a large value, never an infinity.
@@ -184,6 +201,15 @@ def logit(p: float) -> float:
     return math.log(clipped / (1 - clipped))
 
 
+def ask_of(asker: Asker, ask: Ask, question: Mapping[str, Any], state: str, served: str, others: str) -> tuple[float, float]:
+    """`(p, ms)` of one ask of one state. The served ask, and a windows ask over it, is the suite's own `question` to
+    the `served` model; every other ask is its own instructions to `others`."""
+    source = BY_NAME[ask.over] if ask.over else ask
+    if source.name == SERVED:
+        return asker.ask(served, question, state)
+    return asker.ask(others, {"type": "noul", "instructions": source.instructions}, state)
+
+
 def answer_row(
     asker: Asker, question: Mapping[str, Any], closing: str, raw: Mapping[str, Any], served: str, others: str
 ) -> tuple[list[float], float]:
@@ -191,16 +217,13 @@ def answer_row(
     the suite's served question and state; `served` answers that question, `others` every new one."""
     request = request_state(raw.get("request"))
     spans = windows(raw["hand_off"])
-    by_name = {ask.name: ask for ask in ASKS}
     #: p per ask; a request ask of a turn with no request is 0.5, "cannot tell", so its logit is 0.
     answered: dict[str, float] = {}
     total = 0.0
 
     def put(ask: Ask, state: str) -> float:
         nonlocal total
-        source = by_name[ask.over] if ask.over else ask
-        asked = question if source.name == SERVED else {"type": "noul", "instructions": source.instructions}
-        p, ms = asker.ask(served if source.name == SERVED else others, asked, state)
+        p, ms = ask_of(asker, ask, question, state, served, others)
         total += ms
         return p
 
@@ -315,3 +338,78 @@ def weight_lines(line: Line) -> list[str]:
     """The fitted weights, largest first: what the panel leaned on. Standardised features, so they compare."""
     ranked = sorted(zip(FEATURES, line.weights[:-1]), key=lambda pair: -abs(pair[1]))
     return [f"    {name:<18} {weight:+.3f}" for name, weight in ranked]
+
+
+# ── three questions, no line (the module note owns why) ───────────────────────
+
+
+@dataclass(frozen=True)
+class Vote:
+    """One of the three questions, read as a vote on p(open)."""
+
+    ask: str
+    #: What a yes says: True, the turn is open; False, it is done.
+    opens: bool
+    #: Whether a no says the opposite. False: a no is "cannot tell".
+    both: bool
+
+
+THREE: tuple[Vote, ...] = (
+    Vote(SERVED, opens=True, both=True),
+    Vote("decide", opens=True, both=False),
+    Vote("finished", opens=False, both=False),
+)
+UNSURE = 0.5
+
+
+def cast(vote: Vote, p: float) -> float:
+    """An ask's p(yes) as its vote's p(open)."""
+    if not vote.both and p < UNSURE:
+        return UNSURE
+    return p if vote.opens else 1 - p
+
+
+def most_confident(votes: Sequence[float]) -> float:
+    return max(votes, key=lambda p: abs(p - UNSURE))
+
+
+def equal_mean(votes: Sequence[float]) -> float:
+    return 1 / (1 + math.exp(-sum(logit(p) for p in votes) / len(votes)))
+
+
+RULES: dict[str, Callable[[Sequence[float]], float]] = {"confident": most_confident, "mean": equal_mean}
+
+
+def answer_three(
+    asker: Asker, question: Mapping[str, Any], closings: Mapping[str, Sequence[str]], served: str, others: str, rule: str
+) -> dict[str, tuple[list[float], list[float], list[list[float]]]]:
+    """`{set: (p per row, ms per row, the three votes per row)}` under one of `RULES`. Each set is its closing states,
+    the very ones the served question is asked of. `served` answers the served question, `others` the other two."""
+    decide = RULES[rule]
+    out: dict[str, tuple[list[float], list[float], list[list[float]]]] = {}
+    for name, states in closings.items():
+        ps, times, votes = [], [], []
+        for state in states:
+            asked = [ask_of(asker, BY_NAME[vote.ask], question, state, served, others) for vote in THREE]
+            row = [cast(vote, p) for vote, (p, _ms) in zip(THREE, asked)]
+            votes.append(row)
+            ps.append(decide(row))
+            times.append(sum(ms for _p, ms in asked))
+        out[name] = (ps, times, votes)
+    return out
+
+
+def vote_lines(votes: Sequence[Sequence[float]], labels: Sequence[bool]) -> list[str]:
+    """Each of the three votes on one set: how it ranks the rows alone, how often it is the most confident of the
+    three, and how often it cannot tell. What the rule had to work with; numbers only."""
+    n = len(votes) or 1
+    leads = [max(range(len(THREE)), key=lambda i: abs(row[i] - UNSURE)) for row in votes]
+    lines = []
+    for i, vote in enumerate(THREE):
+        alone = auc([row[i] for row in votes], list(labels))
+        unsure = sum(row[i] == UNSURE for row in votes)
+        lines.append(
+            f"    {vote.ask:<10} alone AUC {fmt_num(alone, 3)} · most confident on {leads.count(i) / n:.0%}"
+            f" · cannot tell on {unsure / n:.0%}"
+        )
+    return lines

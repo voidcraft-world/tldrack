@@ -133,6 +133,21 @@ export function draw_order(a: ScoredVoter, b: ScoredVoter): number {
     return rank(a) - rank(b);
 }
 
+/**
+ * The head of a legend's closed second table: what the voters with no colour of their own are.
+ * Ensembles are named as what they are; any other voter there is one the eight colours ran out
+ * before, and is counted apart so a reader knows a model is folded away, not only means.
+ */
+export function rest_head(rest: readonly ScoredVoter[]): string {
+    const means = rest.filter((entry) => entry.voter.kind === 'ensemble').length;
+    const others = rest.length - means;
+    const count = (n: number, one: string): string => `${n} ${n === 1 ? one : `${one}s`}`;
+    return [
+        ...(others > 0 ? [count(others, 'more voter')] : []),
+        ...(means > 0 ? [`${count(means, 'ensemble')} · each the mean of two voters`] : []),
+    ].join(' · ');
+}
+
 /** The voter a chart draws bold: the picked one, or the first when this set did not score it. */
 export function focused_voter(scored: readonly ScoredVoter[]): ScoredVoter | undefined {
     return scored.find((entry) => entry.focus) ?? scored[0];

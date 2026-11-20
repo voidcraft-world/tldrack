@@ -25,6 +25,7 @@ import {
     parse_results,
     pick_results_file,
     read_less,
+    rest_head,
     roc_point_at,
     roc_tpr_at,
     scored_voters,
@@ -96,6 +97,16 @@ test('a colour follows the voter, and a ninth voter gets no made-up hue', () => 
     assert.equal(picked.at(-1)!.rest, false);
     assert.deepEqual([...picked].sort(draw_order).map((entry) => entry.voter.name).at(-1), 'mean-ft-zs', 'the picked voter is drawn last, on top');
     assert.equal([...scored].sort(draw_order)[0]!.voter.name, 'mean-ft-zs', 'the neutral lines are drawn first, underneath');
+});
+
+test('the folded legend says what it holds: models the colours ran out before, and ensembles', () => {
+    const results = fixture();
+    const heldout = set_result(results, 'heldout')!;
+    const mean = scored_voters(heldout, results.voters, voter_slots(results.voters), 'laya-base').filter((entry) => entry.rest);
+    assert.equal(rest_head(mean), '1 ensemble · each the mean of two voters');
+    const model = { ...mean[0]!, voter: { ...mean[0]!.voter, kind: 'panel' as const } };
+    assert.equal(rest_head([model]), '1 more voter');
+    assert.equal(rest_head([model, model, mean[0]!, mean[0]!]), '2 more voters · 2 ensembles · each the mean of two voters');
 });
 
 test('read less: every judged turn end is counted once', () => {
