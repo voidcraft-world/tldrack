@@ -55,7 +55,7 @@ from laya_bridge.review_log import OperatorFold
 from laya_bridge.review_surfaces import REVIEW_SURFACES
 from tldrack import open_work
 from tldrack.ledger import claude_fold
-from tldrack.transcript import fold_closing_text, fold_stop_failure, parse_entries
+from tldrack.transcript import fold_closing_text, fold_stop_failure, fold_turn_trace, parse_entries, trace_reading
 
 SURFACE = "agent_open_work"
 SPEC = REVIEW_SURFACES[SURFACE]
@@ -178,28 +178,40 @@ def _is_turn_boundary(entry: dict) -> bool:
 
 
 def closings(entries: Iterable[dict]) -> Iterator[tuple[str, str | None]]:
-    """`(closing text, request)` of every completed turn in one transcript, in order. Pure.
+    """`(closing text, request)` of every completed turn in one transcript (`turn_records` without the facts). Pure."""
+    return ((text, request) for text, request, _facts in turn_records(entries))
+
+
+def turn_records(entries: Iterable[dict]) -> Iterator[tuple[str, str | None, dict[str, Any] | None]]:
+    """`(closing text, request, facts)` of every completed turn in one transcript, in order. Pure.
 
     A turn ends where the next one begins (or at end of file). Its closing text is what
     `fold_closing_text` holds at that moment — the newest assistant message's text. A turn an API
     error CUT OFF (`fold_stop_failure`: its newest assistant entry is Claude Code's synthetic notice)
     has no hand-off at all, so it yields nothing — the bridge never judges one either. Its request is
     what `open_work.fold_turn_request` holds then, the fold the bridge serves with: None when a hook, a
-    task or a child opened the turn."""
+    task or a child opened the turn. Its facts are `open_work.turn_facts` of the trace the bridge folds
+    (`fold_turn_trace`, read by `trace_reading`): what a question-v4 state would be served with."""
     closing: tuple[str | None, str] = (None, "")
     cut_off: dict | None = None
     request: str | None = None
+    trace: dict | None = None
+
+    def facts() -> dict[str, Any] | None:
+        return open_work.turn_facts(trace_reading(trace, closing[1]))
+
     for entry in entries:
         if _is_turn_boundary(entry):
             if closing[1] and cut_off is None:
-                yield closing[1], request
+                yield closing[1], request, facts()
             closing, cut_off = (None, ""), None
         else:
             closing = fold_closing_text(closing, [entry])
             cut_off = fold_stop_failure(cut_off, [entry])
         request = open_work.fold_turn_request(request, [entry])
+        trace = fold_turn_trace(trace, [entry])
     if closing[1] and cut_off is None:
-        yield closing[1], request
+        yield closing[1], request, facts()
 
 
 def turn_ends(entries: Iterable[dict]) -> Iterator[str]:
@@ -331,6 +343,7 @@ def export(
     seed: int = 7,
     requests_out: Path | None = None,
     also_keys: Iterable[str] = (),
+    facts_out: Path | None = None,
 ) -> tuple[int, int, int]:
     """Merge up to `limit` NEW distinct turn ends, sampled across transcripts, into `out`, never past
     the size the bridge's reader takes (`review_data.UNLABELLED_CAP_BYTES`): past it, the deck and
@@ -338,24 +351,27 @@ def export(
 
     With `requests_out`, every turn walked also tells its request (`closings`), and `merge_requests` writes it for each
     row of the export and each of `also_keys` (the ledger's kept texts) whose turn was found. A row's key stays its
-    closing's, so every label and every answer still joins; a request is never a field of the export itself."""
+    closing's, so every label and every answer still joins; a request is never a field of the export itself. With
+    `facts_out`, each turn's facts are written the same way (`merge_facts`): booleans and a count, never a path."""
     rng = random.Random(seed)
     fresh: dict[str, dict[str, Any]] = {}
     heard: dict[str, str | None] = {}
+    heard_facts: dict[str, dict[str, Any]] = {}
     seen = 0
     unread = 0
     for path in transcript_paths(roots):
         try:
-            walked = list(closings(transcript_entries(path)))
+            walked = list(turn_records(transcript_entries(path)))
         except OSError:
             unread += 1
             continue
-        if requests_out is not None:
-            for text, request in walked:
-                for key in heard_keys(text):
-                    if heard.get(key) is None:
-                        heard[key] = request
-        found = [text for text, _request in walked if len(text.strip()) >= MIN_CHARS]
+        for text, request, facts in walked:
+            for key in heard_keys(text):
+                if heard.get(key) is None:
+                    heard[key] = request
+                if facts is not None:
+                    heard_facts.setdefault(key, facts)
+        found = [text for text, _request, _facts in walked if len(text.strip()) >= MIN_CHARS]
         seen += len(found)
         rng.shuffle(found)
         for text in found[:MAX_PER_TRANSCRIPT]:
@@ -384,6 +400,11 @@ def export(
             f"[laya-lab] open-work: requests known for {len(merged)} of {len(wanted)} texts ({typed} typed, "
             f"{len(merged) - typed} opened by a hook, a task or a child)"
         )
+    if facts_out is not None:
+        wanted = {row["key"] for row in read_jsonl(out)} | set(also_keys)
+        told = merge_facts(read_facts_file(facts_out), heard_facts, wanted)
+        write_jsonl(facts_out, ({"key": key, "facts": row} for key, row in told.items()))
+        print(f"[laya-lab] open-work: facts known for {len(told)} of {len(wanted)} texts")
     return added, total, seen
 
 
@@ -435,11 +456,55 @@ def read_requests(base: Path) -> dict[str, str | None]:
     return read_requests_file(data_path(base, "requests"))
 
 
+# ── facts (question v4) ─────────────────────────────────────────────────────
+
+FACTS_CAP_BYTES = 16 * 1024 * 1024
+
+
+def merge_facts(
+    existing: Mapping[str, dict[str, Any]], heard: Mapping[str, dict[str, Any]], wanted: Iterable[str]
+) -> dict[str, dict[str, Any]]:
+    """`{key: facts}`: every existing row kept (its transcript may be gone now), then each wanted key heard in a
+    transcript walk and not yet known. Pure. A key absent is a text whose turn had no transcript to read: its v4
+    state is its v3 state, as it would be served."""
+    merged = dict(existing)
+    for key in wanted:
+        if key in heard and key not in merged:
+            merged[key] = heard[key]
+    return merged
+
+
+def read_facts_file(path: Path) -> dict[str, dict[str, Any]]:
+    """`{key: facts}` of one facts file, each row checked by the one reader (`open_work.read_facts`); a row that does
+    not read is dropped, never half-told."""
+    try:
+        found, _bad = files.read_jsonl_capped(path, FACTS_CAP_BYTES)
+    except files.SourceError as error:
+        raise SystemExit(f"[laya-lab] refusing: {path} is {error} ({UNREADABLE.get(str(error), 'unreadable')})") from None
+    out: dict[str, dict[str, Any]] = {}
+    for row in found:
+        key, facts = row.get("key"), open_work.read_facts(row.get("facts"))
+        if isinstance(key, str) and lab_files.KEY.fullmatch(key) and facts is not None:
+            out[key] = facts
+    return out
+
+
+def read_facts(base: Path) -> dict[str, dict[str, Any]]:
+    """The store's facts (`data/agent-open-work-facts.jsonl`, written by `export`)."""
+    return read_facts_file(data_path(base, "facts"))
+
+
 def export_turn_ends(base: Path, roots: Iterable[Path], *, limit: int) -> tuple[int, int, int]:
-    """`export` into the store, its requests beside it: what `export-open-work` and the retrain's export step run."""
+    """`export` into the store, its requests and facts beside it: what `export-open-work` and the retrain's export
+    step run."""
     ledger_keys = texts(base, SURFACE).keys()
     return export(
-        data_path(base, "unlabelled"), roots, limit=limit, requests_out=data_path(base, "requests"), also_keys=ledger_keys
+        data_path(base, "unlabelled"),
+        roots,
+        limit=limit,
+        requests_out=data_path(base, "requests"),
+        also_keys=ledger_keys,
+        facts_out=data_path(base, "facts"),
     )
 
 

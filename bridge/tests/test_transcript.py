@@ -616,11 +616,16 @@ def test_clearing_sticks_until_a_new_entry_sets_it_again(tmp_path):
 
 from tldrack.transcript import (  # noqa: E402
     TRACE_EDITS_MAX,
+    TRACE_PENDING_MAX,
     ends_on_question,
     fold_background_workflows,
     fold_turn_opening,
     fold_turn_trace,
+    read_test_result,
 )
+
+#: A trace with nothing in it: what a prompt starts.
+FRESH_TRACE = {"tests": False, "edits": frozenset(), "pr": False, "tests_passed": None, "commit": False, "pending": {}}
 
 
 def _workflow(task_id, run_id="wf_00000000-aaa"):
@@ -733,7 +738,7 @@ def test_a_prompt_starts_a_fresh_trace_and_context_inside_a_turn_does_not():
         _prompt("Another Claude session sent a message", isMeta=True, turnOrigin="peer"),
         {"type": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}},
     ):
-        assert fold_turn_trace(worked, [start]) == {"tests": False, "edits": frozenset(), "pr": False}
+        assert fold_turn_trace(worked, [start]) == FRESH_TRACE
 
 
 def test_a_subagents_calls_never_speak_for_the_main_thread():
@@ -745,7 +750,7 @@ def test_a_subagents_calls_never_speak_for_the_main_thread():
             _prompt("sub prompt", isSidechain=True),
         ],
     )
-    assert trace == {"tests": False, "edits": frozenset(), "pr": False}
+    assert trace == FRESH_TRACE
 
 
 def test_the_edit_count_is_bounded():
@@ -782,7 +787,126 @@ def test_the_tracker_serves_the_turns_trace_as_counts(tmp_path):
     tracker = TranscriptTracker()
     assert tracker.turn_trace("vc-1") is None
     tracker.update("vc-1", str(path))
-    assert tracker.turn_trace("vc-1") == {"ran_tests": True, "edited_files": 1, "opened_pr": False, "ended_on_question": True}
+    assert tracker.turn_trace("vc-1") == {
+        "ran_tests": True,
+        "edited_files": 1,
+        "opened_pr": False,
+        "ended_on_question": True,
+        "tests_passed": None,
+        "made_commit": False,
+    }
+
+
+# ── the trace's two v4 facts: the last test run's result, and a commit ───────
+
+
+def _call(call_id, command, sidechain=False):
+    block = {"type": "tool_use", "id": call_id, "name": "Bash", "input": {"command": command}}
+    return _assistant(f"m-{call_id}", block, sidechain=sidechain)
+
+
+def _answer(call_id, content, is_error=False, sidechain=False):
+    block = {"type": "tool_result", "tool_use_id": call_id, "content": content, "is_error": is_error}
+    return {"type": "user", "isSidechain": sidechain, "message": {"content": [block]}}
+
+
+@pytest.mark.parametrize(
+    "output, errored, passed",
+    [
+        ("....\n12 passed in 0.41s", False, True),
+        ("F...\nFAILED tests/test_x.py::test_a\n1 failed, 11 passed in 0.5s", False, False),
+        ("# tests 9\n# pass 9\n# fail 0", False, True),
+        ("# tests 9\n# pass 8\n# fail 1", False, False),
+        ("Tests:       2 failed, 30 passed, 32 total", False, False),
+        ("test result: ok. 4 passed; 0 failed", False, True),
+        ("ok  \texample.com/pkg\t0.12s", False, True),
+        ("Exit code 1\nsomething broke", True, False),
+        ("Command running in background with ID: b1", False, None),
+        ("collected 0 items", False, None),
+        ("The user doesn't want to proceed with this tool use. The tool use was rejected", True, None),
+    ],
+)
+def test_a_test_runs_result_says_passed_failed_or_nothing(output, errored, passed):
+    assert read_test_result(output, errored=errored) is passed
+
+
+def test_the_last_test_run_decides_and_unknown_stays_unknown():
+    passed = fold_turn_trace(None, [_call("a", "pytest -q"), _answer("a", "3 passed in 0.1s")])
+    assert (passed["tests"], passed["tests_passed"], passed["pending"]) == (True, True, {})
+    failed = fold_turn_trace(passed, [_call("b", "pytest -q"), _answer("b", "Exit code 1\n1 failed", is_error=True)])
+    assert failed["tests_passed"] is False, "a later failing run overrides an earlier pass"
+    waiting = fold_turn_trace(failed, [_call("c", "npm test")])
+    assert waiting["tests_passed"] is None, "a run whose result has not landed is unknown, never the previous one"
+    assert fold_turn_trace(waiting, [_answer("c", "done")])["tests_passed"] is None, "output that says nothing"
+    stale = fold_turn_trace(None, [_call("d", "pytest"), _call("e", "pytest"), _answer("d", "1 failed")])
+    assert stale["tests_passed"] is None and stale["pending"] == {"e": "test"}, "only the newest run is waited on"
+
+
+def test_a_result_pairs_with_its_call_across_reads():
+    first = fold_turn_trace(None, [_call("a", "cd lab && uv run pytest -q tests/test_x.py")])
+    assert first["pending"] == {"a": "test"}
+    second = fold_turn_trace(first, [_answer("a", "5 passed")])
+    assert second["tests_passed"] is True and first["pending"] == {"a": "test"}, "the fold is pure"
+
+
+@pytest.mark.parametrize(
+    "command, commits",
+    [
+        ('git commit -m "x"', True),
+        ("git -C ~/r commit -am x", True),
+        ("git add -A && git commit --amend --no-edit", True),
+        ("git commit-tree abc", False),
+        ("git log --grep commit", False),
+        ("echo commit", False),
+    ],
+)
+def test_a_commit_is_read_off_the_command(command, commits):
+    trace = fold_turn_trace(None, [_call("a", command), _answer("a", "[main abc123] x")])
+    assert trace["commit"] is commits
+
+
+def test_a_commit_counts_only_once_its_result_came_back_clean():
+    assert fold_turn_trace(None, [_call("a", "git commit -m x")])["commit"] is False, "no result yet"
+    refused = [_call("a", "git commit -m x"), _answer("a", "Exit code 1\nnothing to commit", is_error=True)]
+    assert fold_turn_trace(None, refused)["commit"] is False
+    made = fold_turn_trace(None, [*refused, _call("b", "git commit -am x"), _answer("b", "[feat abc] x")])
+    assert made["commit"] is True
+    assert fold_turn_trace(made, [_prompt("next")])["commit"] is False, "a prompt starts a fresh trace"
+
+
+def test_a_subagents_results_and_commits_never_speak_for_the_main_thread():
+    trace = fold_turn_trace(None, [_call("a", "pytest"), _answer("a", "1 failed", sidechain=True)])
+    assert trace["tests_passed"] is None
+    trace = fold_turn_trace(None, [_call("b", "git commit -m x", sidechain=True), _answer("b", "[x] y", sidechain=True)])
+    assert trace["commit"] is False
+
+
+def test_the_calls_a_trace_waits_on_are_bounded():
+    trace = fold_turn_trace(None, [_call(f"c{n}", "git commit -m x") for n in range(TRACE_PENDING_MAX + 5)])
+    assert len(trace["pending"]) == TRACE_PENDING_MAX and "c0" not in trace["pending"]
+
+
+def test_a_trace_folded_before_the_two_facts_still_reads():
+    old = {"tests": True, "edits": frozenset({"/a.py"}), "pr": False}
+    trace = fold_turn_trace(old, [_call("a", "git commit -m x"), _answer("a", "[x] y")])
+    assert (trace["tests"], trace["tests_passed"], trace["commit"]) == (True, None, True)
+
+
+def test_the_tracker_serves_the_last_runs_result_and_the_commit(tmp_path):
+    path = tmp_path / "t.jsonl"
+    lines = [
+        _prompt("fix it"),
+        _call("a", "pytest -q"),
+        _answer("a", "7 passed in 0.2s"),
+        _call("b", "git commit -m fix"),
+        _answer("b", "[feat 1a2b3c] fix"),
+        _assistant("m2", _text("Fixed, tested and committed.")),
+    ]
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    tracker = TranscriptTracker()
+    tracker.update("vc-1", str(path))
+    reading = tracker.turn_trace("vc-1")
+    assert (reading["ran_tests"], reading["tests_passed"], reading["made_commit"]) == (True, True, True)
 
 
 # ── the turn's opening (open_work.py § An answer to read) ────────────────────

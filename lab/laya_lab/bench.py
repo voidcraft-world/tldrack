@@ -430,6 +430,15 @@ def golden_rows(name: str, suite: Suite) -> Rows:
     )
 
 
+def with_facts(base: Path, held: Sequence[tuple[str, dict[str, Any], bool]]) -> list[tuple[str, dict[str, Any], bool]]:
+    """Each held-out raw state with its turn's facts (`open_work_data.read_facts`), so a question-v4 challenger is asked
+    what it would be served; a row whose turn has none reads as v3. The served version never reads them."""
+    from laya_lab.open_work_data import read_facts
+
+    facts = read_facts(base)
+    return [(key, {**raw, "facts": facts[key]} if key in facts else raw, is_open) for key, raw, is_open in held]
+
+
 def load_sets(base: Path, name: str, suite: Suite, labels: str = "auto") -> tuple[dict[str, list[Row]], str | None]:
     """`({"golden": rows[, "heldout": rows]}, why there is no held-out set)`. A store that is absent, empty or
     unreadable has no held-out set: the reason is for the terminal, never for the file."""
@@ -439,6 +448,7 @@ def load_sets(base: Path, name: str, suite: Suite, labels: str = "auto") -> tupl
     except (Exception, SystemExit) as error:  # noqa: BLE001  (an unreadable store is "no private split", never a crash)
         return sets, f"{type(error).__name__}: {error}"
     if held:
+        held = with_facts(base, held)
         sets["heldout"] = Rows(
             [(key, suite.build_state(raw), is_open) for key, raw, is_open in held], [raw for _key, raw, _is_open in held]
         )

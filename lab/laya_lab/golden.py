@@ -92,8 +92,10 @@ SUITES: dict[str, Suite] = {
         false_warning_cost=open_work.FALSE_WARNING_COST,
         done_threshold=open_work.DONE_AT,
         false_done_cost=open_work.FALSE_DONE_COST,
-        build_state=lambda raw: open_work.decide_state(raw["hand_off"], raw.get("request")),
-        build_state_at=lambda raw, version: open_work.decide_state(raw["hand_off"], raw.get("request"), version=version),
+        build_state=lambda raw: open_work.decide_state(raw["hand_off"], raw.get("request"), facts=raw.get("facts")),
+        build_state_at=lambda raw, version: open_work.decide_state(
+            raw["hand_off"], raw.get("request"), facts=raw.get("facts"), version=version
+        ),
     ),
 }
 
@@ -114,6 +116,9 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
             raise ValueError(f"{where}: expected must be true or false")
         if not isinstance(row.get("state"), dict) or not row["state"].get("hand_off"):
             raise ValueError(f"{where}: state.hand_off is required")
+        # Optional: the turn's runtime facts, as a v4 state reads them. A case with none reads as v3.
+        if "facts" in row["state"] and open_work.read_facts(row["state"]["facts"]) is None:
+            raise ValueError(f"{where}: state.facts must be {{{', '.join(open_work.FACT_KEYS)}}} (open_work.read_facts)")
         seen.add(row["id"])
         cases.append(row)
     return cases

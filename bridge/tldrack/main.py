@@ -115,6 +115,7 @@ from tldrack.open_work import (
     plugin_caller,
     post_landing,
     rack_grader,
+    turn_facts,
     turn_request,
     verdict_row_fields,
     with_request,
@@ -1573,7 +1574,10 @@ def build_status_handler(
         )
 
     def closing_state(session: str, transcript_path: object, agent_session_id: object) -> str | None:
-        """Re-tail, then the closing message as Laya's state — read at judgement time."""
+        """Re-tail, then the closing message as Laya's state — read at judgement time. The turn's request and
+        facts go with it, and `decide_state` reads each only at a question version that asks for it, so serving
+        a challenger's version is `QUESTION_VERSION` alone. A Codex turn has neither: its v4 state is its v3."""
+        request, facts = None, None
         codex_profile = profiles.profile_for_path(transcript_path, kind="codex", first_on_tie=True) if profiles else None
         if codex_profile:
             closing = read_codex_closing(transcript_path, profiles.describe(codex_profile)["config_dir"], agent_session_id)
@@ -1584,9 +1588,12 @@ def build_status_handler(
             if transcripts.stop_failure(session) is not None:
                 return None
             closing = transcripts.closing_text(session)
+            opening = transcripts.turn_opening(session)
+            request = turn_request(opening) if opening is not None else None
+            facts = turn_facts(transcripts.turn_trace(session))
         else:
             return None
-        return decide_state(closing) if closing else None
+        return decide_state(closing, request, facts=facts) if closing else None
 
     # Laya's turn-end warning (open_work.py owns why). Reaches the
     # mounted laya plugin in process; a bridge without it never queues a thing.

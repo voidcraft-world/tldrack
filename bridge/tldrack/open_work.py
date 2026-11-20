@@ -13,7 +13,8 @@ builds → bump `QUESTION_VERSION` and re-run the golden suite; `tests/test_open
 The coordinator asks a sibling question over one hand-off LINE (`coordinator/laya_rank.py`).
 Plugins cannot import the core, so the two stay separate. The served version judges the closing
 message alone; version 3 (`decide_state`, measured as a challenger) also reads the request that
-opened the turn. Neither certifies that a research decision is settled.
+opened the turn, and version 4 (a challenger too) the turn's runtime facts between the two
+(`fit_facts`). None of them certifies that a research decision is settled.
 
 ── Three bands, two cuts ────────────────────────────────────────────────────
 One p, two cuts: p ≥ the OPEN cut → ⚠️ (work open); p < the DONE cut → ✅ (the work looks done);
@@ -97,6 +98,7 @@ from tldrack.transcript import _is_turn_start, ends_on_question
 #: Bump on ANY wording change to `OPEN_WORK_QUESTION` or to what `decide_state` builds; the golden
 #: report records it. 2: long hand-offs fitted to Laya's window keeping their end (`fit_hand_off`).
 #: 3 (built, not served): the turn's request ahead of the closing (`decide_state`).
+#: 4 (built, not served): the request, then one line of the turn's runtime facts, then the closing.
 QUESTION_VERSION = 2
 
 OPEN_WORK_QUESTION: dict[str, Any] = {
@@ -152,27 +154,37 @@ WARM_POLL_SECONDS = 1.0
 
 
 #: Every question version `decide_state` builds: the served one, and a challenger the lab measures
-#: against it (laya-lab `challenger-state`). 3 puts the turn's request ahead of the closing; it is
-#: served only once it beats 2 on held-out turn ends by more than the interval (lab/README.md
-#: "Question v3").
-STATE_VERSIONS = (2, 3)
+#: against it (laya-lab `question-challenger`). 3 puts the turn's request ahead of the closing, 4
+#: adds the turn's facts between them; each is served only once it beats 2 on held-out turn ends by
+#: more than the interval (lab/README.md "Question v3", "Question v4").
+STATE_VERSIONS = (2, 3, 4)
 
 
-def decide_state(hand_off: str, request: str | None = None, *, version: int = QUESTION_VERSION) -> str:
+def decide_state(
+    hand_off: str,
+    request: str | None = None,
+    *,
+    facts: Mapping[str, object] | None = None,
+    version: int = QUESTION_VERSION,
+) -> str:
     """The state Laya judges — THE one builder, shared with the golden suite and laya-lab's training
-    rows. Every caller passes the turn's request when it has one, so a version change is this one
-    function and `QUESTION_VERSION`.
+    rows. Every caller passes the turn's request and facts when it has them, so a version change is
+    this one function and `QUESTION_VERSION`.
 
     v2: the closing message alone, fitted to Laya's window by `fit_hand_off`. v3: the request that
     opened the turn (its head, `fit_request`), then the closing fitted to what is left, keeping its
     end. A turn nobody typed (a hook, a finished task or a child woke it: `turn_request`) has no
-    request, and its v3 state is its v2 state."""
+    request, and its v3 state is its v2 state. v4: the request, then one `fit_facts` line, then the
+    closing. A turn with no facts (no transcript: `turn_facts`) reads as its v3 state; one with no
+    request, as its facts and then its closing. Every version fits in `STATE_MAX_CHARS`."""
     if version not in STATE_VERSIONS:
         raise ValueError(f"question version {version} has no state builder")
     head = fit_request(request) if version >= 3 and request else ""
-    if not head:
+    line = fit_facts(facts) if version >= 4 else ""
+    parts = ([REQUEST_LABEL + head] if head else []) + ([line] if line else [])
+    if not parts:
         return fit_hand_off(hand_off)
-    prefix = f"{REQUEST_LABEL}{head}{PART_BREAK}{REPLY_LABEL}"
+    prefix = PART_BREAK.join(parts) + PART_BREAK + REPLY_LABEL
     return prefix + fit_hand_off(hand_off, STATE_MAX_CHARS - len(prefix))
 
 
@@ -208,6 +220,73 @@ def fit_hand_off(text: str, max_chars: int = STATE_MAX_CHARS) -> str:
     head = STATE_HEAD_CHARS * max_chars // STATE_MAX_CHARS
     tail = max_chars - head - len(ELISION)
     return text[:head].rstrip() + ELISION + text[-tail:].lstrip()
+
+
+# ── v4: the turn's runtime facts ─────────────────────────────────────────────
+# What the turn DID, from its transcript (transcript.py `fold_turn_trace`), stated as one short line
+# between the request and the closing, so a closing that SAYS it is done is read beside what was
+# actually run. The vocabulary is fixed and small, and each phrase states what happened rather than
+# instructing: the base model reads negated instructions badly (the note on `OPEN_WORK_QUESTION`).
+# Tests and edits always print, because "nothing was run or changed" is exactly the evidence against a
+# claim of done work; a commit and a PR print only when they happened, because "no PR" on every
+# research turn is wallpaper. Unknown stays unknown: a test run whose result said nothing is `tests ran`.
+
+#: The facts a v4 state reads, as `TranscriptTracker.turn_trace` and laya-lab's facts sidecar both carry
+#: them: booleans and one count, never a path or a command. `tests_passed` is None when unknown.
+FACT_KEYS = ("ran_tests", "tests_passed", "edited_files", "made_commit", "opened_pr")
+FACTS_LABEL = "Facts:"
+FACT_BREAK = ", "
+#: The facts line's hard cap, taken out of the closing's budget (`decide_state`). The longest line the
+#: vocabulary makes is about 60 characters; past the cap whole phrases drop from the end.
+FACTS_MAX_CHARS = 80
+
+
+def read_facts(found: object) -> dict[str, Any] | None:
+    """A facts mapping checked at the boundary: every `FACT_KEYS` key with its type, or None. Pure. Other keys (a
+    landing trace's `ended_on_question`) are dropped, so one reader takes a trace, a sidecar row and a golden case."""
+    if not isinstance(found, Mapping):
+        return None
+    if not all(isinstance(found.get(key), bool) for key in ("ran_tests", "made_commit", "opened_pr")):
+        return None
+    count, passed = found.get("edited_files"), found.get("tests_passed")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        return None
+    if not (passed is None or isinstance(passed, bool)) or (passed is not None and not found["ran_tests"]):
+        return None
+    return {key: found[key] for key in FACT_KEYS}
+
+
+def turn_facts(trace: object) -> dict[str, Any] | None:
+    """The facts of a turn's trace (`TranscriptTracker.turn_trace`), or None when there is none (an unbound session,
+    a Codex turn). Pure."""
+    return read_facts(trace)
+
+
+def fact_phrases(facts: Mapping[str, Any]) -> list[str]:
+    """Checked facts in the fixed vocabulary, in reading order (the section note owns the wording)."""
+    if not facts["ran_tests"]:
+        tests = "no tests ran"
+    else:
+        tests = {True: "tests passed", False: "tests failed", None: "tests ran"}[facts["tests_passed"]]
+    count = facts["edited_files"]
+    edits = "no files edited" if count == 0 else "1 file edited" if count == 1 else f"{count} files edited"
+    return [tests, edits] + ["commit made"] * facts["made_commit"] + ["PR opened"] * facts["opened_pr"]
+
+
+def fit_facts(facts: object, max_chars: int = FACTS_MAX_CHARS) -> str:
+    """THE facts line a v4 state carries (`Facts: tests passed, 3 files edited, commit made`), at most `max_chars`
+    (whole phrases drop from the end); "" when `facts` does not read (`read_facts`). Pure: the bridge and laya-lab
+    both build it here."""
+    checked = read_facts(facts)
+    if checked is None:
+        return ""
+    line = ""
+    for phrase in fact_phrases(checked):
+        longer = f"{line}{FACT_BREAK}{phrase}" if line else f"{FACTS_LABEL} {phrase}"
+        if len(longer) > max_chars:
+            break
+        line = longer
+    return line
 
 
 def turn_request(entry: dict) -> str | None:

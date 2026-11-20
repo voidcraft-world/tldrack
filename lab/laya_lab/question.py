@@ -1,14 +1,15 @@
 """`laya-lab question-challenger agent_open_work --version 3`: what a question version alone is worth.
 
     laya-lab question-challenger agent_open_work --version 3 --dry-run   # the rows, and how many carry a request
+    laya-lab question-challenger agent_open_work --version 4 --dry-run   # … and how many carry the turn's facts
     laya-lab question-challenger agent_open_work --version 3             # fine-tune it (never registered)
     laya-lab question-challenger agent_open_work --version 2             # the control: the served rows, refitted
     laya-lab question-challenger agent_open_work --version 3 --like <checkpoint>   # another fit's record, not the served one
 
 One fine-tune that differs from the SERVED one in the state it reads and nothing else: the served checkpoint's own
 training record (its rows, their labels, its train/held-out split), each state rebuilt by `open_work.decide_state` at
-`--version` from the row's text and the request that opened its turn (`open_work_data.read_requests`, written by
-`export-open-work`). The same epochs and seed as `train`. A `--version` equal to the served one is the control: it
+`--version` from the row's text, the request that opened its turn (`open_work_data.read_requests`) and, at version 4,
+that turn's runtime facts (`open_work_data.read_facts`), both written by `export-open-work`. The same epochs and seed as `train`. A `--version` equal to the served one is the control: it
 separates what the new state buys from what a refit alone does.
 
 The result is measured, never served: it is not registered, so nothing asks it until `laya-lab bench --challenger
@@ -17,7 +18,7 @@ The result is measured, never served: it is not registered, so nothing asks it u
 "Question v3").
 
 A row of a record older than its keys (`key` absent) is found by its state: a version-1 state IS its text. A text whose
-turn was never found has no request, and reads as a turn nobody typed one for, as it would be served.
+turn was never found has no request and no facts, and reads as a turn nobody typed one for, as it would be served.
 """
 
 from __future__ import annotations
@@ -59,22 +60,29 @@ def row_key(row: dict[str, Any]) -> str:
 
 
 def rebuild(
-    row: dict[str, Any], texts: dict[str, str], requests: dict[str, str | None], version: int
-) -> tuple[dict[str, Any], bool]:
-    """`(row at version, whether its state carries a request)`. Pure."""
+    row: dict[str, Any],
+    texts: dict[str, str],
+    requests: dict[str, str | None],
+    version: int,
+    facts: dict[str, dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], bool, bool]:
+    """`(row at version, whether its state carries a request, whether it carries the turn's facts)`. Pure."""
     key = row_key(row)
     text = texts.get(key, row["state"])
     request = requests.get(key)
     if request is None:
         request = requests.get(bridge_rows.state_key(text))
-    state = open_work.decide_state(text, request, version=version)
-    asked = state != open_work.decide_state(text, version=version)
-    return {"key": key, "state": state, "questions": {"q": open_work.OPEN_WORK_QUESTION}, "expected": row["expected"]}, asked
+    found = (facts or {}).get(key) or (facts or {}).get(bridge_rows.state_key(text))
+    state = open_work.decide_state(text, request, facts=found, version=version)
+    asked = state != open_work.decide_state(text, facts=found, version=version)
+    told = state != open_work.decide_state(text, request, version=version)
+    row = {"key": key, "state": state, "questions": {"q": open_work.OPEN_WORK_QUESTION}, "expected": row["expected"]}
+    return row, asked, told
 
 
 def rebuild_record(base: Path, version: int, checkpoint: str = "served") -> Rebuilt:
     """The record of `checkpoint` (the served one by default) rebuilt at `version`."""
-    from laya_lab.open_work_data import read_requests, texts
+    from laya_lab.open_work_data import read_facts, read_requests, texts
 
     name, folder = resolve_model(base, SURFACE, checkpoint)
     if folder is None:
@@ -83,15 +91,23 @@ def rebuild_record(base: Path, version: int, checkpoint: str = "served") -> Rebu
     sides = [read_jsonl(record / "train.jsonl"), read_jsonl(record / "eval.jsonl")]
     if not sides[0] or not sides[1]:
         raise SystemExit(f"[laya-lab] {folder.name} has no training record (train.jsonl and eval.jsonl) to rebuild")
-    found, requests = texts(base, SURFACE), read_requests(base)
+    found, requests, facts = texts(base, SURFACE), read_requests(base), read_facts(base)
     out: list[list[dict[str, Any]]] = [[], []]
-    asked = [0, 0]
+    asked, told = [0, 0], [0, 0]
     for side, rows in enumerate(sides):
         for row in rows:
-            rebuilt, has_request = rebuild(row, found, requests, version)
+            rebuilt, has_request, has_facts = rebuild(row, found, requests, version, facts)
             out[side].append(rebuilt)
             asked[side] += has_request
-    stats = {"train": len(out[0]), "eval": len(out[1]), "train_requests": asked[0], "eval_requests": asked[1]}
+            told[side] += has_facts
+    stats = {
+        "train": len(out[0]),
+        "eval": len(out[1]),
+        "train_requests": asked[0],
+        "eval_requests": asked[1],
+        "train_facts": told[0],
+        "eval_facts": told[1],
+    }
     return Rebuilt(folder.name, version, out[0], out[1], stats)
 
 
@@ -124,9 +140,10 @@ def run(base: Path, version: int, *, epochs: int, device: str, dry_run: bool = F
         return REFUSED
     built = rebuild_record(base, version, like)
     s = built.stats
+    told = lambda side: f", {s[side + '_facts']} with facts" if version >= 4 else ""  # noqa: E731
     print(
-        f"[laya-lab] question v{version} like {built.like}: {s['train']} train ({s['train_requests']} with a request) / "
-        f"{s['eval']} held-out ({s['eval_requests']} with a request)"
+        f"[laya-lab] question v{version} like {built.like}: {s['train']} train ({s['train_requests']} with a request"
+        f"{told('train')}) / {s['eval']} held-out ({s['eval_requests']} with a request{told('eval')})"
     )
     if dry_run:
         print("  dry run: nothing trained, nothing written")

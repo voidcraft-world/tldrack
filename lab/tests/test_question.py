@@ -46,7 +46,14 @@ def test_a_rebuilt_record_keeps_every_row_its_label_and_its_side_and_reads_each_
     requests_file(lab, {train[0]: "Ship all three phases.", train[1]: None, held[0]: "Finish the migration."})
 
     built = question.rebuild_record(lab.base, 3)
-    assert built.like == CHECKPOINT and built.stats == {"train": 6, "eval": 2, "train_requests": 1, "eval_requests": 1}
+    assert built.like == CHECKPOINT and built.stats == {
+        "train": 6,
+        "eval": 2,
+        "train_requests": 1,
+        "eval_requests": 1,
+        "train_facts": 0,
+        "eval_facts": 0,
+    }
     assert [row["key"] for row in built.train_rows] == [rows.state_key(text) for text in train]
     assert [row["expected"] for row in built.train_rows] == [{"q": "open" in text} for text in train]
     assert built.train_rows[0]["state"] == open_work.decide_state(train[0], "Ship all three phases.", version=3)
@@ -57,6 +64,69 @@ def test_a_rebuilt_record_keeps_every_row_its_label_and_its_side_and_reads_each_
     control = question.rebuild_record(lab.base, 2)
     assert [row["state"] for row in control.train_rows] == [open_work.decide_state(text) for text in train]
     assert control.stats["train_requests"] == control.stats["eval_requests"] == 0
+
+
+FACTS = {"ran_tests": True, "tests_passed": True, "edited_files": 2, "made_commit": True, "opened_pr": False}
+
+
+def facts_file(lab, facts: dict[str, dict]) -> None:
+    lab.write_jsonl(
+        "data/agent-open-work-facts.jsonl", [{"key": rows.state_key(text), "facts": found} for text, found in facts.items()]
+    )
+
+
+def test_a_v4_rebuild_reads_each_turns_request_and_facts_and_counts_both(lab, capsys):
+    train = synthetic("still-open", 3) + synthetic("all-done", 3)
+    held = synthetic("open-held", 1) + synthetic("done-held", 1)
+    served_record(lab, train, held)
+    requests_file(lab, {train[0]: "Ship all three phases.", held[0]: "Finish the migration."})
+    facts_file(lab, {train[0]: FACTS, train[1]: {**FACTS, "made_commit": False}, held[1]: FACTS, train[2]: {"bad": 1}})
+
+    built = question.rebuild_record(lab.base, 4)
+    assert (built.stats["train_requests"], built.stats["train_facts"]) == (1, 2), "a facts row that does not read is dropped"
+    assert (built.stats["eval_requests"], built.stats["eval_facts"]) == (1, 1)
+    assert built.train_rows[0]["state"] == open_work.decide_state(train[0], "Ship all three phases.", facts=FACTS, version=4)
+    assert built.train_rows[1]["state"].startswith("Facts: tests passed, 2 files edited\n\nReply: ")
+    assert built.train_rows[2]["state"] == train[2], "no request, no facts: the v2 state"
+    assert built.eval_rows[0]["state"] == open_work.decide_state(held[0], "Finish the migration.", version=3)
+
+    assert question.run(lab.base, 4, epochs=2, device="cpu", dry_run=True) == 0
+    out = capsys.readouterr().out
+    assert "6 train (1 with a request, 2 with facts) / 2 held-out (1 with a request, 1 with facts)" in out
+    assert question.rebuild_record(lab.base, 3).stats["train_facts"] == 0, "v3 never reads the facts"
+
+
+def test_the_bench_asks_a_v4_challenger_with_each_cases_facts(lab, public_golden, tmp_path):
+    cases = [json.loads(line) for line in public_golden.read_text().splitlines() if line.startswith("{")]
+    cases[0]["state"]["facts"] = {**FACTS, "ran_tests": False, "tests_passed": None}
+    public_golden.write_text("".join(json.dumps(case) + "\n" for case in cases))
+    train = synthetic("trained-open", 12) + synthetic("trained-done", 12)
+    served_record(lab, train, synthetic("held-open", 2))
+    challenger = lab.checkpoint(f"{CHECKPOINT[:-4]}2000", train_texts=train)
+    question.write_record(challenger.parent / f"{challenger.name}.data", 4, like=CHECKPOINT)
+    router = FakeRouter(lambda state: 0.5)
+
+    assert bench.run(SUITE, lab.base, router=router, out_dir=tmp_path / "out", challengers=[challenger.name]) == 0
+    payload = json.loads(next((tmp_path / "out").glob("*.json")).read_text())
+    assert [voter["name"] for voter in payload["voters"]][-1] == "laya-fine-tune-q4"
+    hand_off = cases[0]["state"]["hand_off"]
+    told = open_work.decide_state(hand_off, cases[0]["state"].get("request"), facts=cases[0]["state"]["facts"], version=4)
+    assert told.startswith("Facts: no tests ran, 2 files edited, commit made")
+    asked = set(router.calls)
+    assert (told, challenger.name) in asked and (hand_off, "tldrack-agent-open-work") in asked
+
+
+def test_a_golden_case_whose_facts_do_not_read_stops_the_suite(tmp_path):
+    from laya_lab.golden import load_cases
+
+    path = tmp_path / "suite.jsonl"
+    case = {"id": "a", "expected": True, "state": {"hand_off": "x", "facts": {"ran_tests": "yes"}}}
+    path.write_text(json.dumps(case) + "\n")
+    with pytest.raises(ValueError, match="state.facts"):
+        load_cases(path)
+    case["state"]["facts"] = FACTS
+    path.write_text(json.dumps(case) + "\n")
+    assert load_cases(path)[0]["state"]["facts"] == FACTS
 
 
 def test_a_version_with_no_builder_is_refused_before_anything_is_read(lab, capsys):

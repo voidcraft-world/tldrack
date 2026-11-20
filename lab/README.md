@@ -242,6 +242,47 @@ request carries signal, and coverage is what holds it under the bar. Only a mino
 training and held-out rows carry a request: a turn opened by a finished task carries none. `QUESTION_VERSION` stays 2. Re-measure on a record whose turns are newer
 (`question-challenger --like <checkpoint>`), where more of them carry their request.
 
+## Question v4: the request, the turn's facts, then the closing
+
+A closing that SAYS it is done reads as done to v2 and v3 alike. Version 4 (`open_work.decide_state(..., facts=…,
+version=4)`) puts one line of what the turn actually did between the request and the closing:
+`Facts: tests passed, 3 files edited, commit made`. The vocabulary is fixed (`open_work.fact_phrases`; the note above
+`FACT_KEYS` owns its wording), the line is capped at `FACTS_MAX_CHARS` out of the closing's budget, and a v4 state is
+never longer than `STATE_MAX_CHARS`. A turn with no facts (no transcript to read) reads as v3; one with no request, as
+its facts and then its closing.
+
+The facts come from the trace the bridge already folds for the landing record (`transcript.fold_turn_trace`), which
+now also reads whether the LAST test run passed (its own tool result: `read_test_result`, unknown when the output
+says neither) and whether a `git commit` came back clean. `export-open-work` writes them to
+`data/agent-open-work-facts.jsonl`, keyed like the requests, booleans and one count only (`open_work_data.read_facts`).
+A golden case may carry a `state.facts` object; a case with none reads as v3. The bridge threads the request and the
+facts to `decide_state` already, and v2 reads neither (`bridge/tests/test_open_work.py` pins that byte for byte).
+Serving v3 or v4 would also need the ledger's link (`ledger/laya_links.py`), which matches a stored state against the
+v2 one.
+
+```bash
+uv run laya-lab export-open-work --limit 0 --root <archive>     # requests and facts for the texts already exported
+uv run laya-lab question-challenger agent_open_work --version 4 --dry-run   # how many rows carry facts
+uv run laya-lab question-challenger agent_open_work --version 4
+uv run laya-lab question-challenger agent_open_work --version 2 # the control
+uv run laya-lab bench --labels merged --challenger <v4 checkpoint> --challenger <v2 checkpoint>
+```
+
+The rule is v3's. One caveat bounds what v4 can learn today: most training labels came from a teacher that read the
+closing ALONE, so a label never disagrees with a closing because of what was run. Facts can only teach through
+operator-graded rows until rows are relabelled with the facts in view.
+
+**Measured 2026-11-19: a no, by the rule** (`bench/results/2026-11-19.json`, `laya-fine-tune-q4`). Held-out ΔAUC
+against the served model −0.002 [−0.035, +0.032], accuracy 0.771 → 0.741; golden ΔAUC +0.011 [−0.029, +0.052],
+accuracy 0.770 → 0.765. The refit control (`laya-fine-tune-q2`) is −0.010 [−0.035, +0.012] held out and −0.042
+[−0.067, −0.018] on golden (accuracy 0.710). AUC, v4 against the control: 0.828 against 0.821 held out, 0.868 against
+0.816 on golden (no golden case carries facts yet, so there v4 reads as v3). Facts reached 289 of the 516 training
+rows and 46 of the 84 record held-out rows (requests: 118 and 22); on the bench, 133 of the 170 held-out rows carry
+facts and 68 a request. The texts with facts are 2,854 of 3,609. Of the 116 operator-graded texts, 35 carry facts, and
+none of the 516 training rows is operator-graded, so no training label could depend on them (24 of the 84
+record held-out rows are, 14 with facts).
+`QUESTION_VERSION` stays 2. Re-measure once rows are relabelled with their facts in view.
+
 ## Tests
 
 `cd lab && uv run pytest -q` (a few seconds). Every tree is synthetic, every text invented, and the suite

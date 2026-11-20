@@ -171,7 +171,7 @@ def test_a_v3_state_reads_the_request_then_the_closing_and_a_turn_nobody_asked_f
     assert open_work.decide_state(hand_off, None, version=3) == open_work.decide_state(hand_off)
     assert open_work.decide_state(hand_off, " \n ", version=3) == open_work.decide_state(hand_off)
     with pytest.raises(ValueError):
-        open_work.decide_state(hand_off, request, version=4)
+        open_work.decide_state(hand_off, request, version=5)
 
 
 def test_a_v3_state_keeps_the_requests_head_and_the_closings_end_inside_the_same_budget():
@@ -183,6 +183,94 @@ def test_a_v3_state_keeps_the_requests_head_and_the_closings_end_inside_the_same
     head = state.split(open_work.PART_BREAK)[0]
     assert len(head) - len(open_work.REQUEST_LABEL) == open_work.REQUEST_MAX_CHARS and head.endswith("…")
     assert state.endswith("Phase C is not started yet.") and open_work.ELISION in state
+
+
+# ── question v4: the request, the turn's facts, then the closing ─────────────
+
+FACTS = {"ran_tests": True, "tests_passed": True, "edited_files": 3, "made_commit": True, "opened_pr": False}
+
+
+def test_a_v4_state_reads_the_request_then_the_facts_then_the_closing():
+    hand_off = "Renamed the flag and migrated the callers. Tests pass."
+    request = "Rename the flag and migrate the callers."
+    assert open_work.decide_state(hand_off, request, facts=FACTS, version=4) == (
+        f"Request: {request}\n\nFacts: tests passed, 3 files edited, commit made\n\nReply: {hand_off}"
+    )
+
+
+def test_the_served_version_ignores_the_facts_byte_for_byte():
+    """Served behaviour at version 2 must not move by one byte: the bridge now passes request and facts."""
+    for hand_off in ("All done, tests pass.", "Opening line. " + "middle filler " * 300 + "Phase C is not started yet."):
+        served = open_work.decide_state(hand_off)
+        assert open_work.decide_state(hand_off, "Ship it.", facts=FACTS) == served
+        assert open_work.decide_state(hand_off, "Ship it.", facts=FACTS, version=2) == served
+        assert open_work.decide_state(hand_off, "Ship it.", facts=FACTS, version=3) == open_work.decide_state(
+            hand_off, "Ship it.", version=3
+        ), "v3 never reads the facts"
+
+
+def test_a_v4_state_with_no_facts_is_its_v3_state_and_with_no_request_its_facts_then_the_closing():
+    hand_off, request = "All done.", "Do it."
+    for missing in (None, {}, {"ran_tests": "yes"}, {**FACTS, "edited_files": -1}, {**FACTS, "tests_passed": "ok"}):
+        assert open_work.decide_state(hand_off, request, facts=missing, version=4) == open_work.decide_state(
+            hand_off, request, version=3
+        )
+    assert open_work.decide_state(hand_off, None, facts=FACTS, version=4) == (
+        "Facts: tests passed, 3 files edited, commit made\n\nReply: All done."
+    )
+    assert open_work.decide_state(hand_off, None, facts=None, version=4) == hand_off
+
+
+@pytest.mark.parametrize(
+    "facts, line",
+    [
+        (
+            {**FACTS, "ran_tests": False, "tests_passed": None, "edited_files": 0, "made_commit": False},
+            "Facts: no tests ran, no files edited",
+        ),
+        ({**FACTS, "tests_passed": None, "edited_files": 1}, "Facts: tests ran, 1 file edited, commit made"),
+        (
+            {**FACTS, "tests_passed": False, "made_commit": False, "opened_pr": True},
+            "Facts: tests failed, 3 files edited, PR opened",
+        ),
+        ({**FACTS, "opened_pr": True, "ended_on_question": True}, "Facts: tests passed, 3 files edited, commit made, PR opened"),
+    ],
+)
+def test_the_facts_line_is_a_fixed_vocabulary(facts, line):
+    assert open_work.fit_facts(facts) == line
+
+
+def test_the_facts_line_has_a_hard_cap_and_drops_whole_phrases():
+    longest = {"ran_tests": True, "tests_passed": False, "edited_files": 256, "made_commit": True, "opened_pr": True}
+    assert len(open_work.fit_facts(longest)) <= open_work.FACTS_MAX_CHARS, "the vocabulary fits its own cap"
+    assert open_work.fit_facts(longest, 40) == "Facts: tests failed, 256 files edited"
+    assert open_work.fit_facts(longest, 10) == ""
+    assert open_work.fit_facts({**longest, "ran_tests": False}) == "", "a result without a run does not read"
+
+
+def test_a_v4_state_is_never_longer_than_the_budget():
+    request = "Ship the export in three phases. " + "Context pasted below.\n" * 100
+    hand_off = "Opening line. " + "middle filler " * 300 + "Phase C is not started yet."
+    longest = {"ran_tests": True, "tests_passed": False, "edited_files": 256, "made_commit": True, "opened_pr": True}
+    state = open_work.decide_state(hand_off, request, facts=longest, version=4)
+    assert len(state) <= open_work.STATE_MAX_CHARS
+    request_part, facts_part, reply = state.split(open_work.PART_BREAK, 2)
+    assert request_part.startswith("Request: Ship the export") and facts_part == open_work.fit_facts(longest)
+    assert reply.startswith("Reply: ") and state.endswith("Phase C is not started yet.")
+
+
+def test_turn_facts_reads_a_landing_trace_and_nothing_else():
+    trace = {"ran_tests": True, "edited_files": 2, "opened_pr": False, "ended_on_question": False}
+    assert open_work.turn_facts(trace) is None, "a trace from before the two facts does not read"
+    trace.update(tests_passed=None, made_commit=False)
+    assert open_work.turn_facts(trace) == {
+        "ran_tests": True,
+        "tests_passed": None,
+        "edited_files": 2,
+        "made_commit": False,
+        "opened_pr": False,
+    }
+    assert open_work.turn_facts(None) is None
 
 
 def test_fit_hand_off_at_the_whole_budget_is_unchanged_by_the_budget_parameter():
@@ -967,6 +1055,51 @@ def test_the_snapshot_row_carries_the_verdict_the_status_row_has(bridge, text, o
     snapshot = object.__new__(bridge.cls).snapshot_payload()
     row = next(item for item in snapshot["sessions"] if item["session"] == "vc-1")
     assert {key: row[key] for key in VERDICT_ROW_KEYS} == {key: status[key] for key in VERDICT_ROW_KEYS}
+
+
+def _worked_turn(bridge):
+    """A turn that ran passing tests and committed, then said so."""
+    ask(bridge, "Fix the flaky test and commit.")
+    entries = [
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m1",
+                "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "pytest -q"}}],
+            },
+        },
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "4 passed"}]}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m2",
+                "content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "git commit -am fix"}}],
+            },
+        },
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t2", "content": "[x 1a2b] fix"}]}},
+    ]
+    with bridge.claude_root.joinpath("projects", "-repo", f"{CONVERSATION}.jsonl").open("a") as handle:
+        handle.write("".join(json.dumps(entry) + "\n" for entry in entries))
+    end_turn(bridge, "Fixed and committed.", "m3")
+
+
+def test_a_stop_at_the_served_version_judges_the_closing_alone_whatever_the_turn_did(bridge):
+    _worked_turn(bridge)
+    bridge.wait_for(False)
+    assert bridge.laya.decides[-1]["state"] == "Fixed and committed."
+
+
+def test_a_stop_at_version_4_judges_the_request_the_facts_and_the_closing(bridge, monkeypatch):
+    """Serving v4 is `QUESTION_VERSION` alone: the bridge already threads the request and the trace."""
+    from tldrack import main as bridge_main
+
+    monkeypatch.setattr(bridge_main, "decide_state", lambda *a, **k: open_work.decide_state(*a, **{**k, "version": 4}))
+    _worked_turn(bridge)
+    bridge.wait_for(False)
+    assert bridge.laya.decides[-1]["state"] == (
+        "Request: Fix the flaky test and commit.\n\nFacts: tests passed, no files edited, commit made\n\n"
+        "Reply: Fixed and committed."
+    )
 
 
 def test_a_clean_stop_has_no_warning_and_dismiss_clears_a_warning(bridge):

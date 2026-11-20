@@ -22,8 +22,10 @@ agents come from here and shells from the process tree: owned by
 agent_index.py — see BACKGROUND WORK there.
 
 And the TURN'S TRACE (`fold_turn_trace`): whether the turn that just ended ran
-tests, edited files or opened a PR. Counts and booleans, logged beside each
-verdict by the landing record and never fed to Laya.
+tests (and whether the last run passed), edited files, made a commit or opened a
+PR. Counts and booleans, logged beside each verdict by the landing record; the
+served question never reads them, a question-v4 challenger does (open_work.py
+`turn_facts`).
 
 And it keeps the main thread's CLOSING TEXT — the text of the newest assistant
 message — which open_work.py judges at each turn end. In memory only: it is
@@ -293,13 +295,61 @@ TEST_COMMAND_RE = re.compile(
     r"|\bplaywright\s+test\b|\bgradlew\b[^\n|;&]*\btest"
 )
 PR_COMMAND_RE = re.compile(r"\b(?:gh\s+pr\s+create|glab\s+mr\s+create)\b")
+#: A commit: `git commit`, with any `-C <dir>` / `-c <k=v>` between (`git -C repo commit -m …`). Bounded
+#: like the two above, so `git commit-tree`, `git log --grep commit` or a message naming a commit do not count.
+COMMIT_COMMAND_RE = re.compile(r"\bgit(?:\s+-[Cc]\s+\S+)*\s+commit(?![\w-])")
 EDIT_TOOLS = frozenset({"Edit", "MultiEdit", "Write", "NotebookEdit"})
 #: Distinct paths a turn's trace remembers; past it the count stops growing (a bound, not a reading).
 TRACE_EDITS_MAX = 256
 
+# What a test run's result said. The LAST test run decides, read off its own tool result. A runner's
+# summary sits at the end of its output, so only the tail is read. A failure word with a non-zero count
+# beats a pass word (`5 passed, 1 failed`); an errored call that RAN (non-zero exit, not a rejection) is a
+# failure too. Output with neither, or a call that never ran (rejected; still running in the background),
+# stays UNKNOWN: a guess here would teach a challenger a fact the turn never showed.
+
+#: How much of a test call's output is read: its end, where every runner prints its summary.
+TEST_RESULT_TAIL_CHARS = 4000
+TEST_FAILED_RE = re.compile(
+    r"\b[1-9]\d*\s+(?:failed|failing|failures?|errors?)\b"  # pytest, vitest, jest, mocha
+    r"|^#\s*fail\s+[1-9]"  # node --test (TAP)
+    r"|\bFAILED\b|^FAIL\b"  # pytest, jest, go, cargo (`test result: FAILED`)
+    r"|^BUILD FAILED\b",  # gradle
+    re.MULTILINE,
+)
+TEST_PASSED_RE = re.compile(
+    r"\b[1-9]\d*\s+(?:passed|passing)\b"  # pytest, vitest, jest, mocha
+    r"|^#\s*pass\s+[1-9]"  # node --test (TAP)
+    r"|\btest result: ok\b|^ok\s+\S|^PASS\b"  # cargo, go, jest
+    r"|^BUILD SUCCESSFUL\b",  # gradle
+    re.MULTILINE,
+)
+#: Tool calls a trace waits on for a result (a test run, a commit); past it the oldest is forgotten.
+TRACE_PENDING_MAX = 16
+
 
 def _fresh_trace() -> dict:
-    return {"tests": False, "edits": frozenset(), "pr": False}
+    return {"tests": False, "edits": frozenset(), "pr": False, "tests_passed": None, "commit": False, "pending": {}}
+
+
+def _result_text(block: dict) -> str:
+    """A tool_result block's text: a string, or the text of its text blocks."""
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b["text"] for b in content if isinstance(b, dict) and isinstance(b.get("text"), str))
+    return ""
+
+
+def read_test_result(text: str, *, errored: bool) -> bool | None:
+    """Did a test run pass (True), fail (False), or not say (None)? Pure; the note above owns the rule."""
+    if REJECT_MARKER in text:
+        return None  # rejected: the run never happened
+    tail = text[-TEST_RESULT_TAIL_CHARS:]
+    if errored or TEST_FAILED_RE.search(tail):
+        return False
+    return True if TEST_PASSED_RE.search(tail) else None
 
 
 def _is_turn_start(entry: dict) -> bool:
@@ -328,28 +378,46 @@ def fold_turn_opening(prior: dict | None, entries: Iterable[dict]) -> dict | Non
 
 
 def fold_turn_trace(prior: dict | None, entries: Iterable[dict]) -> dict:
-    """`{tests, edits, pr}` of the CURRENT turn after these entries. Pure; returns a new dict.
+    """`{tests, edits, pr, tests_passed, commit, pending}` of the CURRENT turn after these entries. Pure;
+    returns a new dict.
 
     A main-thread prompt (`_is_turn_start`) starts a fresh trace. `tests`: a Bash call ran a test
     runner (`TEST_COMMAND_RE`); `edits`: the distinct paths an Edit/MultiEdit/Write/NotebookEdit
     named (in memory only — the record keeps the count); `pr`: a Bash call opened a pull request.
+    `tests_passed`: what the LAST test call's result said (`read_test_result`; None until it lands, and
+    when it never says); `commit`: a `git commit` call whose result came back without an error.
+    `pending` pairs those calls with their results across reads (tool_use id → `test` | `commit`).
     Sidechain (subagent) entries never speak for the main thread."""
-    trace = dict(prior) if prior else _fresh_trace()
+    trace = {**_fresh_trace(), **prior} if prior else _fresh_trace()
+    trace["pending"] = dict(trace["pending"])
     for entry in entries:
         if _is_turn_start(entry):
             trace = _fresh_trace()
             continue
         message = entry.get("message")
-        if entry.get("type") != "assistant" or entry.get("isSidechain") or not isinstance(message, dict):
+        if entry.get("isSidechain") or not isinstance(message, dict):
             continue
-        for block in message.get("content") if isinstance(message.get("content"), list) else ():
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else []
+        if entry.get("type") == "user":
+            for block in blocks:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    _fold_result(trace, block)
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        for block in blocks:
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
             name, tool_input = block.get("name"), block.get("input")
             tool_input = tool_input if isinstance(tool_input, dict) else {}
             if name == "Bash" and isinstance(tool_input.get("command"), str):
                 command = tool_input["command"]
-                trace["tests"] = trace["tests"] or TEST_COMMAND_RE.search(command) is not None
+                if TEST_COMMAND_RE.search(command) is not None:
+                    trace["tests"], trace["tests_passed"] = True, None
+                    _await(trace, block.get("id"), "test")
+                if COMMIT_COMMAND_RE.search(command) is not None:
+                    _await(trace, block.get("id"), "commit")
                 trace["pr"] = trace["pr"] or PR_COMMAND_RE.search(command) is not None
             elif name in EDIT_TOOLS:
                 path = tool_input.get("file_path") or tool_input.get("notebook_path")
@@ -358,8 +426,48 @@ def fold_turn_trace(prior: dict | None, entries: Iterable[dict]) -> dict:
     return trace
 
 
+def _await(trace: dict, call_id: object, kind: str) -> None:
+    """Wait on one call's result. A newer test call replaces an older one still waiting: the LAST run decides.
+    A call that is both (`pytest && git commit`) waits as a test: its one result cannot tell the two apart."""
+    if not isinstance(call_id, str):
+        return
+    pending = trace["pending"]
+    if kind == "test":
+        for old in [key for key, value in pending.items() if value == "test"]:
+            del pending[old]
+    pending.setdefault(call_id, kind)
+    while len(pending) > TRACE_PENDING_MAX:
+        del pending[next(iter(pending))]
+
+
+def _fold_result(trace: dict, block: dict) -> None:
+    """One tool result against the call it answers, when the trace waits on that call."""
+    kind = trace["pending"].pop(block.get("tool_use_id"), None)
+    if kind is None:
+        return
+    errored = bool(block.get("is_error"))
+    if kind == "test":
+        trace["tests_passed"] = read_test_result(_result_text(block), errored=errored)
+    elif not errored:
+        trace["commit"] = True
+
+
 #: A closing line's trailing decoration, peeled before the `?` test (`**Ship it?**`, `(y/n)?`).
 _TRAILING_MARKUP = " \t*_`)\"'»”’"
+
+
+def trace_reading(trace: dict | None, closing: str | None) -> dict:
+    """A folded trace as its readers take it (`TranscriptTracker.turn_trace`): counts and booleans, no path. Pure;
+    laya-lab's export reads a turn the same way."""
+    trace = {**_fresh_trace(), **(trace or {})}
+    return {
+        "ran_tests": trace["tests"],
+        "edited_files": len(trace["edits"]),
+        "opened_pr": trace["pr"],
+        "ended_on_question": ends_on_question(closing),
+        "tests_passed": trace["tests_passed"],
+        "made_commit": trace["commit"],
+    }
 
 
 def ends_on_question(text: str | None) -> bool:
@@ -617,19 +725,15 @@ class TranscriptTracker:
 
     def turn_trace(self, session: str) -> dict | None:
         """The ended turn's trace as the landing record logs it — `ran_tests`,
-        `edited_files` (a count), `opened_pr`, `ended_on_question` — or None for
-        an unbound session. Counts and booleans only: no path or text leaves."""
+        `edited_files` (a count), `opened_pr`, `ended_on_question` — and the two
+        facts only a question-v4 state reads, `tests_passed` (bool | None) and
+        `made_commit`; or None for an unbound session. Counts and booleans only:
+        no path or text leaves."""
         with self._lock:
             entry = self._state.get(session)
             if not entry:
                 return None
-            trace = entry.get("trace") or _fresh_trace()
-            return {
-                "ran_tests": trace["tests"],
-                "edited_files": len(trace["edits"]),
-                "opened_pr": trace["pr"],
-                "ended_on_question": ends_on_question(entry["closing"][1]),
-            }
+            return trace_reading(entry.get("trace"), entry["closing"][1])
 
     def turn_opening(self, session: str) -> dict | None:
         """The transcript entry that opened the session's current turn (`fold_turn_opening`), as of
