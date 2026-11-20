@@ -5,6 +5,7 @@
     laya-lab bench --dry-run                          # the plan (voters, sets, n); loads nothing, writes nothing
     laya-lab bench --challenger <checkpoint>          # also an unregistered fine-tune, at its own question version
     laya-lab bench --panel served --panel base        # also the panel: many questions of a turn, one fitted line
+    laya-lab bench --panel served/3q                  # also three questions and no line: the most confident answers
 
 Two sets. `golden`: the public cases checked in under `lab/golden/`, always. `heldout`: the operator's labelled turn
 ends the served fine-tune never trained on (`compare.heldout_rows`), only when the store holds some.
@@ -22,9 +23,11 @@ Voters, each under a public name:
   it. The protocol stays the served version's; its description names each challenger and its version. No mean. A
   checkpoint `train` made (a retrain on the labels since, its record says `retrain`), or a rebuild of one, is
   `laya-retrain-q<version>`.
-- each `--panel <served | base>`: `laya-panel` (the served model answers every question) or `laya-panel-base` (the base
-  model answers the new ones). It answers a set at a time, because it is fitted out of fold on the held-out rows:
-  owned by `panel.py` — see the note there. No mean.
+- each `--panel <served | base>[/<shape>]`: `laya-panel` (the served model answers every question) or `laya-panel-base`
+  (the base model answers the new ones). The shape is `line` when left out: every question and one fitted line, which
+  answers a set at a time because it is fitted out of fold on the held-out rows. `3q` and `3q-mean` are three questions
+  and no line (`laya-panel-3q`, `laya-panel-3q-mean`, each with its `-base`), which need no held-out rows. Owned by
+  `panel.py` — see the note there. No mean.
 A voter that cannot run is SKIPPED with a one-line reason, in the run's output; it never fails the run.
 
 THE FILE is `bench/results/<YYYY-MM-DD>.json` in this checkout, one per day (a second run that day replaces it). Its
@@ -151,6 +154,8 @@ class BenchVoter:
     timed: Any = None
     #: A voter that answers every set at once, labels in hand, in `open`'s place (a panel: `panel.py` owns why).
     whole: Callable[[Mapping[str, Sequence[Row]]], dict[str, Answers]] | None = None
+    #: A panel's shape (`PANEL_SHAPES`).
+    shape: str | None = None
 
 
 @dataclass
@@ -323,10 +328,33 @@ def plan_challengers(
     return voters
 
 
-#: `--panel <who answers the new questions>` → the voter's public name and label.
-PANEL_NAMES = {"served": panel_voter.NAME, "base": f"{panel_voter.NAME}-base"}
-#: Short on purpose: the evals legend keeps a name on one line, and a longer one pushes its numbers out of a figure.
-PANEL_LABELS = {"served": "LAYA · PANEL", "base": "LAYA · PANEL · BASE"}
+#: `--panel <who>[/<shape>]`. Who answers the new questions; and the shape, a key of `PANEL_SHAPES`: the fitted line
+#: over every question (None), or the three questions under one of `panel.RULES`.
+PANEL_WHO = ("served", "base")
+LINE = "line"
+PANEL_SHAPES: dict[str, str | None] = {LINE: None, "3q": "confident", "3q-mean": "mean"}
+
+
+def parse_panel(spec: str) -> tuple[str, str]:
+    """`<who>[/<shape>]` → `(who, shape)`. Raises `compare.Refused` on anything else."""
+    who, _sep, shape = spec.partition("/")
+    shape = shape or LINE
+    if who not in PANEL_WHO or shape not in PANEL_SHAPES:
+        raise compare.Refused(f"--panel {spec!r}: <{' | '.join(PANEL_WHO)}>[/<{' | '.join(PANEL_SHAPES)}>]")
+    return who, shape
+
+
+def panel_name(who: str, shape: str) -> str:
+    """A panel's public name: `laya-panel[-<shape>][-base]`."""
+    return panel_voter.NAME + ("" if shape == LINE else f"-{shape}") + ("" if who == "served" else "-base")
+
+
+def panel_label(who: str, shape: str) -> str:
+    """A panel's label says how many questions it asks, so a legend needs no key. Short on purpose: the evals legend
+    keeps a name on one line, and a longer one pushes its numbers out of a figure."""
+    asked = len(panel_voter.ASKS if shape == LINE else panel_voter.THREE)
+    tail = [part for part, said in (("MEAN", PANEL_SHAPES[shape] == "mean"), ("BASE", who == "base")) if said]
+    return " · ".join(["LAYA", f"{asked} Q" if tail else f"{asked} QUESTIONS", *tail])
 
 
 def ask_panel(
@@ -358,28 +386,50 @@ def ask_panel(
     return whole
 
 
+def ask_three(
+    asker: panel_voter.Asker, suite: Suite, name: str, served: str, others: str, rule: str
+) -> Callable[[Mapping[str, Sequence[Row]]], dict[str, Answers]]:
+    """A three-question panel's `whole`: every set's closing states to `panel.answer_three`. Nothing is fitted, so it
+    refuses no set; the labels are read only to print what each of the three votes was worth alone."""
+
+    def whole(sets: Mapping[str, Sequence[Row]]) -> dict[str, Answers]:
+        closings = {set_name: [state for _id, state, _expected in data] for set_name, data in sets.items()}
+        found = panel_voter.answer_three(asker, suite.question, closings, served, others, rule)
+        for set_name, (_ps, _ms, votes) in found.items():
+            print(f"[laya-lab] bench: {name} votes on the {set_name} set")
+            for line_text in panel_voter.vote_lines(votes, [expected for _id, _state, expected in sets[set_name]]):
+                print(line_text)
+        return {set_name: Answers(ps, ms) for set_name, (ps, ms, _votes) in found.items()}
+
+    return whole
+
+
 def plan_panels(suite: Suite, panels: Sequence[str], device: str, shared: SharedRouter, champion: str, plan: Plan) -> None:
     """Each `--panel` as a voter (`panel.py` owns what one is). `served`: the served model answers every question.
     `base`: the base model answers the new ones, which is the same panel when no fine-tune is served."""
     asker = panel_voter.Asker(shared.get)
-    for asked in dict.fromkeys(panels):
-        if asked not in PANEL_NAMES:
-            raise compare.Refused(f"--panel {asked!r}: one of {', '.join(PANEL_NAMES)}")
-        name = PANEL_NAMES[asked]
-        if asked == "base" and champion == "english":
-            plan.skipped[name] = f"no fine-tune is served, so it is {PANEL_NAMES['served']}"
+    for who, shape in dict.fromkeys(parse_panel(spec) for spec in panels):
+        name = panel_name(who, shape)
+        if who == "base" and champion == "english":
+            plan.skipped[name] = f"no fine-tune is served, so it is {panel_name('served', shape)}"
             continue
-        others = champion if asked == "served" else "english"
+        others = champion if who == "served" else "english"
+        rule = PANEL_SHAPES[shape]
         plan.voters.append(
             BenchVoter(
                 name,
-                PANEL_LABELS[asked],
+                panel_label(who, shape),
                 "panel",
                 device,
                 of=BASE if champion == "english" else FINE_TUNE,
                 params_m=LAYA_PARAMS_M,
                 licence=LAYA_LICENCE if champion == "english" else None,
-                whole=ask_panel(asker, suite, name, champion, others),
+                whole=(
+                    ask_panel(asker, suite, name, champion, others)
+                    if rule is None
+                    else ask_three(asker, suite, name, champion, others, rule)
+                ),
+                shape=shape,
             )
         )
 
@@ -925,13 +975,23 @@ def protocol_entry(
         described += (
             f"; retrained on every label since, with its own split, each retrain is asked of the same rows: {asked(retrains)}"
         )
-    if panels:
+    lines = [voter for voter in panels if voter.shape == LINE]
+    #: Each three-question panel with its rule; a `whole` voter of no shape is described by neither.
+    threes = [(voter, rule) for voter in panels if (rule := PANEL_SHAPES.get(voter.shape or "")) is not None]
+    if lines:
         asked_n, signal_n = len(panel_voter.ASKS), len(panel_voter.SIGNALS)
         described += (
-            f"; a panel ({', '.join(voter.name for voter in panels)}) asks {asked_n} questions of each turn (its request, "
+            f"; a panel ({', '.join(voter.name for voter in lines)}) asks {asked_n} questions of each turn (its request, "
             f"its closing, and every window of the whole closing) and fits one logistic line over the answers and "
             f"{signal_n} signals read off its text and its facts, out of fold on the held-out rows, the golden cases scored "
             f"by the fit on all of them"
+        )
+    if threes:
+        rules = {"confident": "the most confident of the three answers", "mean": "their equal-weight mean"}
+        described += (
+            f"; a three-question panel asks {len(panel_voter.THREE)} questions of each closing (the served one, whether it "
+            f"asks the reader to decide or approve, whether it says the work was finished and checked) and fits nothing: "
+            + ", ".join(f"{voter.name} answers with {rules[rule]}" for voter, rule in threes)
         )
     return {
         "id": protocol_id(suite, sets),

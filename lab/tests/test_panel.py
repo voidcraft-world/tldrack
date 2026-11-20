@@ -226,6 +226,84 @@ def test_the_set_it_is_fitted_on_is_scored_out_of_fold_and_the_others_by_the_who
         panel.answer_sets(panel.Asker(lambda: router), QUESTION, {"golden": other}, "m", "m")
 
 
+# ── three questions, no line ──────────────────────────────────────────────────
+
+
+class ByAsk:
+    """A router that answers each question by its wording: `said` maps a fragment of the instructions to a p."""
+
+    def __init__(self, said: dict[str, float]) -> None:
+        self.said = said
+        self.calls: list[tuple[str, str]] = []
+
+    def predict(self, state, questions: dict, model: str | None = None) -> dict:
+        (question,) = questions.values()
+        self.calls.append((model or "", question["instructions"]))
+        p = next(p for fragment, p in self.said.items() if fragment in question["instructions"])
+        return {"answers": {name: {"noul": p} for name in questions}}
+
+
+SERVED_WORDS, DECIDE_WORDS, FINISHED_WORDS = "still not done", "decide or approve", "finished and checked"
+
+
+def three(said: dict[str, float], rule: str, router: ByAsk | None = None) -> tuple[float, list[float]]:
+    router = router or ByAsk(said)
+    found = panel.answer_three(panel.Asker(lambda: router), QUESTION, {"a": ["all done"]}, "fine-tune", "english", rule)
+    ps, ms, votes = found["a"]
+    assert len(ps) == len(ms) == len(votes) == 1
+    return ps[0], votes[0]
+
+
+def test_the_three_are_asks_of_the_panel_and_the_served_question_is_the_first():
+    assert len(panel.THREE) == 3 and panel.THREE[0] == panel.Vote(panel.SERVED, opens=True, both=True)
+    assert all(vote.ask in panel.BY_NAME and panel.BY_NAME[vote.ask].part == panel.CLOSING for vote in panel.THREE)
+    assert len({vote.ask for vote in panel.THREE}) == 3
+    assert {vote.opens for vote in panel.THREE} == {True, False}  # a voice for open and a voice for done
+
+
+def test_a_no_to_a_one_sided_question_cannot_tell():
+    served, decide, finished = panel.THREE
+    assert (panel.cast(served, 0.9), panel.cast(served, 0.1)) == (0.9, 0.1)
+    assert (panel.cast(decide, 0.9), panel.cast(decide, 0.02)) == (0.9, 0.5)
+    assert panel.cast(finished, 0.9) == pytest.approx(0.1) and panel.cast(finished, 0.02) == 0.5
+
+
+def test_the_most_confident_of_the_three_answers():
+    # The closing asks for a decision, loudly: that vote answers over a mild served "done".
+    p, votes = three({SERVED_WORDS: 0.35, DECIDE_WORDS: 0.97, FINISHED_WORDS: 0.6}, "confident")
+    assert votes == pytest.approx([0.35, 0.97, 0.4]) and p == pytest.approx(0.97)
+    # It says finished and checked, loudly: done, over a mild served "open".
+    p, _votes = three({SERVED_WORDS: 0.6, DECIDE_WORDS: 0.1, FINISHED_WORDS: 0.98}, "confident")
+    assert p == pytest.approx(0.02)
+    # Neither of the two says yes: the served question answers alone, however sure their no was.
+    p, votes = three({SERVED_WORDS: 0.55, DECIDE_WORDS: 0.01, FINISHED_WORDS: 0.01}, "confident")
+    assert votes == [0.55, 0.5, 0.5] and p == 0.55
+    assert panel.most_confident([0.3, 0.7, 0.5]) == 0.3  # between equals the first: the served question
+
+
+def test_the_mean_weighs_the_three_alike_and_a_cannot_tell_counts_as_nothing():
+    p, _votes = three({SERVED_WORDS: 0.8, DECIDE_WORDS: 0.1, FINISHED_WORDS: 0.1}, "mean")
+    assert p == pytest.approx(panel.equal_mean([0.8, 0.5, 0.5])) and 0.5 < p < 0.8
+    assert panel.equal_mean([0.9, 0.1, 0.5]) == pytest.approx(0.5)
+    assert panel.equal_mean([0.8, 0.8, 0.8]) == pytest.approx(0.8)
+
+
+def test_the_served_model_answers_the_served_question_and_the_others_the_other_two():
+    router = ByAsk({SERVED_WORDS: 0.5, DECIDE_WORDS: 0.5, FINISHED_WORDS: 0.5})
+    three({}, "confident", router)
+    asked_by = {instructions: model for model, instructions in router.calls}
+    assert asked_by.pop(QUESTION["instructions"]) == "fine-tune"
+    assert len(asked_by) == 2 and set(asked_by.values()) == {"english"}
+
+
+def test_the_vote_lines_say_what_each_vote_was_worth_alone():
+    votes = [[0.9, 0.5, 0.5], [0.8, 0.95, 0.5], [0.2, 0.5, 0.03], [0.1, 0.5, 0.5]]
+    served, decide, finished = panel.vote_lines(votes, [True, True, False, False])
+    assert served.split()[0] == panel.SERVED and "alone AUC 1.000 · most confident on 50%" in served
+    assert "most confident on 25% · cannot tell on 75%" in decide and "cannot tell on 75%" in finished
+    assert panel.vote_lines([], []) and "AUC —" in panel.vote_lines([], [])[0]
+
+
 # ── in the bench ──────────────────────────────────────────────────────────────
 
 
@@ -298,3 +376,47 @@ def test_a_store_with_no_held_out_rows_has_no_panel(lab, public_golden, tmp_path
 def test_a_panel_the_bench_does_not_know_is_refused(lab, public_golden, tmp_path, capsys):
     assert bench.run(SUITE, lab.base, out_dir=tmp_path / "out", panels=["mica"], dry_run=True) == bench.REFUSED
     assert "--panel 'mica'" in capsys.readouterr().out
+    assert bench.run(SUITE, lab.base, out_dir=tmp_path / "out", panels=["served/9q"], dry_run=True) == bench.REFUSED
+    assert "--panel 'served/9q'" in capsys.readouterr().out
+
+
+def test_a_panel_is_named_and_labelled_by_who_answers_and_its_shape():
+    assert bench.parse_panel("served") == ("served", bench.LINE) and bench.parse_panel("base/3q") == ("base", "3q")
+    named = {spec: (bench.panel_name(*bench.parse_panel(spec)), bench.panel_label(*bench.parse_panel(spec))) for spec in SPECS}
+    assert named == {
+        "served": (panel.NAME, f"LAYA · {len(panel.ASKS)} QUESTIONS"),
+        "base": (f"{panel.NAME}-base", f"LAYA · {len(panel.ASKS)} Q · BASE"),
+        "served/3q": (f"{panel.NAME}-3q", "LAYA · 3 QUESTIONS"),
+        "base/3q": (f"{panel.NAME}-3q-base", "LAYA · 3 Q · BASE"),
+        "served/3q-mean": (f"{panel.NAME}-3q-mean", "LAYA · 3 Q · MEAN"),
+        "base/3q-mean": (f"{panel.NAME}-3q-mean-base", "LAYA · 3 Q · MEAN · BASE"),
+    }
+    assert all(len(label) <= bench.LABEL_MAX for _name, label in named.values())
+    assert set(bench.PANEL_SHAPES.values()) - {None} == set(panel.RULES)
+
+
+SPECS = ("served", "base", "served/3q", "base/3q", "served/3q-mean", "base/3q-mean")
+
+
+def test_a_three_question_panel_fits_nothing_so_it_needs_no_held_out_rows(lab, public_golden, tmp_path, capsys):
+    """The fitted panel has no voter on a store with no held-out rows; the three-question ones score the golden set."""
+    router = FakeRouter(lambda state: 0.9 if "open" in state.lower() or "not started" in state.lower() else 0.1)
+    panels = ["served", "served/3q", "served/3q-mean", "served/3q"]  # a repeat is one voter
+    assert bench.run(SUITE, lab.base, router=router, out_dir=tmp_path / "out", panels=panels) == 0
+    payload = written(tmp_path / "out")
+    roster = {voter["name"]: voter for voter in payload["voters"]}
+    assert list(roster) == [bench.BASE, f"{panel.NAME}-3q", f"{panel.NAME}-3q-mean"]
+    assert [roster[name]["kind"] for name in list(roster)[1:]] == ["panel", "panel"]
+    described = payload["protocol"]["description"]
+    assert "a three-question panel asks 3 questions of each closing" in described and "fits nothing" in described
+    assert f"{panel.NAME}-3q answers with the most confident of the three answers" in described
+    assert f"{panel.NAME}-3q-mean answers with their equal-weight mean" in described
+    assert "fits one logistic line" not in described  # the fitted panel did not answer, so it is not described
+    (golden,) = payload["sets"]
+    entry = next(score for score in golden["scores"] if score["voter"] == f"{panel.NAME}-3q")
+    assert (
+        entry["auc"] is not None and entry["operating"]["source"] == "swept" and entry["latency"]["n"] == golden["n"]["open"] * 2
+    )
+    out = capsys.readouterr().out
+    assert f"{panel.NAME}-3q votes on the golden set" in out and "alone AUC" in out
+    assert f"verdict  {panel.NAME}-3q vs {bench.BASE}" in out

@@ -172,9 +172,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--panel",
         action="append",
         default=[],
-        choices=("served", "base"),
-        help="also the panel voter (panel.py): many questions of each turn and one fitted line; the value is the "
-        "model that answers the new questions; repeatable",
+        metavar="WHO[/SHAPE]",
+        help="also a panel voter (panel.py). WHO answers the new questions: served | base. SHAPE: line (default: every "
+        "question and one fitted line) | 3q (three questions, the most confident answers) | 3q-mean (their equal-weight "
+        "mean); repeatable",
     )
     rack = commands.add_parser(
         "rack",
