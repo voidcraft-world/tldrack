@@ -731,13 +731,21 @@ def challenger_verdicts(
                 "accuracy": (accuracy_at(entries[served.name], block["n"]), accuracy_at(entries[voter.name], block["n"])),
             }
         held, golden = found.get("heldout"), found["golden"]
-        beats = held is not None and held["delta_auc"] is not None and held["delta_auc"][1] > 0
+        delta = None if held is None else held["delta_auc"]
+        beats = delta is not None and delta[1] > 0
+        trails = delta is not None and delta[2] < 0
         keeps = golden["accuracy"][1] >= golden["accuracy"][0]
         found["wins"] = beats and keeps
         found["why"] = (
             "no held-out set to judge it on"
             if held is None
-            else ("beats the served AUC past the interval" if beats else "held-out AUC within the interval of the served one")
+            else (
+                "beats the served AUC past the interval"
+                if beats
+                else "held-out AUC below the served one past the interval"
+                if trails
+                else "held-out AUC within the interval of the served one"
+            )
             + ("; golden accuracy holds" if keeps else "; golden accuracy falls")
         )
         out.append(found)

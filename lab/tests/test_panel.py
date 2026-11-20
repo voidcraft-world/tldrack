@@ -237,6 +237,32 @@ def test_a_panel_is_a_voter_of_the_file_fitted_on_the_held_out_rows(lab, public_
     assert f"{panel.NAME} weights" in out
 
 
+def test_a_voter_that_ranks_worse_past_the_interval_is_said_to_trail(lab, public_golden, tmp_path, capsys):
+    """A measured no has two shapes, and the verdict line says which: inside the interval, or below it."""
+    labelled(lab, 20)
+    served = bench.BenchVoter(
+        "served",
+        "SERVED",
+        "fine_tune",
+        "none",
+        open=lambda: lambda state: 0.9 if "open" in state else 0.1,
+        threshold=0.7,
+        labels=0,
+        served=True,
+    )
+    backwards = bench.BenchVoter(
+        "backwards",
+        "BACKWARDS",
+        "panel",
+        "none",
+        whole=lambda sets: {
+            name: bench.Answers([0.1 if expected else 0.9 for _id, _state, expected in data], []) for name, data in sets.items()
+        },
+    )
+    assert bench.run(SUITE, lab.base, plan=bench.Plan([served, backwards]), out_dir=tmp_path / "out") == 0
+    assert "measured no (held-out AUC below the served one past the interval" in capsys.readouterr().out
+
+
 def test_a_store_with_no_held_out_rows_has_no_panel(lab, public_golden, tmp_path, capsys):
     router = FakeRouter(lambda state: 0.5)
     assert bench.run(SUITE, lab.base, router=router, out_dir=tmp_path / "out", panels=["served"]) == 0
