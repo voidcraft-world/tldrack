@@ -27,6 +27,8 @@ uv run laya-lab bench --dry-run             # the plan: which voters can answer 
 uv run laya-lab bench                       # every available voter on the public golden set (and the private
                                             # held-out split when the store has one) → bench/results/<date>.json:
                                             # aggregates only, AUC with a bootstrap 95% interval (bench.py)
+uv run laya-lab bench --panel served --panel base   # also the panel voter: many questions of each turn, one fitted
+                                            # line over the answers (panel.py); `served` or `base` answers the new ones
 uv run laya-lab question-challenger agent_open_work --version 3   # the served rows refitted at another question
                                             # version, never registered; `bench --challenger` scores it (question.py)
 uv run laya-lab card                        # preview the verifier card; `--publish --digest D` writes the reviewed
@@ -282,6 +284,27 @@ facts and 68 a request. The texts with facts are 2,854 of 3,609. Of the 116 oper
 none of the 516 training rows is operator-graded, so no training label could depend on them (24 of the 84
 record held-out rows are, 14 with facts).
 `QUESTION_VERSION` stays 2. Re-measure once rows are relabelled with their facts in view.
+
+## The panel: many questions, one line (`bench --panel`)
+
+The served verdict is one question over one window of the closing message. The panel asks whether the same model
+ranks turns better when the judgement is broken into parts: 7 questions of the request that opened the turn (a
+question, a build, a bug, a plan, a document, a phase, more than one ask), 9 of the closing (the served question
+unchanged, then: asks for a decision, asks the reader to act, a failure, a wait, finished and checked, an optional
+offer, a skipped step, mainly an answer), and 2 re-asked of every window of the whole closing, so the middle of a long
+message is read too. Five text signals need no model. One L2 logistic line over the 23 numbers gives p(open). The
+questions, the windows and why the line is fitted out of fold on the held-out rows: owned by `laya_lab/panel.py` —
+see the note there.
+
+```bash
+uv run laya-lab bench --labels merged --panel served --panel base
+```
+
+`laya-panel` has the served model answer every question; `laya-panel-base` has the base model answer the 17 new
+ones. Each prints its fitted weights (never written to the file) and a verdict against the served voter by the rule
+above: the held-out ΔAUC interval sits above zero and golden accuracy does not fall. A panel costs every ask it makes:
+its latency in the file is the sum for one turn. A store with no held-out rows has no panel, so the reproduce command
+(the public set, the base model) is unchanged.
 
 ## Tests
 

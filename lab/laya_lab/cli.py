@@ -168,6 +168,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="an unregistered fine-tune (checkpoint folder) to score at its own question version; repeatable",
     )
+    bench.add_argument(
+        "--panel",
+        action="append",
+        default=[],
+        choices=("served", "base"),
+        help="also the panel voter (panel.py): many questions of each turn and one fitted line; the value is the "
+        "model that answers the new questions; repeatable",
+    )
     rack = commands.add_parser(
         "rack",
         aliases=["fleet"],  # legacy (step 6.8): the command's name before 0.1.0, taken for one release
@@ -643,6 +651,7 @@ def cmd_bench(args: argparse.Namespace, base: Path) -> int:
         device=args.device,
         dry_run=args.dry_run,
         challengers=args.challenger,
+        panels=args.panel,
         with_rack=args.rack,
     )
 

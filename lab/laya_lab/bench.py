@@ -4,6 +4,7 @@
     laya-lab bench --voter mica=http://127.0.0.1:8010,runtime=mlx,licence=Apache-2.0
     laya-lab bench --dry-run                          # the plan (voters, sets, n); loads nothing, writes nothing
     laya-lab bench --challenger <checkpoint>          # also an unregistered fine-tune, at its own question version
+    laya-lab bench --panel served --panel base        # also the panel: many questions of a turn, one fitted line
 
 Two sets. `golden`: the public cases checked in under `lab/golden/`, always. `heldout`: the operator's labelled turn
 ends the served fine-tune never trained on (`compare.heldout_rows`), only when the store holds some.
@@ -21,6 +22,9 @@ Voters, each under a public name:
   it. The protocol stays the served version's; its description names each challenger and its version. No mean. A
   checkpoint `train` made (a retrain on the labels since, its record says `retrain`), or a rebuild of one, is
   `laya-retrain-q<version>`.
+- each `--panel <served | base>`: `laya-panel` (the served model answers every question) or `laya-panel-base` (the base
+  model answers the new ones). It answers a set at a time, because it is fitted out of fold on the held-out rows:
+  owned by `panel.py` — see the note there. No mean.
 A voter that cannot run is SKIPPED with a one-line reason, in the run's output; it never fails the run.
 
 THE FILE is `bench/results/<YYYY-MM-DD>.json` in this checkout, one per day (a second run that day replaces it). Its
@@ -60,6 +64,7 @@ from typing import Any
 
 from laya_lab import siblings  # noqa: F401  (puts laya_bridge on sys.path)
 from laya_lab import compare, rack, infer
+from laya_lab import panel as panel_voter
 from laya_lab import floor as floor_voter
 from laya_lab.golden import SUITES, Suite, load_cases
 from laya_lab.latency import spread
@@ -74,7 +79,7 @@ RESULTS_DIR = ("bench", "results")
 BASE, FINE_TUNE, FLOOR = "laya-base", "laya-fine-tune", "tfidf-floor"
 ENSEMBLE_PREFIX = "mean."
 #: The schema's enums and bounds (`BENCH_VOTER_KINDS`, `BENCH_RUNTIMES`, `BENCH_VOTERS_MAX`, `BENCH_ROC_MAX`).
-KINDS = ("fine_tune", "base", "zero_shot", "floor", "ensemble")
+KINDS = ("fine_tune", "base", "zero_shot", "floor", "ensemble", "panel")
 RUNTIMES = ("mps", "cuda", "cpu", "mlx", "ollama", "llama.cpp", "none")
 DEVICES = ("mps", "cuda", "cpu")
 VOTERS_MAX = 16
@@ -144,6 +149,8 @@ class BenchVoter:
     retrain: bool = False
     #: An endpoint voter's router, which times its own calls (`compare.Timed`): a votes file's are the recorded ones.
     timed: Any = None
+    #: A voter that answers every set at once, labels in hand, in `open`'s place (a panel: `panel.py` owns why).
+    whole: Callable[[Mapping[str, Sequence[Row]]], dict[str, Answers]] | None = None
 
 
 @dataclass
@@ -316,6 +323,66 @@ def plan_challengers(
     return voters
 
 
+#: `--panel <who answers the new questions>` → the voter's public name and label.
+PANEL_NAMES = {"served": panel_voter.NAME, "base": f"{panel_voter.NAME}-base"}
+PANEL_LABELS = {"served": "LAYA · PANEL", "base": "LAYA · PANEL · BASE ASKS"}
+
+
+def ask_panel(
+    asker: panel_voter.Asker, suite: Suite, name: str, served: str, others: str
+) -> Callable[[Mapping[str, Sequence[Row]]], dict[str, Answers]]:
+    """A panel's `whole`: every set's raw states and labels to `panel.answer_sets`, its refusals as `Unavailable`."""
+
+    def whole(sets: Mapping[str, Sequence[Row]]) -> dict[str, Answers]:
+        shaped: dict[str, panel_voter.Set] = {}
+        for set_name, data in sets.items():
+            raws = getattr(data, "raws", None)
+            if raws is None or len(raws) != len(data):
+                raise Unavailable(f"the {set_name} set carries no raw states to ask the panel's questions of")
+            shaped[set_name] = (
+                [row_id for row_id, _state, _expected in data],
+                raws,
+                [state for _id, state, _expected in data],
+                [expected for _id, _state, expected in data],
+            )
+        try:
+            found, line = panel_voter.answer_sets(asker, suite.question, shaped, served, others)
+        except ValueError as refusal:
+            raise Unavailable(str(refusal)) from None
+        print(f"[laya-lab] bench: {name} weights, fitted on every held-out row (standardised, largest first)")
+        for line_text in panel_voter.weight_lines(line):
+            print(line_text)
+        return {set_name: Answers(ps, ms) for set_name, (ps, ms) in found.items()}
+
+    return whole
+
+
+def plan_panels(suite: Suite, panels: Sequence[str], device: str, shared: SharedRouter, champion: str, plan: Plan) -> None:
+    """Each `--panel` as a voter (`panel.py` owns what one is). `served`: the served model answers every question.
+    `base`: the base model answers the new ones, which is the same panel when no fine-tune is served."""
+    asker = panel_voter.Asker(shared.get)
+    for asked in dict.fromkeys(panels):
+        if asked not in PANEL_NAMES:
+            raise compare.Refused(f"--panel {asked!r}: one of {', '.join(PANEL_NAMES)}")
+        name = PANEL_NAMES[asked]
+        if asked == "base" and champion == "english":
+            plan.skipped[name] = f"no fine-tune is served, so it is {PANEL_NAMES['served']}"
+            continue
+        others = champion if asked == "served" else "english"
+        plan.voters.append(
+            BenchVoter(
+                name,
+                PANEL_LABELS[asked],
+                "panel",
+                device,
+                of=BASE if champion == "english" else FINE_TUNE,
+                params_m=LAYA_PARAMS_M,
+                licence=LAYA_LICENCE if champion == "english" else None,
+                whole=ask_panel(asker, suite, name, champion, others),
+            )
+        )
+
+
 def plan_voters(
     base: Path,
     suite: Suite,
@@ -324,6 +391,7 @@ def plan_voters(
     device: str = "mps",
     router: Any = None,
     challengers: Sequence[str] = (),
+    panels: Sequence[str] = (),
 ) -> Plan:
     """Every voter this machine can ask, in the file's order, and the ones it cannot with the reason. Reads the
     registry and counts rows; loads no model. Raises `compare.Refused` on a spec it will not run."""
@@ -399,6 +467,7 @@ def plan_voters(
                 licence=extra["licence"],
             )
         )
+    plan_panels(suite, panels, device, shared, champion, plan)
     for member in laya:
         for extra in extras:
             pair = (member, extra["name"])
@@ -532,7 +601,7 @@ def ask_all(plan: Plan, sets: Mapping[str, Sequence[Row]]) -> tuple[dict[str, di
             }
             continue
         try:
-            answered[voter.name] = ask(voter, sets)
+            answered[voter.name] = voter.whole(sets) if voter.whole is not None else ask(voter, sets)
         except (Exception, SystemExit) as error:  # noqa: BLE001  (a voter that cannot run never fails the run)
             skipped[voter.name] = reason_of(error)
             print(f"[laya-lab] bench: {voter.name} skipped: {type(error).__name__}: {error}", file=sys.stderr)
@@ -639,8 +708,8 @@ def accuracy_at(entry: Mapping[str, Any], n: Mapping[str, int]) -> float:
 def challenger_verdicts(
     payload: Mapping[str, Any], sets: Mapping[str, Sequence[Row]], answered: Mapping[str, Mapping[str, Answers]], plan: Plan
 ) -> list[dict[str, Any]]:
-    """Each challenger against the served voter, by the rule a question version must clear to be served (lab/README.md
-    "Question v3"): its held-out AUC beats the served one's by more than the paired interval (`lo` > 0), and its
+    """Each challenger and each panel against the served voter, by the rule a question version must clear to be served
+    (lab/README.md "Question v3"): its held-out AUC beats the served one's by more than the paired interval (`lo` > 0), and its
     golden accuracy at its operating point does not fall. Numbers only; for the terminal and the commit, never the
     file, whose shape has no place for a pair."""
     served = next((voter for voter in plan.voters if voter.served and voter.name in answered), None)
@@ -648,7 +717,7 @@ def challenger_verdicts(
     if served is None:
         return out
     for voter in plan.voters:
-        if voter.restate is None or voter.name not in answered:
+        if (voter.restate is None and voter.whole is None) or voter.name not in answered:
             continue
         found: dict[str, Any] = {"voter": voter.name, "against": served.name, "question_version": voter.question_version}
         for block in payload["sets"]:
@@ -819,7 +888,13 @@ def voter_entry(voter: BenchVoter, answered: Mapping[str, Any]) -> dict[str, Any
 
 
 def protocol_entry(
-    suite: Suite, sets: Mapping[str, Sequence[Row]], *, seed: int, resamples: int, challengers: Sequence[BenchVoter] = ()
+    suite: Suite,
+    sets: Mapping[str, Sequence[Row]],
+    *,
+    seed: int,
+    resamples: int,
+    challengers: Sequence[BenchVoter] = (),
+    panels: Sequence[BenchVoter] = (),
 ) -> dict[str, Any]:
     described = (
         f"Whether a finished agent turn still has open work ({suite.surface}, question v{suite.question_version}): "
@@ -840,6 +915,13 @@ def protocol_entry(
     if retrains:
         described += (
             f"; retrained on every label since, with its own split, each retrain is asked of the same rows: {asked(retrains)}"
+        )
+    if panels:
+        asked_n, signal_n = len(panel_voter.ASKS), len(panel_voter.SIGNALS)
+        described += (
+            f"; a panel ({', '.join(voter.name for voter in panels)}) asks {asked_n} questions of each turn (its request, "
+            f"its closing, and every window of the whole closing) and fits one logistic line over the answers and "
+            f"{signal_n} text signals, out of fold on the held-out rows, the golden cases scored by the fit on all of them"
         )
     return {
         "id": protocol_id(suite, sets),
@@ -882,9 +964,10 @@ def results(
             }
         )
     challengers = [voter for voter in voters if voter.restate is not None]
+    panels = [voter for voter in voters if voter.whole is not None]
     return {
         "v": RESULTS_VERSION,
-        "protocol": protocol_entry(suite, sets, seed=seed, resamples=resamples, challengers=challengers),
+        "protocol": protocol_entry(suite, sets, seed=seed, resamples=resamples, challengers=challengers, panels=panels),
         "generated_at": generated_at,
         "commit": commit,
         "voters": [voter_entry(voter, answered) for voter in voters],
@@ -994,6 +1077,7 @@ def run(
     out_dir: Path | None = None,
     day: str | None = None,
     challengers: Sequence[str] = (),
+    panels: Sequence[str] = (),
     with_rack: bool = False,
 ) -> int:
     """The command. `plan` (tests: voters that load nothing) replaces the machine's own; `out_dir` and `day` say
@@ -1004,7 +1088,9 @@ def run(
     suite = SUITES[name]
     try:
         plan = (
-            plan if plan is not None else plan_voters(base, suite, voters, device=device, router=router, challengers=challengers)
+            plan
+            if plan is not None
+            else plan_voters(base, suite, voters, device=device, router=router, challengers=challengers, panels=panels)
         )
     except compare.Refused as refusal:
         print(f"[laya-lab] bench refused: {refusal}")

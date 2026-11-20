@@ -144,6 +144,7 @@ export const KIND_LABEL: Readonly<Record<BenchVoter['kind'], string>> = {
     zero_shot: 'zero-shot',
     floor: 'floor',
     ensemble: 'ensemble',
+    panel: 'panel',
 };
 
 // --- Panel 1: read less -------------------------------------------------------------------
