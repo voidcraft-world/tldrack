@@ -17,6 +17,10 @@ reads finished turns for you and marks them ✅ done or ⚠️ needs you.
     <td align="center"><a href="docs/img/laya-review-desktop.webp"><img src="docs/img/thumbs/laya-review-desktop.webp" width="280" alt="Laya review on the desktop: one session's prompt and the closing message of its turn, Laya's score of 0.67 just under the cut, and one button per grade: DONE, READ, RUNNING, NEEDS YOU, SKIP. An annotation reads: I would mark it Done, so Laya gave the wrong answer; the bug is fixed and none of this ending text needed to be read by me."></a></td>
     <td align="center"><a href="docs/img/laya-review-android.webp"><img src="docs/img/thumbs/laya-review-android.webp" width="124" alt="Laya review on Android: the grade counts, one finished turn with Laya's score, and tap-only grade buttons along the bottom: DONE, READ, RUNNING, NEEDS YOU, SKIP, UNDO."></a></td>
   </tr>
+  <tr><th colspan="3">Three modes · pick two</th></tr>
+  <tr>
+    <td colspan="3" align="center"><a href="docs/img/modes-triangle.webp"><img src="docs/img/thumbs/modes-triangle.webp" width="860" alt="Pick two for any big task: a quality, money and time triangle with the rack's three modes as dots. One agent (one focus) sits low and toward time: cheap but slower. One agent on a loop (/goal, /loop, ultracode) sits in the middle. A LEAD with a crew (coordinator) sits high and toward money: better and faster, but more expensive. A crew spends money to save time; one agent spends time to save money. Positions are judgment from running all three, not a measurement."></a></td>
+  </tr>
 </table>
 
 Click an image to open it at full size.
