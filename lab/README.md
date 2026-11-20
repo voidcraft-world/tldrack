@@ -292,9 +292,10 @@ ranks turns better when the judgement is broken into parts: 7 questions of the r
 question, a build, a bug, a plan, a document, a phase, more than one ask), 9 of the closing (the served question
 unchanged, then: asks for a decision, asks the reader to act, a failure, a wait, finished and checked, an optional
 offer, a skipped step, mainly an answer), and 2 re-asked of every window of the whole closing, so the middle of a long
-message is read too. Five text signals need no model. One L2 logistic line over the 23 numbers gives p(open). The
-questions, the windows and why the line is fitted out of fold on the held-out rows: owned by `laya_lab/panel.py` —
-see the note there.
+message is read too. Twelve signals need no model: five read off the text, and the turn's facts (question v4's:
+whether tests ran, passed or failed, files edited, a commit, a PR) as seven exact inputs, never a question. One L2
+logistic line over the 30 numbers gives p(open). The questions, the windows, the signals and why the line is fitted out
+of fold on the held-out rows: owned by `laya_lab/panel.py` — see the note there.
 
 ```bash
 uv run laya-lab bench --labels merged --panel served --panel base

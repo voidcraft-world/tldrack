@@ -18,8 +18,13 @@ Every question is short and positive: the served question's owner measured that 
 instruction badly (`open_work.OPEN_WORK_QUESTION`).
 
 ── What is not asked (`SIGNALS`) ─────────────────────────────────────────────
-Five facts read off the text with no model: whether there is a request, whether it and the closing end on a question
-(`transcript.ends_on_question`, the rack's own rule), how long the closing is, and whether it carries fenced code.
+Twelve inputs need no model, and are read exactly instead of asked about.
+- Five off the text: whether there is a request, whether it and the closing end on a question
+  (`transcript.ends_on_question`, the rack's own rule), how long the closing is, and whether it carries fenced code.
+- Seven off the turn's facts (`open_work.read_facts`: what the turn DID, from its transcript): whether it has any,
+  whether tests ran, passed or failed, how many files it edited, and whether a commit or a PR was made. A turn with no
+  facts reads 0 on all seven, `has_facts` among them. No golden case carries facts yet, so on the golden set these
+  seven move every case alike and change no ranking.
 
 ── The line, and why it is fitted out of fold ────────────────────────────────
 One L2 logistic regression (`floor.fit_logistic`: one fit, one owner) over the standardised answers. Its weights need
@@ -88,7 +93,9 @@ ASKS: tuple[Ask, ...] = (
     Ask("open_any", WINDOWS, over=SERVED),
     Ask("failed_any", WINDOWS, over="failed"),
 )
-SIGNALS = ("has_request", "request_asks", "closing_asks", "length", "code")
+TEXT_SIGNALS = ("has_request", "request_asks", "closing_asks", "length", "code")
+FACT_SIGNALS = ("has_facts", "ran_tests", "tests_passed", "tests_failed", "edited_files", "made_commit", "opened_pr")
+SIGNALS = TEXT_SIGNALS + FACT_SIGNALS
 FEATURES = tuple(ask.name for ask in ASKS) + SIGNALS
 
 FOLDS = 5
@@ -96,6 +103,8 @@ FOLDS = 5
 EPS = 1e-4
 #: A closing this long or longer reads as 1.0 on the `length` signal: two windows.
 LENGTH_FULL = 2 * open_work.STATE_MAX_CHARS
+#: A turn that edited this many files or more reads as 1.0 on the `edited_files` signal.
+EDITS_FULL = 10
 #: Consecutive windows share half their text, so a sentence cut by one window's edge is whole in the next.
 WINDOW_STEP = open_work.STATE_MAX_CHARS // 2
 
@@ -124,13 +133,24 @@ def windows(hand_off: str) -> list[str]:
 
 
 def signals(raw: Mapping[str, Any]) -> dict[str, float]:
+    """Every `SIGNALS` input of one turn. The facts go through their one reader, so a mapping that does not read is
+    no facts at all, never half of them."""
     hand_off, request = raw["hand_off"], raw.get("request")
+    facts = open_work.read_facts(raw.get("facts")) or {}
+    passed = facts.get("tests_passed")
     return {
         "has_request": float(bool(request)),
         "request_asks": float(ends_on_question(request)),
         "closing_asks": float(ends_on_question(hand_off)),
         "length": min(len(hand_off), LENGTH_FULL) / LENGTH_FULL,
         "code": float(open_work.CODE_FENCE.search(hand_off) is not None),
+        "has_facts": float(bool(facts)),
+        "ran_tests": float(bool(facts.get("ran_tests"))),
+        "tests_passed": float(passed is True),
+        "tests_failed": float(passed is False),
+        "edited_files": min(facts.get("edited_files", 0), EDITS_FULL) / EDITS_FULL,
+        "made_commit": float(bool(facts.get("made_commit"))),
+        "opened_pr": float(bool(facts.get("opened_pr"))),
     }
 
 

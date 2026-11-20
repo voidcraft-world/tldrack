@@ -929,7 +929,8 @@ def protocol_entry(
         described += (
             f"; a panel ({', '.join(voter.name for voter in panels)}) asks {asked_n} questions of each turn (its request, "
             f"its closing, and every window of the whole closing) and fits one logistic line over the answers and "
-            f"{signal_n} text signals, out of fold on the held-out rows, the golden cases scored by the fit on all of them"
+            f"{signal_n} signals read off its text and its facts, out of fold on the held-out rows, the golden cases scored "
+            f"by the fit on all of them"
         )
     return {
         "id": protocol_id(suite, sets),

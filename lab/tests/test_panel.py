@@ -68,9 +68,34 @@ def test_a_request_is_flattened_and_kept_to_one_window():
 
 def test_the_signals_are_read_off_the_text():
     found = panel.signals({"hand_off": "x" * (panel.LENGTH_FULL * 2) + "\nshall I go on?", "request": "why does it fail?"})
-    assert found == {"has_request": 1.0, "request_asks": 1.0, "closing_asks": 1.0, "length": 1.0, "code": 0.0}
+    assert {name: found[name] for name in panel.TEXT_SIGNALS} == {
+        "has_request": 1.0,
+        "request_asks": 1.0,
+        "closing_asks": 1.0,
+        "length": 1.0,
+        "code": 0.0,
+    }
     bare = panel.signals({"hand_off": "```\nls\n```\ndone.", "request": None})
     assert (bare["has_request"], bare["request_asks"], bare["closing_asks"], bare["code"]) == (0.0, 0.0, 0.0, 1.0)
+    assert set(found) == set(panel.SIGNALS)
+
+
+def test_the_turn_s_facts_are_inputs_and_a_turn_with_none_reads_zero():
+    facts = {"ran_tests": True, "tests_passed": False, "edited_files": 25, "made_commit": True, "opened_pr": False}
+    found = panel.signals({"hand_off": "all done", "request": None, "facts": facts})
+    assert {name: found[name] for name in panel.FACT_SIGNALS} == {
+        "has_facts": 1.0,
+        "ran_tests": 1.0,
+        "tests_passed": 0.0,
+        "tests_failed": 1.0,
+        "edited_files": 1.0,
+        "made_commit": 1.0,
+        "opened_pr": 0.0,
+    }
+    unknown = panel.signals({"hand_off": "all done", "facts": {**facts, "tests_passed": None, "edited_files": 5}})
+    assert (unknown["tests_passed"], unknown["tests_failed"], unknown["edited_files"]) == (0.0, 0.0, 0.5)
+    for raw in ({"hand_off": "all done"}, {"hand_off": "all done", "facts": {"ran_tests": "yes"}}):  # none, or unreadable
+        assert all(panel.signals(raw)[name] == 0.0 for name in panel.FACT_SIGNALS)
 
 
 def test_the_panel_holds_the_served_question_once_and_names_every_feature_once():
