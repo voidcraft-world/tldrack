@@ -325,7 +325,8 @@ def plan_challengers(
 
 #: `--panel <who answers the new questions>` → the voter's public name and label.
 PANEL_NAMES = {"served": panel_voter.NAME, "base": f"{panel_voter.NAME}-base"}
-PANEL_LABELS = {"served": "LAYA · PANEL", "base": "LAYA · PANEL · BASE ASKS"}
+#: Short on purpose: the evals legend keeps a name on one line, and a longer one pushes its numbers out of a figure.
+PANEL_LABELS = {"served": "LAYA · PANEL", "base": "LAYA · PANEL · BASE"}
 
 
 def ask_panel(
