@@ -307,6 +307,26 @@ above: the held-out ΔAUC interval sits above zero and golden accuracy does not 
 its latency in the file is the sum for one turn. A store with no held-out rows has no panel, so the reproduce command
 (the public set, the base model) is unchanged.
 
+**Measured 2026-11-20: a no, by the rule** (`bench/results/2026-11-20.json`). `laya-panel`: held-out ΔAUC against the
+served model −0.088 [−0.144, −0.035] (AUC 0.743 against 0.831), accuracy 0.772 → 0.690; golden ΔAUC −0.013 [−0.059,
++0.032], accuracy 0.770 → 0.745. `laya-panel-base`: −0.117 [−0.184, −0.058] held out (AUC 0.714) and −0.076 [−0.132,
+−0.024] on golden. A turn costs about 750 ms against the served question's 62 ms.
+
+Why, from the run's own inputs. These were read after the fact on the same 171 rows, so they explain the verdict and
+decide nothing; none is in the results file.
+- **The new inputs rank near chance against these labels.** Alone, each request question scores AUC 0.51 to 0.56 and
+  each fact 0.50 to 0.56. Re-asking over every window adds nothing to the served question (0.832 against 0.831): a
+  stored closing is at most 2,000 characters, so there is little middle to read.
+- **The fine-tune answers its own question whatever it is asked.** Its answer to "is it waiting on something still
+  running" ranks 0.818; the base model's answer to the same question ranks 0.543.
+- **On 171 rows the line pays for every input.** Fitted out of fold, the served question alone scores 0.820, the 9
+  closing questions 0.801, all 30 inputs 0.743. No regularisation strength recovers it (the best is 0.755).
+- **One shape did not lose:** the served verdict kept as it is, with the seven facts as corrections on top, scores
+  0.843 against 0.831. That is inside the noise, and it was found by looking.
+
+The limit is question v4's: most labels came from a teacher that read the closing alone, so a request or a fact cannot
+predict a label it was never part of. Re-measure once rows are relabelled with both in view, and there are more of them.
+
 ## Tests
 
 `cd lab && uv run pytest -q` (a few seconds). Every tree is synthetic, every text invented, and the suite
