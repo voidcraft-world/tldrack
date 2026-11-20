@@ -31,8 +31,11 @@ export const BENCH_SETS = ['golden', 'heldout'] as const;
 export type BenchSet = (typeof BENCH_SETS)[number];
 export const BENCH_SET_PUBLIC: Readonly<Record<BenchSet, boolean>> = { golden: true, heldout: false };
 
-/** What a voter is: what the EVALS roster groups by, and how "what your labels buy" finds base and fine-tune. */
-export const BENCH_VOTER_KINDS = ['fine_tune', 'base', 'zero_shot', 'floor', 'ensemble'] as const;
+/**
+ * What a voter is: what the EVALS roster groups by, and how "what your labels buy" finds base and fine-tune. A
+ * `panel` is one model asked many questions of a turn, and a line fitted over the answers (lab `panel.py`).
+ */
+export const BENCH_VOTER_KINDS = ['fine_tune', 'base', 'zero_shot', 'floor', 'ensemble', 'panel'] as const;
 
 /** Where a voter's inference ran when it was timed. */
 export const BENCH_RUNTIMES = ['mps', 'cuda', 'cpu', 'mlx', 'ollama', 'llama.cpp', 'none'] as const;
@@ -89,7 +92,10 @@ export const benchVoterSchema = z.strictObject({
   /** Mono label for the page. */
   label: z.string().min(1).max(40),
   kind: z.enum(BENCH_VOTER_KINDS),
-  /** The voter a fine-tune was trained from, or an ensemble's first member: what "what your labels buy" pairs. */
+  /**
+   * The voter a fine-tune was trained from, an ensemble's first member, or the voter that answers a panel's served
+   * question: what "what your labels buy" pairs.
+   */
   of: voterName.nullable(),
   /** Operator labels a fine-tune trained on; null for every other kind. */
   labels: count.nullable(),

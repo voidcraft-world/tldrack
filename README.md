@@ -135,8 +135,12 @@ The same held-out turns, one curve per voter. Up and to the left is better.
 
 Claude Opus 5.5 is on the chart as a reference: a frontier cloud model, asked the same question with no
 training. Most of these held-out labels were written by a Claude model, so its curve is partly Claude
-agreeing with Claude. On the 40 turns the operator graded by hand, it and the fine-tune tie (AUC 0.72
+agreeing with Claude. On the 43 turns the operator graded by hand, it and the fine-tune tie (AUC 0.68
 against 0.69, the difference well inside the interval), and Opus is several times slower per verdict.
+
+LAYA · PANEL is an experiment, not a served model: the same fine-tune asked 18 questions of each turn
+in place of one, with the turn's facts, and one fitted line over the answers. It ranks below the single
+question (AUC 0.74 against 0.83) and costs twelve times the time. `lab/README.md` has the breakdown.
 
 <p align="center">
   <picture>

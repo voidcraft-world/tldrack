@@ -27,6 +27,8 @@ uv run laya-lab bench --dry-run             # the plan: which voters can answer 
 uv run laya-lab bench                       # every available voter on the public golden set (and the private
                                             # held-out split when the store has one) → bench/results/<date>.json:
                                             # aggregates only, AUC with a bootstrap 95% interval (bench.py)
+uv run laya-lab bench --panel served --panel base   # also the panel voter: many questions of each turn, one fitted
+                                            # line over the answers (panel.py); `served` or `base` answers the new ones
 uv run laya-lab question-challenger agent_open_work --version 3   # the served rows refitted at another question
                                             # version, never registered; `bench --challenger` scores it (question.py)
 uv run laya-lab card                        # preview the verifier card; `--publish --digest D` writes the reviewed
@@ -282,6 +284,48 @@ facts and 68 a request. The texts with facts are 2,854 of 3,609. Of the 116 oper
 none of the 516 training rows is operator-graded, so no training label could depend on them (24 of the 84
 record held-out rows are, 14 with facts).
 `QUESTION_VERSION` stays 2. Re-measure once rows are relabelled with their facts in view.
+
+## The panel: many questions, one line (`bench --panel`)
+
+The served verdict is one question over one window of the closing message. The panel asks whether the same model
+ranks turns better when the judgement is broken into parts: 7 questions of the request that opened the turn (a
+question, a build, a bug, a plan, a document, a phase, more than one ask), 9 of the closing (the served question
+unchanged, then: asks for a decision, asks the reader to act, a failure, a wait, finished and checked, an optional
+offer, a skipped step, mainly an answer), and 2 re-asked of every window of the whole closing, so the middle of a long
+message is read too. Twelve signals need no model: five read off the text, and the turn's facts (question v4's:
+whether tests ran, passed or failed, files edited, a commit, a PR) as seven exact inputs, never a question. One L2
+logistic line over the 30 numbers gives p(open). The questions, the windows, the signals and why the line is fitted out
+of fold on the held-out rows: owned by `laya_lab/panel.py` — see the note there.
+
+```bash
+uv run laya-lab bench --labels merged --panel served --panel base
+```
+
+`laya-panel` has the served model answer every question; `laya-panel-base` has the base model answer the 17 new
+ones. Each prints its fitted weights (never written to the file) and a verdict against the served voter by the rule
+above: the held-out ΔAUC interval sits above zero and golden accuracy does not fall. A panel costs every ask it makes:
+its latency in the file is the sum for one turn. A store with no held-out rows has no panel, so the reproduce command
+(the public set, the base model) is unchanged.
+
+**Measured 2026-11-20: a no, by the rule** (`bench/results/2026-11-20.json`). `laya-panel`: held-out ΔAUC against the
+served model −0.088 [−0.144, −0.035] (AUC 0.743 against 0.831), accuracy 0.772 → 0.690; golden ΔAUC −0.013 [−0.059,
++0.032], accuracy 0.770 → 0.745. `laya-panel-base`: −0.117 [−0.184, −0.058] held out (AUC 0.714) and −0.076 [−0.132,
+−0.024] on golden. A turn costs about 750 ms against the served question's 62 ms.
+
+Why, from the run's own inputs. These were read after the fact on the same 171 rows, so they explain the verdict and
+decide nothing; none is in the results file.
+- **The new inputs rank near chance against these labels.** Alone, each request question scores AUC 0.51 to 0.56 and
+  each fact 0.50 to 0.56. Re-asking over every window adds nothing to the served question (0.832 against 0.831): a
+  stored closing is at most 2,000 characters, so there is little middle to read.
+- **The fine-tune answers its own question whatever it is asked.** Its answer to "is it waiting on something still
+  running" ranks 0.818; the base model's answer to the same question ranks 0.543.
+- **On 171 rows the line pays for every input.** Fitted out of fold, the served question alone scores 0.820, the 9
+  closing questions 0.801, all 30 inputs 0.743. No regularisation strength recovers it (the best is 0.755).
+- **One shape did not lose:** the served verdict kept as it is, with the seven facts as corrections on top, scores
+  0.843 against 0.831. That is inside the noise, and it was found by looking.
+
+The limit is question v4's: most labels came from a teacher that read the closing alone, so a request or a fact cannot
+predict a label it was never part of. Re-measure once rows are relabelled with both in view, and there are more of them.
 
 ## Tests
 
