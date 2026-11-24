@@ -83,6 +83,16 @@ PR_INDEX_TTL_SECONDS = 600.0
 #: refresh — but not more often than this, since agents fetch constantly.
 PR_INDEX_MIN_INTERVAL_SECONDS = 60.0
 
+#: An OPEN pull request on a branch somebody has checked out is the one row a
+#: merge on GitHub changes with no `git fetch` here to announce it, and the
+#: rack's PR button waits on that row to become CLEAN. Left to the TTL above,
+#: the button kept saying PR for up to ten minutes after the merge. So while
+#: `/state` is polled and shows such a PR, the plugin asks GitHub which PRs
+#: are still open this often (`plugin._maybe_watch_open_prs`: one short
+#: `gh pr list --state open`), and refreshes the index the moment one it shows
+#: open is not.
+PR_OPEN_WATCH_SECONDS = 60.0
+
 #: Past this age (or with an error recorded) `pr_index.stale` is true and the
 #: panel says so — the readout that would have caught the month-old index.
 PR_INDEX_STALE_SECONDS = 3600.0

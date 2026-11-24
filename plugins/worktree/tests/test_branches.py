@@ -551,6 +551,29 @@ class TestBuilders:
         assert env["GIT_SSH_COMMAND"] == "ssh -oBatchMode=yes"
         assert env["PATH"] == "/usr/bin"  # the rest of the environment rides along
 
+    def test_open_prs_argv(self):
+        assert b.build_open_prs_command() == ["gh", "pr", "list", "--state", "open", "--limit", "300", "--json", "number"]
+
+    def test_open_pr_numbers_are_read_or_prove_nothing(self):
+        assert b.parse_open_pr_numbers('[{"number": 7}, {"number": 41}]') == {7, 41}
+        assert b.parse_open_pr_numbers("[]") == set(), "none open is an answer"
+        # Every unknown is None, never an empty set: an absent number must not read as a closed PR.
+        for bad in ("", "not json", '{"number": 7}', '[{"number": "7"}]', '[{"number": true}]', "[7]", None, 5):
+            assert b.parse_open_pr_numbers(bad) is None, bad
+        assert b.parse_open_pr_numbers('[{"number": 1}, {"number": 2}]', ceiling=2) is None, (
+            "a list that fills the ceiling may be cut"
+        )
+
+    def test_the_watch_asks_only_about_open_prs_on_the_branches_drawn(self):
+        prs = {
+            "feat/a": {"number": 41, "state": "open"},
+            "feat/b": {"number": 7, "state": "merged"},
+            "feat/c": {"number": 9, "state": "open"},
+            "feat/d": {"number": None, "state": "open"},
+        }
+        assert b.watched_open_prs(prs, ["feat/a", "feat/b", "feat/d", "no-pr"]) == {41}
+        assert b.watched_open_prs(prs, []) == frozenset()
+
     def test_pr_list_argv(self):
         assert b.build_pr_list_command() == [
             "gh",

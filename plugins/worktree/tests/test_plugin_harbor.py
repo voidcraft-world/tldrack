@@ -785,11 +785,105 @@ class TestStateWorktreePaths:
         )
         assert prs[None] is None
 
+    def test_a_merged_pr_the_index_knows_beats_the_buttons_open_record(self, plugin):
+        # The button's record says `open` for good; once the index says THAT pull request merged, the index wins.
+        url = "https://github.com/o/r/pull/99"
+        plugin._pr_index.replace({"feat/cache-all-pages": {"number": 99, "state": "merged", "url": url}}, time.time())
+        plugin._store.set("feat/cache-all-pages", status="open", url=url)
+        _s, body = plugin.handle_get("/state", {})
+        prs = {tree["branch"]: tree["pr"] for tree in body["worktree_trees"]}
+        assert prs["feat/cache-all-pages"] == {"number": 99, "state": "merged", "url": url}
+        # An OLDER merged PR of the same branch name is not that pull request: the button's new one still shows.
+        plugin._store.set("feat/cache-all-pages", status="open", url="https://github.com/o/r/pull/120")
+        _s, body = plugin.handle_get("/state", {})
+        prs = {tree["branch"]: tree["pr"] for tree in body["worktree_trees"]}
+        assert prs["feat/cache-all-pages"]["state"] == "open" and prs["feat/cache-all-pages"]["url"].endswith("/120")
+
     def test_it_rides_the_same_ttl_cache(self, plugin, monkeypatch):
         plugin.handle_get("/state", {})
         monkeypatch.setattr("worktree.plugin.list_worktrees", lambda _r: [])
         _s, body = plugin.handle_get("/state", {})
         assert len(body["worktree_paths"]) == 5  # cached with the rows
+
+
+class TestOpenPrWatch:
+    """A merge made on GitHub reaches the rack with no fetch here (`harbor.PR_OPEN_WATCH_SECONDS`)."""
+
+    OPEN = {"pr-demo": {"number": 41, "state": "open", "url": "https://github.com/o/r/pull/41"}}
+
+    @staticmethod
+    def _pr_jobs(plugin) -> list:
+        """The PR index jobs `/state` starts from here on, apart from the other tiers' workers."""
+        jobs: list = []
+        plugin._start_background = lambda target, name: jobs.append(target) if name == "worktree-prs" else None
+        return jobs
+
+    def _polled(self, plugin, monkeypatch, answers: dict) -> tuple["Recorder", list]:
+        monkeypatch.setattr("worktree.plugin.shutil.which", lambda _name: "/usr/bin/gh")
+        monkeypatch.setattr("worktree.pr.gh_authed", lambda: True)
+        rec = Recorder(answers)
+        monkeypatch.setattr("worktree.create.run_bounded", rec)
+        plugin._pr_index.replace(dict(self.OPEN), time.time())
+        jobs = self._pr_jobs(plugin)
+        plugin.handle_get("/state", {})
+        return rec, jobs
+
+    def test_a_fresh_index_with_an_open_pr_on_a_tree_asks_which_are_still_open(self, plugin, monkeypatch):
+        merged = [{"number": 41, "headRefName": "pr-demo", "state": "MERGED", "url": "https://github.com/o/r/pull/41"}]
+        rec, jobs = self._polled(
+            plugin,
+            monkeypatch,
+            {
+                ("gh", "pr", "list", "--state", "open"): (0, json.dumps([{"number": 7}]), ""),
+                ("gh", "pr", "list", "--state", "all"): (0, json.dumps(merged), ""),
+            },
+        )
+        assert len(jobs) == 1, "one job: the watch"
+        jobs[0]()
+        # PR 41 left the open list, so the whole index was read again, at once.
+        assert [call[0][:5] for call in rec.calls] == [
+            ["gh", "pr", "list", "--state", "open"],
+            ["gh", "pr", "list", "--state", "all"],
+        ]
+        assert plugin._pr_index.get("pr-demo")["state"] == "merged"
+        assert plugin._pr_refreshing is False
+
+    def test_a_pr_still_open_costs_the_short_question_and_nothing_more(self, plugin, monkeypatch):
+        rec, jobs = self._polled(
+            plugin, monkeypatch, {("gh", "pr", "list", "--state", "open"): (0, json.dumps([{"number": 41}]), "")}
+        )
+        jobs[0]()
+        assert len(rec.calls) == 1 and plugin._pr_index.get("pr-demo")["state"] == "open"
+        assert plugin._pr_refreshing is False
+        # Not again inside the watch interval, however often `/state` is polled; then once more.
+        plugin.handle_get("/state", {})
+        assert len(jobs) == 1
+        plugin.clock.advance(61.0)
+        plugin.handle_get("/state", {})
+        assert len(jobs) == 2
+
+    def test_an_answer_that_proves_nothing_refreshes_nothing(self, plugin, monkeypatch):
+        for answer in ((1, "", "rate limited"), (0, "not json", "")):
+            rec, jobs = self._polled(plugin, monkeypatch, {("gh", "pr", "list", "--state", "open"): answer})
+            jobs[0]()
+            assert len(rec.calls) == 1 and plugin._pr_index.get("pr-demo")["state"] == "open"
+            assert plugin._pr_refreshing is False
+            plugin.clock.advance(61.0)
+
+    def test_no_open_pr_on_any_tree_asks_nothing(self, plugin, monkeypatch):
+        monkeypatch.setattr("worktree.plugin.shutil.which", lambda _name: "/usr/bin/gh")
+        # Open, but on a branch no worktree has checked out; and a merged one on a tree.
+        plugin._pr_index.replace(
+            {
+                "elsewhere": {"number": 5, "state": "open", "url": "u"},
+                # Whole, so the index itself is not due (a merged row with no head or base is).
+                "pr-demo": {"number": 41, "state": "merged", "url": "v", "head_oid": "a" * 40, "base_ref": "main"},
+            },
+            time.time(),
+        )
+        jobs = self._pr_jobs(plugin)
+        plugin.handle_get("/state", {})
+        assert jobs == []
 
 
 class Recorder:
