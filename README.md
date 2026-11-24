@@ -19,7 +19,7 @@ reads finished turns for you and marks them ✅ done or ⚠️ needs you.
   </tr>
   <tr><th colspan="3">Three modes · pick two</th></tr>
   <tr>
-    <td colspan="3" align="center"><a href="docs/img/modes-triangle.webp"><img src="docs/img/thumbs/modes-triangle.webp" width="420" alt="Pick two for any big task: a good, fast and cheap triangle with the rack's three modes as dots. Individual agent sessions (you manage each one) sit toward cheap: the least money, and the slowest. One agent on a loop (/goal, /loop, ultracode) sits in the middle. A LEAD with a crew (coordinator) sits toward fast and a little higher: the quickest route to a good result, and the most expensive. Positions are judgment from running all three, not a measurement."></a></td>
+    <td colspan="3" align="center"><a href="docs/img/modes-triangle.webp"><img src="docs/img/thumbs/modes-triangle.webp" width="420" alt="Pick two for any big task: a good, fast and cheap triangle with the rack's three modes as dots. Individual agent sessions (you manage each one) sit toward cheap: the least money, and the slowest. One agent on a loop (/goal, /loop, ultracode) sits in the middle. A LEAD with workers (coordinator) sits toward fast and a little higher: the quickest route to a good result, and the most expensive. Positions are judgment from running all three, not a measurement."></a></td>
   </tr>
 </table>
 
