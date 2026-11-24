@@ -64,7 +64,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from worktree import create as create_mod
 from worktree.listing import PROBE_TIMEOUT_SECONDS
@@ -144,6 +144,11 @@ MISSING_BASE_MARKERS = ("failed to find", "not a valid", "bad revision", "unknow
 #: says so (`pr_list_truncated`).
 PR_LIST_CEILING = 5000
 PR_LIST_FIELDS = ("number", "headRefName", "headRefOid", "baseRefName", "state", "url", "isDraft", "mergedAt", "updatedAt")
+
+#: The open-PR watch (`harbor.PR_OPEN_WATCH_SECONDS`) asks for at most this
+#: many. A list that FILLS it may have been cut, and then says nothing: a
+#: number missing from a cut list is not a closed PR.
+PR_OPEN_PROBE_CEILING = 300
 
 #: A full object id: SHA-1 (40 hex) or SHA-256 (64). `landed` compares only
 #: these — never an abbreviation (see `REF_FIELDS`), never anything `gh` or a
@@ -277,6 +282,12 @@ def build_pr_list_command(limit: int = PR_LIST_CEILING) -> list[str]:
     """Runs with `cwd` = the repo (gh has no `-C`; it reads the working
     directory's remotes)."""
     return ["gh", "pr", "list", "--state", "all", "--limit", str(limit), "--json", ",".join(PR_LIST_FIELDS)]
+
+
+def build_open_prs_command(limit: int = PR_OPEN_PROBE_CEILING) -> list[str]:
+    """The open-PR watch's one question: which PR numbers are open now? Runs
+    with `cwd` = the repo, as `build_pr_list_command` does."""
+    return ["gh", "pr", "list", "--state", "open", "--limit", str(limit), "--json", "number"]
 
 
 # ── parsers (pure, total) ─────────────────────────────────────────────────
@@ -550,6 +561,37 @@ def parse_pr_list(text: object) -> dict[str, dict]:
         if current is None or _pr_beats(row, current):
             index[head] = row
     return index
+
+
+def parse_open_pr_numbers(text: object, ceiling: int = PR_OPEN_PROBE_CEILING) -> set[int] | None:
+    """`build_open_prs_command`'s output → the open PR numbers, or None when it
+    proves nothing: not the JSON list asked for, or a list that fills the
+    ceiling. None is "no verdict", never "none open"."""
+    try:
+        rows = json.loads(text) if isinstance(text, str) else None
+    except ValueError:
+        return None
+    if not isinstance(rows, list) or len(rows) >= ceiling:
+        return None
+    numbers: set[int] = set()
+    for row in rows:
+        number = row.get("number") if isinstance(row, dict) else None
+        if isinstance(number, bool) or not isinstance(number, int):
+            return None
+        numbers.add(number)
+    return numbers
+
+
+def watched_open_prs(prs: dict[str, dict], branches: Iterable[str]) -> frozenset[int]:
+    """The PR numbers the index shows OPEN on `branches` (the checked-out ones
+    `/state` is drawing): what the open-PR watch asks GitHub about."""
+    numbers: set[int] = set()
+    for branch in branches:
+        pr = prs.get(branch) or {}
+        number = pr.get("number")
+        if pr.get("state") == "open" and isinstance(number, int) and not isinstance(number, bool):
+            numbers.add(number)
+    return frozenset(numbers)
 
 
 def pr_list_truncated(text: object, ceiling: int = PR_LIST_CEILING) -> bool:

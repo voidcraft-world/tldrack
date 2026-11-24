@@ -61,6 +61,7 @@ import os
 import shutil
 import threading
 import time
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from worktree import absorption as absorption_mod
@@ -86,6 +87,7 @@ from worktree.harbor import (
     PR_INDEX_MIN_INTERVAL_SECONDS,
     PR_INDEX_STALE_SECONDS,
     PR_INDEX_TTL_SECONDS,
+    PR_OPEN_WATCH_SECONDS,
     BriefJobs,
     BriefStore,
     FetchJobs,
@@ -231,6 +233,8 @@ class WorktreePlugin:
         self._pr_refresh_lock = threading.Lock()
         self._pr_refreshing = False
         self._pr_refresh_after = 0.0
+        # The open-PR watch's next turn (`_maybe_watch_open_prs`), on the same clock.
+        self._pr_watch_after = 0.0
         # Branches whose `/pr` worker is running in THIS process. `PrStore`'s
         # `opening` cannot answer that: it is persisted, so it outlives the
         # worker a restart kills.
@@ -431,8 +435,10 @@ class WorktreePlugin:
         dirty = self._dirty.read(probe)
         # Each tree's PR, live like `dirty`: the rack's island turns from "no PR yet" to "PR handled" by it
         # (`tree_pr`). The index refreshes itself while someone polls, here as from the harbor; not due is a
-        # stat and a compare.
-        self._maybe_refresh_prs(branches_mod.fetch_head_mtime(self._repo_root))
+        # stat and a compare. The trees' branches are the ones whose open PRs it watches for a merge.
+        self._maybe_refresh_prs(
+            branches_mod.fetch_head_mtime(self._repo_root), [tree["branch"] for tree in worktree_trees if tree["branch"]]
+        )
         fetched_at, prs = self._pr_index.snapshot()
         landing = self._state_landing(taken, refs, fetched_at)
         cleanups = self._cleanups.snapshot()
@@ -2084,13 +2090,16 @@ class WorktreePlugin:
         else:
             self._context.log(f"  worktree: could not fetch PR heads — {scrub_home((err or '').strip()[:200])}")
 
-    def _maybe_refresh_prs(self, fetch_at: float | None) -> None:
+    def _maybe_refresh_prs(self, fetch_at: float | None, watched: Iterable[str] = ()) -> None:
         """Schedule the PR index's own refresh when it is due — called from the
         harbor runner, so only while someone is looking. Due: never fetched,
         older than `PR_INDEX_TTL_SECONDS`, older than a terminal's last fetch
         (and `PR_INDEX_MIN_INTERVAL_SECONDS` old), or written before
         `head_oid` / `base_ref` existed. Never while FETCH runs (it refreshes
-        the index itself), never inside a failure's back-off."""
+        the index itself), never inside a failure's back-off.
+
+        Not due, it still watches the open PRs of `watched` (the branches
+        the caller is drawing): `_maybe_watch_open_prs`."""
         fetched_at, prs = self._pr_index.snapshot()
         age = time.time() - fetched_at if fetched_at else None
         due = (
@@ -2099,18 +2108,67 @@ class WorktreePlugin:
             or (fetch_at is not None and fetch_at > fetched_at and age >= PR_INDEX_MIN_INTERVAL_SECONDS)
             or any(pr.get("state") == "merged" and (not pr.get("head_oid") or not pr.get("base_ref")) for pr in prs.values())
         )
-        if not due:
-            return
+        if due:
+            self._start_pr_job(self._pr_refresh_worker)
+        else:
+            self._maybe_watch_open_prs(prs, watched)
+
+    def _start_pr_job(self, worker: Callable[[], None]) -> bool:
+        """Start `worker` as THE PR index job, single flight; False when one
+        runs, FETCH runs, or a failure's back-off still holds. The worker
+        clears `_pr_refreshing` when it ends."""
         job = self._fetch_jobs.get()
         with self._pr_refresh_lock:
             if self._pr_refreshing or self._clock() < self._pr_refresh_after or (job and job["status"] == "running"):
-                return
+                return False
             self._pr_refreshing = True
         try:
-            self._start_background(self._pr_refresh_worker, "worktree-prs")
+            self._start_background(worker, "worktree-prs")
         except Exception:  # noqa: BLE001 — thread exhaustion; the next sweep retries
             with self._pr_refresh_lock:
                 self._pr_refreshing = False
+            return False
+        return True
+
+    def _maybe_watch_open_prs(self, prs: dict[str, dict], watched: Iterable[str]) -> None:
+        """The open-PR watch (`harbor.PR_OPEN_WATCH_SECONDS` owns why): when the
+        index shows an open PR on a watched branch, ask GitHub which PRs are
+        still open, once a watch interval, and refresh the index at once if
+        one of them is not. A merge made on GitHub then reaches `landed`, and
+        the rack's CLEAN, within the interval and with no fetch here."""
+        numbers = branches_mod.watched_open_prs(prs, watched)
+        if not numbers or self._clock() < self._pr_watch_after:
+            return
+        if self._start_pr_job(lambda: self._pr_watch_worker(numbers)):
+            self._pr_watch_after = self._clock() + PR_OPEN_WATCH_SECONDS
+
+    def _pr_watch_worker(self, numbers: frozenset[int]) -> None:
+        """One turn of the watch: the short question, then the whole refresh
+        only when a watched PR left the open list. A question GitHub did not
+        answer proves nothing and refreshes nothing: the TTL still comes."""
+        moved = False
+        try:
+            moved = self._open_prs_moved(numbers)
+        except Exception:  # noqa: BLE001 — a probe crash must not wedge the refresh
+            moved = False
+        if moved:
+            self._pr_refresh_worker()
+            return
+        with self._pr_refresh_lock:
+            self._pr_refreshing = False
+
+    def _open_prs_moved(self, numbers: frozenset[int]) -> bool:
+        """Is one of `numbers` no longer open on GitHub? False on every unknown
+        (`branches.parse_open_pr_numbers`)."""
+        if shutil.which("gh") is None:
+            return False
+        code, out, _err = create_mod.run_bounded(
+            branches_mod.build_open_prs_command(), pr_mod.NETWORK_TIMEOUT_SECONDS, cwd=self._repo_root
+        )
+        if code != 0:
+            return False
+        still_open = branches_mod.parse_open_pr_numbers(out)
+        return still_open is not None and not numbers <= still_open
 
     def _pr_refresh_worker(self) -> None:
         ok = False
@@ -2661,8 +2719,16 @@ def tree_pr(indexed: dict | None, job: dict | None) -> dict | None:
 
     The PR button's own outcome wins while it says `open`, since the index learns of a new PR only on its next
     refresh; otherwise the index's row (`gh pr list`, every state), which also knows PRs made outside the button.
+    Once the index says THAT pull request (the same url) is merged or closed, the index is the newer word: the
+    button's record stays `open` for good, and a tree whose PR merged read `open` until its branch was removed.
     """
-    if job and job.get("status") == "open" and isinstance(job.get("url"), str):
+    over = (
+        indexed is not None
+        and job is not None
+        and indexed.get("url") == job.get("url")
+        and indexed.get("state") in ("merged", "closed")
+    )
+    if not over and job and job.get("status") == "open" and isinstance(job.get("url"), str):
         number = indexed.get("number") if indexed else None
         return {"number": number, "state": "open", "url": job["url"]}
     if indexed and indexed.get("state") in ("open", "merged", "closed"):
