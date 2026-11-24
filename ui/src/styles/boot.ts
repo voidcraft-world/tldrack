@@ -13,10 +13,11 @@
  * for less.
  *
  * ORDER IS LOAD-BEARING. `tokens.css` precedes the sheet that reads its custom properties, and
- * the gate runs last because it publishes the `--fui-*-ms` values over the top of them at
- * module load, before Vue mounts anything. Do not reorder, and do not turn these into a
- * function call: a bare side-effect import cannot be forgotten, called twice, or called after
- * mount.
+ * the gate runs after both because it publishes the `--fui-*-ms` values over the top of them at
+ * module load, before Vue mounts anything. The operator's motion switch comes last: it writes
+ * the gate, so the class is already right when the first component mounts (`motion-pref.ts`).
+ * Do not reorder, and do not turn these into a function call: a bare side-effect import cannot
+ * be forgotten, called twice, or called after mount.
  *
  * NOT AN `@import`. These are imports from a `.ts` module, which keeps them clear of a Vite
  * trap: an `@import` inside a scoped `<style>` block is scoped too, and silently strips the
@@ -25,3 +26,4 @@
 import './tokens.css';
 import './fui-panel.css';
 import '../config/fui-motion-flags.ts';
+import './motion-pref.ts';

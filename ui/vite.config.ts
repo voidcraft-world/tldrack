@@ -3,7 +3,7 @@ import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
 
 /**
- * One build, five pages (`src/config/pages.ts` owns the names). The bridge serves `dist/` at
+ * One build, six pages (`src/config/pages.ts` owns the names). The bridge serves `dist/` at
  * `/`, and each page opens the others by relative address, so `base` is relative: the build
  * works at any path, behind any proxy.
  *
@@ -29,6 +29,7 @@ export default defineConfig({
                 diagram: page('diagram.html'),
                 office: page('office.html'),
                 evals: page('evals.html'),
+                settings: page('settings.html'),
             },
         },
     },

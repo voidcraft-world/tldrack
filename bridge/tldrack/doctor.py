@@ -9,8 +9,14 @@ it running with a part missing (no agent CLI, hooks not installed, the page not 
 optional part the operator has not turned on, which is the default and not a problem: it is
 listed so "is the namer on?" has one place to look. `OK` needs no words.
 
-The checks are pure functions of a `Facts` value; `gather` is the only part that reads the
-machine, so every line `doctor` can print is testable without one.
+The checks are pure functions of a `Facts` value; `main.py` `doctor_facts` is the only part that
+reads the machine, so every line `doctor` can print is testable without one.
+
+TWO READERS. `tldrack doctor` prints `Check.line()`. The rack's Settings page reads the same
+sections as JSON (`wire`, served at `GET /doctor` and printed by `doctor --json`), so the page and
+the terminal can never disagree about what is missing. A check the page can fix with one request
+names it in `action`: a closed set of kinds, each a route that already exists and already guards
+itself. The page offers a button for a kind it knows and prints `fix` for the rest.
 """
 
 from __future__ import annotations
@@ -35,6 +41,8 @@ OPTIONAL_TOOLS = {
 }
 #: An agent CLI is what a session runs. One is enough.
 AGENT_CLIS = ("claude", "codex")
+#: `action.kind`: `POST /profiles/install-hooks {"profile": action.profile}`.
+ACTION_INSTALL_HOOKS = "install-hooks"
 
 
 @dataclass(frozen=True)
@@ -43,10 +51,21 @@ class Check:
     level: str
     detail: str = ""
     fix: str = ""
+    #: What a page may offer to do about it (`ACTION_*`), or None. The terminal prints `fix`.
+    action: Mapping[str, str] | None = None
 
     def line(self) -> str:
         text = f" {MARK[self.level]} {self.name:<24} {self.detail}".rstrip()
         return f"{text}\n     → {self.fix}" if self.fix and self.level != OK else text
+
+    def wire(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "level": self.level,
+            "detail": self.detail,
+            "fix": self.fix if self.level != OK else "",
+            "action": dict(self.action) if self.action is not None and self.level != OK else None,
+        }
 
 
 @dataclass
@@ -73,6 +92,9 @@ class Facts:
     plugin_source: str | None = None
     #: The plugin names settings.json `plugins` gives an object to.
     plugin_settings: tuple[str, ...] = ()
+    #: The feature switches that are off (features.py), and why its file could not be read, if so.
+    features_off: tuple[str, ...] = ()
+    features_error: str | None = None
 
 
 def tool_checks(tools: Mapping[str, str | None]) -> list[Check]:
@@ -114,7 +136,15 @@ def hook_checks(profiles: list[tuple[str, str, bool, bool | None]]) -> list[Chec
         elif hooks:
             checks.append(Check(name, OK, "installed"))
         else:
-            checks.append(Check(name, WARN, "not installed: its rows stay 'unknown'", "tldrack hooks --install"))
+            checks.append(
+                Check(
+                    name,
+                    WARN,
+                    "not installed: its rows stay 'unknown'",
+                    "tldrack hooks --install",
+                    {"kind": ACTION_INSTALL_HOOKS, "profile": profile_id},
+                )
+            )
     return checks
 
 
@@ -168,11 +198,22 @@ def optional_checks(facts: Facts) -> list[Check]:
         Check(name, OK if on else OFF, "on" if on else f"off  (turn on: {how.get(name, 'settings.json')})")
         for name, on in sorted(parts.items())
     ]
+    checks.append(features_check(facts.features_off, facts.features_error))
     checks.append(plugins_check(facts))
     checks.append(
         plugin_settings_check(facts.plugin_settings, facts.snapshot.get("plugins") if facts.snapshot is not None else None)
     )
     return checks
+
+
+def features_check(off: tuple[str, ...], error: str | None) -> Check:
+    """What the operator switched off on the Settings page (features.py). Off is a choice, so it
+    is listed, never warned about; a file that cannot be read is the warning."""
+    if error:
+        return Check("switched off", WARN, error, "fix or remove features.json, or save any switch on the Settings page")
+    if not off:
+        return Check("switched off", OK, "nothing: every part runs")
+    return Check("switched off", OFF, f"{', '.join(off)}  (change: the rack's Settings page)")
 
 
 def plugins_check(facts: Facts) -> Check:
@@ -241,6 +282,16 @@ def verdict(sections: list[tuple[str, list[Check]]]) -> tuple[int, str]:
     if warned:
         return 0, f"ready, with {warned} part{'s' if warned != 1 else ''} missing"
     return 0, "ready"
+
+
+def wire(sections: list[tuple[str, list[Check]]]) -> dict[str, Any]:
+    """The sections as JSON, with the verdict: what `GET /doctor` answers and `doctor --json` prints."""
+    code, closing = verdict(sections)
+    return {
+        "sections": [{"title": title, "checks": [check.wire() for check in checks]} for title, checks in sections],
+        "exit": code,
+        "verdict": closing,
+    }
 
 
 def find_tools() -> dict[str, str | None]:

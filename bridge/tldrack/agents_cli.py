@@ -265,7 +265,10 @@ class PublicStatus:
         process_table: Callable[[], str | None] = read_process_table,
         started: Callable[[int], str | None] = process_started,
         clock: Callable[[], float] = time.time,
+        enabled: Callable[[], bool] = lambda: True,
     ) -> None:
+        # The operator's switch (features.py `PUBLIC_STATUS`), asked every tick.
+        self._enabled = enabled
         self._roots = roots
         self._cli = cli
         self._default_root = default_root
@@ -313,10 +316,24 @@ class PublicStatus:
         delay = 1.0  # the first read soon after start, so drift is caught early
         while not self._stop.wait(delay):
             try:
-                self.poll_once()
+                self.tick()
             except Exception as err:  # noqa: BLE001 — the timer may never die
                 print(f"tldrack: public status poll failed ({err})")
             delay = DRIFT_TICK_SECONDS if self.drifted() else PUBLIC_TICK_SECONDS
+
+    def tick(self) -> None:
+        """One turn of the timer: a public pass, unless the operator switched the cross-check off.
+        Off forgets, it does not freeze: a root left in `public` mode would keep answering for the
+        index from a read that is never refreshed again."""
+        if self._enabled():
+            self.poll_once()
+        else:
+            self.forget()
+
+    def forget(self) -> None:
+        """Drop every public read: no root is drifted, and `health` is empty, as before the first one."""
+        with self._lock:
+            self._state.clear()
 
     def poll_once(self) -> None:
         """One public pass over every root."""

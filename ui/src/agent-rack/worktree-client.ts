@@ -1531,6 +1531,9 @@ export interface WorktreePollerDeps extends PollerIoDeps {
     base_url: BaseUrl;
     poll_interval_ms: number;
     on_change: () => void;
+    /** May the TIMER poll right now? Read on each timed tick; absent is always. Why, and what an
+     *  owner that answers false still owes: `create_worktree_poller`. */
+    wanted?: () => boolean;
 }
 
 /** Is any row mid-create? Decides the poll cadence, and nothing else. */
@@ -1594,6 +1597,8 @@ export const ISLAND_FOCUS_TIMEOUT_MS = 180_000;
 export interface IslandFocus {
     arm(session: string, now: number): void;
     cancel(): void;
+    /** Is a launch still waiting to land? Its owner keeps the worktree poll running while so. */
+    armed(): boolean;
     /** The session to focus now, once; else null. */
     take(state: WorktreeState | null, live: readonly string[], now: number): string | null;
 }
@@ -1606,6 +1611,9 @@ export function create_island_focus(): IslandFocus {
         },
         cancel() {
             pending = null;
+        },
+        armed() {
+            return pending !== null;
         },
         take(state, live, now) {
             if (!pending) return null;
@@ -1642,6 +1650,13 @@ export function create_island_focus(): IslandFocus {
  * to `CREATE_POLL_INTERVAL_MS` so the job's readout actually reads as motion. The
  * timer is only re-armed when the cadence CHANGES, so a create that runs for
  * five minutes costs one `clearInterval`/`setInterval` pair, not one per tick.
+ *
+ * `wanted` rests the TIMER, the way `plugin-poller.ts` rests on its own `wanted`: a page nobody
+ * is looking at was asking the plugin for a `git` readout of every tree each 5 s (each second
+ * through a create) to redraw rows nobody could see. Only the timed tick asks it. `tick()` called
+ * by name always fetches: it is how an owner reads after an action, and how it catches up the
+ * moment the page is looked at again. An owner that rests the timer owes those calls for
+ * whatever it reads from `state()` without drawing it; `rack-http-transport.ts` owns that list.
  */
 export function create_worktree_poller(deps: WorktreePollerDeps): WorktreePoller {
     const { do_fetch, start_timer, stop_timer } = poller_io(deps);
@@ -1663,7 +1678,9 @@ export function create_worktree_poller(deps: WorktreePollerDeps): WorktreePoller
         if (timer !== null && next_ms === timer_interval_ms) return;
         if (timer !== null) stop_timer(timer);
         timer_interval_ms = next_ms;
-        timer = start_timer(() => void tick(), next_ms);
+        timer = start_timer(() => {
+            if (deps.wanted?.() ?? true) void tick();
+        }, next_ms);
     }
 
     async function tick(): Promise<void> {

@@ -15,7 +15,8 @@ import { is_service_session } from '../engine/terminal/service-sessions.ts';
 import { state_label } from '../engine/terminal/rack-board-logic.ts';
 import { display_state_color_css } from '../config/terminal-status-flags.ts';
 import { office_pointer_gesture } from './office-pointer.ts';
-import { office_pixel_ratio } from './office-render-quality.ts';
+import { office_frame_due, office_pixel_ratio } from './office-render-quality.ts';
+import { useRackPrefs } from '../composables/useRackPrefs.ts';
 
 /** The camera's default pitch above the floor, looking down over the office. */
 const OVERLOOK_PITCH_DEG = 52;
@@ -44,6 +45,10 @@ const inspected_agent = computed(() => {
 });
 watch(inspected_session, () => { dismissed_map.value = null; });
 
+/** The operator's quality switch, live: owned by office-render-quality.ts — see the note there. */
+const prefs = useRackPrefs();
+const quality = computed(() => prefs.value.office_quality);
+
 const host = ref<HTMLDivElement | null>(null);
 let renderer: WebGLRenderer | null = null;
 let camera: PerspectiveCamera | null = null;
@@ -56,6 +61,9 @@ let stop_density_watch: (() => void) | null = null;
 let visibility: IntersectionObserver | null = null;
 let visible = false;
 let scene: Scene | null = null;
+/** Re-measure the drawing buffer; set once the renderer exists. */
+let resize_buffer: (() => void) | null = null;
+let last_draw_ms = -Infinity;
 /** Once the operator orbits, a growing rack no longer re-frames the camera under them. */
 let user_moved = false;
 let framed_size = '';
@@ -271,13 +279,20 @@ function update_resources(): void {
 }
 watch(() => [rack.value?.resources, stale.value], update_resources);
 
-function loop(): void {
+function loop(now: number = performance.now()): void {
     frame = requestAnimationFrame(loop);
+    // The camera advances on EVERY animation frame, whatever is drawn: OrbitControls' damping
+    // decays per `update`, so stepping it only on drawn frames would make a `light` orbit coast
+    // twice as long as a `sharp` one. The update is arithmetic; the frame is what costs.
     controls?.update();
-    office?.tick(performance.now());
-    update_labels(performance.now());
+    if (!office_frame_due(quality.value, now, last_draw_ms)) return;
+    last_draw_ms = now;
+    office?.tick(now);
+    update_labels(now);
     if (renderer && camera && scene) renderer.render(scene, camera);
 }
+// A new quality is a new buffer size, and it lands on the next frame with no remount.
+watch(quality, () => resize_buffer?.());
 
 function update_running(): void {
     if (visible && !document.hidden) {
@@ -326,7 +341,7 @@ onMounted(() => {
         const width = Math.max(1, el.clientWidth);
         const height = Math.max(1, el.clientHeight);
         renderer.setDrawingBufferSize(width, height,
-            office_pixel_ratio(width, height, window.devicePixelRatio, max_dimension));
+            office_pixel_ratio(width, height, window.devicePixelRatio, max_dimension, quality.value));
         renderer.domElement.style.width = '100%';
         renderer.domElement.style.height = '100%';
         labels_dirty = true;
@@ -336,6 +351,7 @@ onMounted(() => {
     };
     update_office(layout.value);
     size();
+    resize_buffer = size;
     resize = new ResizeObserver(size);
     resize.observe(el);
     // Moving between displays or changing browser zoom can change DPR without resizing the host.
@@ -371,6 +387,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     cancelAnimationFrame(frame);
+    resize_buffer = null;
     resize?.disconnect();
     stop_density_watch?.();
     visibility?.disconnect();

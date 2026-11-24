@@ -44,19 +44,22 @@ Then, from wherever you keep code. It takes about ten minutes, and most of that 
 
 ```bash
 git clone https://github.com/voidcraft-world/tldrack
-cd tldrack
-uv tool install --editable ./bridge   # puts `tldrack` on your PATH, running from this checkout
-tldrack doctor                        # what this machine has; every missing part prints its fix
-tldrack hooks --install               # your agent CLIs report their state to the rack
-cd /path/to/your/project              # new agents start in the directory you run `tldrack up` from
-tldrack up                            # builds the page the first time, then opens http://127.0.0.1:7682/
-tldrack laya install                  # Laya's runtime and base model (about 800 MB), then serves it
+uv tool install --editable ./tldrack/bridge   # puts `tldrack` on your PATH, running from this checkout
+cd /path/to/your/project                      # new agents start in the directory you run `tldrack up` from
+tldrack up                                    # builds the page the first time, then opens http://127.0.0.1:7682/
 ```
 
+The page takes it from there. Open **Settings** (the ⚙ at the top of the rack, then **ALL SETTINGS**, or
+`http://127.0.0.1:7682/settings.html`). Its **SETUP** tab lists what this machine has and puts a button
+beside each missing part:
+
+- **INSTALL** on a hooks line lets that agent CLI report its state to the rack.
+- **INSTALL** on the Laya card downloads Laya's runtime and base model (about 800 MB) and serves it.
+
 If your shell says `tldrack: command not found`, run `uv tool update-shell` and open a new terminal. If
-`tldrack doctor` says port 7681 or 7682 is taken (another rack on this machine, perhaps another account's),
-give this one its own ports in that shell, then carry on:
-`export TLDRACK_PORT=7781 TLDRACK_STATUS_PORT=7791`.
+`tldrack up` does not start, `tldrack doctor` prints the same checks in the terminal, each with its fix. A
+port 7681 or 7682 that is taken (another rack on this machine, perhaps another account's) gets its own
+ports in that shell, then carry on: `export TLDRACK_PORT=7781 TLDRACK_STATUS_PORT=7791`.
 
 In the rack's **LAUNCH** row, press **CLAUDE** (or **CODEX**), then **HERE** (or **MAIN** on an older bridge). A terminal opens with the
 agent in it: give it a task. Its row picks up a readable name from your prompt. When its turn ends,
@@ -69,6 +72,10 @@ other devices see the same directories. Worktree and LEAD launches remain tied t
 startup repository; their buttons explain when the selected project cannot use them.
 Settings also holds the list/graph view, office, diagram and terminal appearance. **Close finished**
 sits with the finished sessions.
+
+If the rack runs heavy on your machine, **Settings → FEATURES** lists every part with what it costs and
+what you lose without it, and **LITE** switches off the ones that only cost: the 3D office and the
+motion in this browser, and three background loops in the bridge. Any plugin can be left out by name.
 
 `tldrack up` is safe to run again at any time: a rack that is already up is left alone. `tldrack kill` stops
 it, and your agent sessions keep running in tmux.
@@ -181,19 +188,20 @@ public suite is 200 invented cases, and anyone can run it.
 | **Node 22.18 or newer** | builds the page, once |
 | **uv** | installs the `tldrack` command and Laya's runtime |
 | **An agent CLI** | Claude Code or Codex, logged in. One is enough |
-| **About 2 GB of disk** | Laya's runtime and base model. Skip `tldrack laya install` and the rack still runs, without verdicts |
+| **About 2 GB of disk** | Laya's runtime and base model. Skip the Laya install and the rack still runs, without verdicts |
 
 tldrack is for one person on their own machine: it has no login. [`SECURITY.md`](SECURITY.md) says what
 it trusts, and what 0.1 does not close yet.
 
 ## What is optional
 
-Everything below is off until you turn it on. `tldrack doctor` lists each part and how to switch it on.
+Everything below is off until you turn it on. **Settings → FEATURES** has the switch for each, and
+`tldrack doctor` lists them in the terminal.
 
 | | Adds | Turn on |
 |---|---|---|
-| **Ollama** | a local model suggests the next step for a finished session | `tldrack next-step --mode shadow` |
-| **ntfy** | a push to your phone when an agent has waited on you a while | `tldrack notify --init` |
+| **Ollama** | a local model suggests the next step for a finished session | Settings → FEATURES → Next step |
+| **ntfy** | a push to your phone when an agent has waited on you a while | `tldrack notify --init` once, then its switch in Settings |
 | **An Android phone** | grade Laya's verdicts from the phone, over USB | [`android/README.md`](android/README.md) |
 
 ## Where to read next

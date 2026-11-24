@@ -9,6 +9,9 @@ hand-run CLI ingest at the same moment makes this tick a no-op, not a race.
 The first run waits `FIRST_DELAY_SECONDS` after startup, so a bridge restart does not start a
 backfill while a supervisor is still waiting for `/snapshot`. `POST /ledger/ingest` (the rack
 UI's INGEST NOW) wakes the loop early. The ledger off (no ledger directory) → never starts.
+
+The operator's switch (features.py `LEDGER_INGEST`) stops the TIMER only. An ingest somebody asked
+for still runs: a switch that also swallowed INGEST NOW would leave no way to ingest from the page.
 """
 
 from __future__ import annotations
@@ -40,7 +43,9 @@ class LedgerScheduler:
         first_delay: float = FIRST_DELAY_SECONDS,
         run: Callable[[list[str]], subprocess.CompletedProcess] | None = None,
         log: Callable[[str], None] | None = None,
+        enabled: Callable[[], bool] = lambda: True,
     ) -> None:
+        self._enabled = enabled
         self._root = root_dir
         self._interval = interval
         self._first_delay = first_delay
@@ -74,11 +79,16 @@ class LedgerScheduler:
         return True
 
     def _loop(self) -> None:
-        self._wake.wait(self._first_delay)
+        asked = self._wake.wait(self._first_delay)
         while not self._stop.is_set():
             self._wake.clear()
-            self.run_once()
-            self._wake.wait(self._interval)
+            self.tick(asked)
+            asked = self._wake.wait(self._interval)
+
+    def tick(self, asked: bool) -> dict | None:
+        """One turn of the loop. `asked` is a `request()`; the timer's own turn runs only while the
+        operator's switch is on."""
+        return self.run_once() if asked or self._enabled() else None
 
     def run_once(self) -> dict:
         started = time.time()

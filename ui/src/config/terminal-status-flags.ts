@@ -77,7 +77,8 @@ export const TERMINAL_STATUS_FLAGS = {
     /** Listen to the bridge's SSE stream (GET /events) so state flips land
      *  instantly instead of on the next ~3s poll. Pure accelerator: the poll
      *  keeps running regardless — downgrade debounce counts poll observations,
-     *  and polling is the liveness/fallback path for older bridges. Flipping
+     *  and polling is the liveness/fallback path for older bridges. (A hidden
+     *  page's poll may rest: `engine/terminal/rack-ingestor.ts` `should_poll`.) Flipping
      *  this off mid-session stops SSE frames from being processed (the stream
      *  object stays open until the port loses its last subscriber). */
     sse_enabled: true,

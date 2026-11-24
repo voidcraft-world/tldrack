@@ -21,6 +21,7 @@ import { parse_canvas_artifacts, type CanvasArtifacts } from './canvas-artifacts
 import type { OfficeAction, OfficeRack } from '../engine/terminal/agent-office-link.ts';
 import type { RackSession } from '../engine/terminal/multi-terminal-layout.ts';
 import { is_service_session } from '../engine/terminal/service-sessions.ts';
+import { useRackPrefs } from '../composables/useRackPrefs.ts';
 import {
     LEAD_DECISIONS_SLOT_ID,
     NEXT_STEP_SLOT_ID,
@@ -31,6 +32,17 @@ import {
 } from './agent-canvas.ts';
 
 const AgentOfficeView = defineAsyncComponent(() => import('../agent-office/AgentOfficeView.vue'));
+/**
+ * The office is this pane's one expensive section: its chunk carries three.js, and once mounted it
+ * draws a WebGL frame on every animation frame for as long as it is on screen. `prefs.office` off
+ * (the settings page, per browser) therefore removes the SECTION, not just its pixels: the async
+ * component above is never rendered, so the chunk is never requested, and no grip or empty band is
+ * left because the section owns both. Flipping the switch in another tab mounts or unmounts it
+ * here with no reload (`composables/useRackPrefs.ts`). The pop-out office window is unaffected:
+ * opening it is its own decision.
+ */
+const prefs = useRackPrefs();
+const office_on = computed(() => prefs.value.office);
 
 const props = defineProps<{
     src: string | null;
@@ -199,7 +211,8 @@ function nudge(delta: number): void {
         <header class="canvas__head">
             <span class="fui-techtext canvas__title">▤ CANVAS</span>
             <button v-if="map_available" class="fui-btn canvas__map-toggle" type="button"
-                :aria-pressed="map_open" title="Show or hide the compact activity map below the 3D office"
+                :aria-pressed="map_open"
+                :title="office_on ? 'Show or hide the compact activity map below the 3D office' : 'Show or hide the compact activity map'"
                 @click="toggle_map">MAP</button>
             <span
                 v-if="question"
@@ -217,8 +230,9 @@ function nudge(delta: number): void {
                 {{ canvas_layout_label(layout) }}
             </button>
         </header>
-        <div class="canvas__content" tabindex="0" aria-label="3D office, artifacts, activity map and canvas content">
-            <CanvasResizableSection section="office" label="3D office" default_height="clamp(360px, 100cqw, 720px)"
+        <div class="canvas__content" tabindex="0"
+            :aria-label="office_on ? '3D office, artifacts, activity map and canvas content' : 'Artifacts, activity map and canvas content'">
+            <CanvasResizableSection v-if="office_on" section="office" label="3D office" default_height="clamp(360px, 100cqw, 720px)"
                 @dragging="section_dragging">
                 <AgentOfficeView embedded :rack="rack" :stale="stale" @select="emit('select', $event)"
                     @action="(action, session) => emit('office_action', action, session)" />

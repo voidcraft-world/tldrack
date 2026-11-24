@@ -121,3 +121,37 @@ def test_plugin_settings_name_what_is_configured_and_what_did_not_mount():
     assert check(plugin_settings=("laya", "coordinator"), snapshot=up).level == OK
     stray = check(plugin_settings=("laya", "devcies"), snapshot=up)
     assert stray.level == WARN and "not mounted: devcies" in stray.detail
+
+
+def test_what_is_switched_off_is_listed_not_warned_about():
+    def check(**over):
+        return {c.name: c for c in doctor.optional_checks(facts(**over))}["switched off"]
+
+    assert check().level == OK and "every part runs" in check().detail
+    off = check(features_off=("code_watch", "plugin:laya"))
+    assert off.level == OFF and "code_watch, plugin:laya" in off.detail and "Settings page" in off.detail
+    broken = check(features_error="features.json could not be read, so nothing is switched off: x")
+    assert broken.level == WARN and "features.json" in broken.fix
+    assert doctor.verdict(doctor.run_checks(facts(features_off=("code_watch",)))) == (0, "ready"), "off is a choice"
+
+
+def test_the_page_reads_the_same_checks_as_json():
+    sections = doctor.run_checks(facts(profiles=[("claude", "claude", True, False)], tools={**ALL_TOOLS, "ttyd": None}))
+    body = doctor.wire(sections)
+    assert [section["title"] for section in body["sections"]] == [title for title, _ in sections]
+    assert (body["exit"], body["verdict"]) == doctor.verdict(sections)
+    checks = {check["name"]: check for section in body["sections"] for check in section["checks"]}
+    assert checks["ttyd"] == {
+        "name": "ttyd",
+        "level": FAIL,
+        "detail": "not found",
+        "fix": doctor.REQUIRED_TOOLS["ttyd"],
+        "action": None,
+    }
+    # The one check a page can fix with a request names the route's kind and its argument.
+    assert checks["hooks claude"]["action"] == {"kind": doctor.ACTION_INSTALL_HOOKS, "profile": "claude"}
+    assert checks["hooks claude"]["fix"] == "tldrack hooks --install"
+    # An OK line carries no fix and no action, whatever the check was built with.
+    assert checks["tmux"]["fix"] == "" and checks["tmux"]["action"] is None
+    done = doctor.Check("hooks claude", OK, "installed", "tldrack hooks --install", {"kind": doctor.ACTION_INSTALL_HOOKS})
+    assert done.wire()["fix"] == "" and done.wire()["action"] is None

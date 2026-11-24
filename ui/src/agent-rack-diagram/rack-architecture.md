@@ -278,6 +278,11 @@ guarded `POST /next-step/event` → `next-step-log.jsonl`. [DO IT] presses the r
 arm and refusals still run. `GET /next-step` reads the state and `POST /next-step/settings` switches
 the mode.
 
+Settings: `settings.html` reads `GET /doctor` (the checks `tldrack doctor` prints, as JSON) and
+`GET /features`, and writes guarded `POST /features` → `features.json`. A switch can only turn a part of
+this bridge off or back on, never name a path or load code: `bridge/tldrack/features.py`. What one browser
+draws (the 3D office, motion) stays in that browser: `ui/src/config/rack-prefs.ts`.
+
 What is guarded, and where. Hooks only report; deciding stays with you or a deterministic rule.
 
 ```mermaid
