@@ -110,6 +110,28 @@ def test_rename_session_answers_200(handler, monkeypatch):
     assert handler.recorded.body["session"] == "renamed"
 
 
+def test_rename_into_a_machinery_name_is_refused_before_tmux(handler, monkeypatch):
+    """`laya-limits` would file an agent under SERVICES, where the page offers no rename back (service_names.py)."""
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail("tmux must not run"))
+    _with_body(handler, {"session": "tldrack", "name": "laya-limits"})
+
+    handler._handle_rename_session()
+
+    assert handler.recorded.status == 400
+    assert "'laya-'" in handler.recorded.body["error"]
+
+
+def test_rename_out_of_a_machinery_name_stays_open(handler, monkeypatch):
+    """The way back for a session that already carries one."""
+    _tmux_ok(monkeypatch)
+    _with_body(handler, {"session": "laya-limits", "name": "limits"})
+
+    handler._handle_rename_session()
+
+    assert handler.recorded.status == 200, handler.recorded.body
+    assert handler.recorded.body["session"] == "limits"
+
+
 def test_origin_is_logged_not_crashed(handler, monkeypatch, capsys):
     """The log line that carried the bug still reports the caller's origin."""
     _tmux_ok(monkeypatch)
@@ -187,6 +209,17 @@ def _record_tmux(monkeypatch, live=(), returncode=0, stderr=""):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     return calls
+
+
+@pytest.mark.parametrize("name", ["laya-limits", "svc-notes"])
+def test_spawn_refuses_a_machinery_name_before_tmux(spawner, monkeypatch, name):
+    calls = _record_tmux(monkeypatch)
+    _with_body(spawner, {"name": name, "profile": "claude-a"})
+
+    spawner._handle_spawn()
+
+    assert spawner.recorded.status == 400 and calls == []
+    assert "services and jobs" in spawner.recorded.body["error"]
 
 
 def test_spawn_answers_201_and_runs_the_profiles_stamped_argv(spawner, monkeypatch):

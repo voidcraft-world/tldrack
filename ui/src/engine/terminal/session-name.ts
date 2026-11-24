@@ -8,8 +8,9 @@
  * live in exactly one place, so the regex and the message shown can never
  * drift between call sites.
  *
- * Dependency-free so it runs under `node --test`.
+ * No DOM, so it runs under `node --test`.
  */
+import { is_service_session } from './service-sessions.ts';
 
 /** A tmux session name: one or more letters, digits, `-` or `_`. */
 export const SESSION_NAME_RE = /^[A-Za-z0-9_-]+$/;
@@ -20,6 +21,23 @@ export const SESSION_NAME_WARNING = 'Session names must match [A-Za-z0-9_-]+';
 /** True when `name` is a valid tmux session name. */
 export function is_valid_session_name(name: string): boolean {
     return SESSION_NAME_RE.test(name);
+}
+
+/** The warning shown when a name would file an agent among the services. */
+export const RESERVED_NAME_WARNING = 'That prefix is kept for services and jobs: the row would move to SERVICES';
+
+/**
+ * Why the operator may not give a session this name, or null when they may. A machinery prefix
+ * is refused because the rack files a session by its name, and a service row offers no rename
+ * back. The bridge refuses its own plugins' prefixes again (`bridge/tldrack/service_names.py`
+ * owns why); a host's extra prefixes are known only here, so this check is the one that covers
+ * them. `current` is the session being renamed: one that already carries such a name may keep
+ * its prefix, since refusing would change nothing about where it is filed.
+ */
+export function session_name_error(name: string, current?: string): string | null {
+    if (!is_valid_session_name(name)) return SESSION_NAME_WARNING;
+    if (is_service_session(name) && !(current !== undefined && is_service_session(current))) return RESERVED_NAME_WARNING;
+    return null;
 }
 
 /**
