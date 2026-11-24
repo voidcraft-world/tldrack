@@ -9,6 +9,10 @@
  *
  *     SERVICE_SESSION_FLAGS.job_prefixes.push('deploy-', 'nightly-');
  *
+ * An agent session never takes one of these names: the rename box refuses every prefix listed
+ * here (`engine/terminal/session-name.ts`), and the bridge refuses the two defaults below at its
+ * own doors (`bridge/tldrack/service_names.py`, whose test holds the two default lists equal).
+ *
  * Import-free, like every module the layout loads under bare `node --test`.
  */
 export const SERVICE_SESSION_FLAGS = {

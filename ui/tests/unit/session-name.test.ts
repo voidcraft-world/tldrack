@@ -3,10 +3,13 @@ import { describe, it } from 'node:test';
 import {
     ATTACH_ONLY_PREFIX,
     SESSION_NAME_RE,
+    RESERVED_NAME_WARNING,
     SESSION_NAME_WARNING,
     attach_only_arg,
     is_valid_session_name,
+    session_name_error,
 } from '../../src/engine/terminal/session-name.ts';
+import { SERVICE_SESSION_FLAGS } from '../../src/config/service-session-flags.ts';
 
 describe('is_valid_session_name', () => {
     it('accepts letters, digits, hyphen and underscore', () => {
@@ -49,5 +52,32 @@ describe('the attach-only ?arg= grammar', () => {
 
     it('prefixes the bare name', () => {
         assert.equal(attach_only_arg('svc-vite'), 'attach:svc-vite');
+    });
+});
+
+describe('session_name_error', () => {
+    it('takes an ordinary name and refuses a malformed one with the shape warning', () => {
+        assert.equal(session_name_error('limits-laya'), null);
+        assert.equal(session_name_error('has space'), SESSION_NAME_WARNING);
+    });
+
+    it('refuses a machinery prefix: the row would be filed under SERVICES with no rename back', () => {
+        assert.equal(session_name_error('laya-limits', 'vc-3'), RESERVED_NAME_WARNING);
+        assert.equal(session_name_error('svc-notes'), RESERVED_NAME_WARNING);
+    });
+
+    it('refuses a prefix the host added, which the bridge cannot know', () => {
+        SERVICE_SESSION_FLAGS.job_prefixes.push('nightly-');
+        try {
+            assert.equal(session_name_error('nightly-notes', 'vc-3'), RESERVED_NAME_WARNING);
+        } finally {
+            SERVICE_SESSION_FLAGS.job_prefixes.pop();
+        }
+        assert.equal(session_name_error('nightly-notes', 'vc-3'), null);
+    });
+
+    it('lets a session that already carries a machinery name keep its prefix', () => {
+        assert.equal(session_name_error('laya-limits-2', 'laya-limits'), null);
+        assert.equal(session_name_error('limits', 'laya-limits'), null);
     });
 });

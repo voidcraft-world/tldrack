@@ -73,7 +73,7 @@ from tldrack.ledger.scheduler import INTERVAL_SECONDS as LEDGER_INTERVAL_SECONDS
 from tldrack.ledger.store import ledger_dir
 from tldrack.icons import ICON_TOKEN_RE, SessionIconStore, resolve_icons_path
 from tldrack.stars import SessionStarStore, resolve_stars_path
-from tldrack.models import MODEL_TOKEN_RE, SessionModelStore, resolve_models_path
+from tldrack.models import MODEL_TOKEN_RE, SessionModelStore, current_readings, resolve_models_path
 from tldrack.mission_cli import mission as mission_group
 from tldrack.lead.cli import lead as lead_group
 from tldrack.missions import MissionError, MissionNotFound, MissionStore, resolve_missions_path, standing_seeds
@@ -151,6 +151,7 @@ from tldrack.lead.subscription import SubscriptionGate
 from tldrack.pane_typist import PaneTypist
 from tldrack.rack_db import RackDb, resolve_rack_db_path
 from tldrack.session_records import RECORD_MAX_AGE_DAYS, SessionRecordStore, resolve_records_path
+from tldrack.service_names import reserved_error, reserved_prefix
 from tldrack.agents_cli import PublicStatus
 from tldrack.permission_ledger import PermissionLedger
 from tldrack.permission_ledger import resolve_path as resolve_permissions_path
@@ -1100,7 +1101,10 @@ def build_status_handler(
             # knows the model before the first reply exists) over the disk
             # store (which keeps an IDLE session labelled across a bridge
             # restart). See statusline_models.py for the precedence.
-            resolve_fallback_models(model_store.get_all(), statusline_models.get_all(), session_paths),
+            # Only a reading of the session that holds the name NOW: models.py `current_readings`.
+            resolve_fallback_models(
+                current_readings(model_store.get_all(), tmux_sessions), statusline_models.get_all(), session_paths
+            ),
         )
         # Additive per-row `context_left` (0–100): live rows only — a dead row's
         # last reading describes a conversation nobody can continue in it.
@@ -2214,6 +2218,10 @@ def build_status_handler(
             if not isinstance(name, str) or not SESSION_NAME_RE.fullmatch(name):
                 self._send_json(400, {"ok": False, "error": "invalid session name — must match [A-Za-z0-9_-]+"})
                 return
+            # An agent never takes a machinery name: service_names.py owns why.
+            if reserved_error(name):
+                self._send_json(400, {"ok": False, "error": reserved_error(name)})
+                return
             if not isinstance(profile_id, str) or not PROFILE_ID_RE.fullmatch(profile_id):
                 self._send_json(400, {"ok": False, "error": "invalid profile id"})
                 return
@@ -2306,6 +2314,11 @@ def build_status_handler(
                 return
             if not isinstance(new, str) or not SESSION_NAME_RE.fullmatch(new):
                 self._send_json(400, {"error": "invalid new name — must match [A-Za-z0-9_-]+"})
+                return
+            # Never INTO a machinery name (service_names.py owns why). Out of one stays open: it is
+            # the way back for a session that already carries such a name.
+            if reserved_error(new) and reserved_prefix(old) is None:
+                self._send_json(400, {"error": reserved_error(new)})
                 return
             if old == new:
                 if auto_names is not None:

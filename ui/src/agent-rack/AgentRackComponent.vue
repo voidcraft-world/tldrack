@@ -30,7 +30,7 @@ import {
     type RackRow,
     type RowSegment,
 } from '../engine/terminal/multi-terminal-layout.ts';
-import { SESSION_NAME_WARNING, is_valid_session_name } from '../engine/terminal/session-name.ts';
+import { session_name_error } from '../engine/terminal/session-name.ts';
 import { SERVICE_SESSION_EMOJI, shows_service_mark } from '../engine/terminal/service-sessions.ts';
 import {
     ANSWER_TO_READ_EMOJI,
@@ -1512,11 +1512,12 @@ function commit_rename(): void {
         cancel_rename();
         return;
     }
-    // Validated here as well as on the bridge (which re-checks the same regex):
-    // catching it locally means no round trip and the input stays open on the
-    // bad name instead of collapsing back to the old one.
-    if (!is_valid_session_name(name)) {
-        rename_error.value = SESSION_NAME_WARNING;
+    // Validated here as well as on the bridge (which re-checks the shape and its own
+    // plugins' prefixes): catching it locally means no round trip and the input stays
+    // open on the bad name instead of collapsing back to the old one.
+    const refused = session_name_error(name, session);
+    if (refused) {
+        rename_error.value = refused;
         return;
     }
     send('rename', session, name);
