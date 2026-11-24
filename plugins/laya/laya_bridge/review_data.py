@@ -1276,6 +1276,7 @@ def card(snap: Snapshot, key: str) -> dict | None:
     if item.laya is not None:
         laya = {k: item.laya[k] for k in ("p", "threshold", "model", "checkpoint", "question_version", "source")}
     return {
+        "great_example": snap.fold.examples.get(key, {}).get("great_example", False),
         "item_id": f"{snap.spec.name}:{key}",
         "key": key,
         "surface": snap.spec.name,
@@ -1597,6 +1598,7 @@ def recent_rows(
                 "text_chars": utf16_len(meta["text"]),
                 "stratum": found["stratum"] if found else None,
                 "reference_open": found["reference"]["open"] if found else None,
+                "great_example": current.examples.get(key, {}).get("great_example", False),
                 "operator": review_log.answer_ref(live) if live is not None else None,
             }
         )

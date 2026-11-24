@@ -62,6 +62,7 @@ POLICY_POSTS = (
     "/challenger",
     "/lab",
     "/restart",
+    "/review/example",
     "/review/answer",
     "/review/retest",
     "/review/undo",
@@ -69,7 +70,7 @@ POLICY_POSTS = (
     "/start",
     "/stop",
 )
-JSON_POSTS = ("/card/publish", "/challenger", "/lab", "/review/answer", "/review/retest", "/review/undo")
+JSON_POSTS = ("/review/example", "/card/publish", "/challenger", "/lab", "/review/answer", "/review/retest", "/review/undo")
 #: The agent rack's grade (`review.rack`): in process only, through `rack_grade` (the module note owns why).
 RACK_GRADE = "/review/rack"
 LIFECYCLE_POSTS = ("/start", "/stop", "/install")
@@ -311,6 +312,7 @@ class LayaPlugin:
             "/review/queue",
             "/review/item",
             "/review/recent",
+            "/review/example",
             "/review/answer",
             "/review/retest",
             "/review/undo",
@@ -489,6 +491,8 @@ class LayaPlugin:
             return self._challenger(body, base)
         if subpath == "/lab":
             return self._lab(body, base, loaded)
+        if subpath == "/review/example":
+            return review.example(base, body, loaded=loaded)
         if subpath == "/review/answer":
             return review.answer(base, body, loaded=loaded)
         if subpath == "/review/retest":

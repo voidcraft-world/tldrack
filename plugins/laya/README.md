@@ -40,6 +40,7 @@ Wire shapes: `schemas/src/decide.ts` (decide, ledger) and `schemas/src/laya-revi
 | `GET /review/queue` | policy | stats for every surface + up to `limit` (0–50) cards of one |
 | `GET /review/item` | policy | one card by `surface` + `key` |
 | `GET /review/recent` | policy | the newest `limit` (1–200, default 100) live verdicts of one surface, with the operator's answers; `after` (the last page's `summary.next`) starts strictly after that page's last row, and `offset` (0–100,000) skips that many more |
+| `POST /review/example` | policy + JSON | set or remove a Great example star (`surface`, `key`, `great_example`); curation owned by `laya_bridge/review_log.py` |
 | `POST /review/answer` · `/review/undo` | policy + JSON | the operator's AGREE / FLIP / SKIP (one press may grade a wave), and UNDO |
 | `POST /review/retest` | policy + JSON | the operator's blind second look at a text they graded, `{surface, key, of, open, needs?}` → `{retest, stats}`; a `retest` row, never an answer; `409 retest_stale` · `already_retested` · `not_due`. Owner: `laya_bridge/review.py` `retest` |
 | `/review/rack` | in process only (`rack_grade(body, headers)`), never mounted | the agent rack's grade of one live verdict, `{decision_id, open}`, from the ⚠️'s own menu: an operator answer in stratum `rack`; `409 already_answered` keeps a standing OPEN or DONE answer, and a skip is replaced. The headers are those of the press, and pass the policy and JSON checks before a row is written. Owner: `laya_bridge/review.py` `rack`; who may call: `laya_bridge/plugin.py` |

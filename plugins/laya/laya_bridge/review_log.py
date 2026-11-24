@@ -18,6 +18,12 @@ The fold holds it in `retests` only: never in `labels`, `skipped` or `live`. One
 its answer, the intra-rater κ (`review_data.intra_rater`). It has its own `answer_id`, so UNDO takes it
 back like an answer.
 
+GREAT EXAMPLES. An `example` row sets a text key's `great_example` flag for future synthetic
+training candidates. The last setting wins; it survives grading and label undo. It is curation,
+not a label or admission to a golden evaluation suite: no counts, splits or training eligibility
+change. Only the key and decision reference are saved here; the private source keeps the text.
+`examples` exposes the latest setting, including removals, to downstream readers.
+
 Writes run under `REVIEW_LOCK` (threads) plus `fcntl.flock` on `data/.<stem>-operator.lock`
 (processes); `data/` must already exist, because this plugin never creates the params tree.
 """
@@ -37,7 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from laya_bridge import files
+from laya_bridge import files, ledger
 from laya_bridge.envelope import Refusal
 from laya_bridge.files import is_p
 from laya_bridge.paths import DATA_DIRNAME, data_file
@@ -95,6 +101,7 @@ class OperatorFold:
     live: dict[str, dict] = field(default_factory=dict)
     undone: set[str] = field(default_factory=set)
     retests: dict[str, dict] = field(default_factory=dict)
+    examples: dict[str, dict] = field(default_factory=dict)
     bad_lines: int = 0
     rows: int = 0
 
@@ -134,6 +141,11 @@ def _row_ok(row: Mapping[str, Any]) -> bool:
         return True
     if not (isinstance(row.get("key"), str) and REVIEW_KEY.fullmatch(row["key"]) is not None and _row_needs_ok(row)):
         return False
+    if op == "example":
+        return isinstance(row.get("great_example"), bool) and (
+            row.get("decision_id") is None
+            or (isinstance(row["decision_id"], str) and ledger.DECISION_ID.fullmatch(row["decision_id"]) is not None)
+        )
     if op == "retest":
         return (
             isinstance(row.get("of"), str)
@@ -177,6 +189,7 @@ def fold(rows: Iterable[Mapping[str, Any]], bad_lines: int = 0) -> OperatorFold:
     """Pure. Per key, the LAST live answer decides; an undo of an unknown or already-undone id is ignored.
     A `retest` row goes to `retests` and nowhere else (the module doc: RETEST)."""
     out = OperatorFold(bad_lines=bad_lines)
+    example_ids: set[str] = set()
     for row in rows:
         out.rows += 1
         if not _row_ok(row):
@@ -184,10 +197,14 @@ def fold(rows: Iterable[Mapping[str, Any]], bad_lines: int = 0) -> OperatorFold:
             continue
         answer_id = row["answer_id"]
         if row["op"] != "undo":
-            if answer_id in out.live or answer_id in out.retests or answer_id in out.undone:
+            if answer_id in out.live or answer_id in out.retests or answer_id in out.undone or answer_id in example_ids:
                 out.bad_lines += 1  # an id is written once; a repeat is not a second answer
                 continue
-            (out.live if row["op"] == "answer" else out.retests)[answer_id] = dict(row)
+            if row["op"] == "example":
+                example_ids.add(answer_id)
+                out.examples[row["key"]] = dict(row)
+            else:
+                (out.live if row["op"] == "answer" else out.retests)[answer_id] = dict(row)
         elif answer_id in out.live:
             del out.live[answer_id]
             out.undone.add(answer_id)

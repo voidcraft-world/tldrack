@@ -146,7 +146,7 @@ const input = JSON.parse(readFileSync(0, 'utf8'));
 const schemas = {
   ledger: decide.layaLedgerRowSchema, operator: review.operatorAnswerRowSchema, queue: review.reviewQueueSchema,
   item: review.reviewItemResultSchema, result: review.reviewResultSchema, ops: review.layaOpsStateSchema,
-  recent: review.reviewRecentSchema,
+  recent: review.reviewRecentSchema, example: review.reviewExampleResultSchema,
   lab: review.layaLabResultSchema, restart: review.layaRestartResultSchema, landing: decide.layaLandingRowSchema,
   rack: review.reviewRackRequestSchema, retest_request: review.reviewRetestRequestSchema,
   retest: review.reviewRetestResultSchema,
@@ -906,3 +906,18 @@ def test_a_rack_grade_and_a_challenger_card_parse_as_the_schema_says(tree, fake_
         }
     )
     assert out["failures"] == [] and out["refused"] == [True, True, True]
+
+
+def test_great_example_python_row_and_response_match_the_wire(tree, fake_runtime):
+    tree.path("data/x")
+    [key] = tree.unlabelled(["The synthetic test task is complete."])
+    tree.labels({key: False})
+    plugin = LayaPlugin(context=None, runtime=fake_runtime, params_dir=lambda: tree.base)
+    headers = {"host": "127.0.0.1:7682", "origin": "http://localhost:5173", "content-type": "application/json"}
+    status, response = plugin.handle_request(
+        "POST", "/review/example", {}, {"surface": SURFACE, "key": key, "great_example": True}, headers
+    )
+    assert status == 200
+    stored = read_rows(review_log.operator_path(tree.base, SURFACE))
+    result = run_node({"accept": {"example": [response], "operator": stored}, "refuse": {}})
+    assert result["failures"] == []

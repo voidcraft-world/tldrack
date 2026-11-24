@@ -119,6 +119,7 @@ export const reviewLayaSchema = z.object({
   source: layaSourceSchema,
 });
 export const reviewCardSchema = z.object({
+  great_example: z.boolean().optional(), // absent from older bridges
   item_id: z.string().max(200), // `${surface}:${key}`
   key: z.string().regex(REVIEW_KEY),
   surface: layaReviewSurfaceSchema,
@@ -299,6 +300,17 @@ export const reviewQueueSchema = z.object({
   generated_at: iso,
 });
 export const reviewItemResultSchema = z.object({ ...envelope, card: reviewCardSchema.nullable() });
+export const reviewExampleRequestSchema = z.strictObject({
+  surface: layaReviewSurfaceSchema,
+  key: z.string().regex(REVIEW_KEY),
+  great_example: z.boolean(),
+});
+export const reviewExampleResultSchema = z.object({
+  ...envelope,
+  key: z.string().regex(REVIEW_KEY),
+  great_example: z.boolean(),
+});
+export type ReviewExampleRequest = z.infer<typeof reviewExampleRequestSchema>;
 export const reviewAnswerRequestSchema = z.strictObject({
   surface: layaReviewSurfaceSchema,
   key: z.string().regex(REVIEW_KEY),
@@ -364,6 +376,7 @@ export const reviewRetestResultSchema = z.object({ ...envelope, retest: retestRe
  *  today's done cut, which is what RIGHT and WRONG are graded against. Answer it through `/review/answer` with `key` and
  *  `reference_open` (null: no current card holds the text, so it cannot be answered). */
 export const reviewRecentRowSchema = z.object({
+  great_example: z.boolean().optional(),
   key: z.string().regex(REVIEW_KEY),
   decision_id: z.string().regex(LAYA_DECISION_ID),
   at: iso,
@@ -471,6 +484,14 @@ export const operatorAnswerRowSchema = z.discriminatedUnion('op', [
       needs: reviewNeedsSchema.optional(), // on its own side of open (`needs_side_ok`)
     })
     .refine((row) => needs_side_ok(row.needs, row.open), { path: ['needs'], message: NEEDS_SIDE }),
+  // Great examples: owned by plugins/laya/laya_bridge/review_log.py — see the note there.
+  z.strictObject({
+    ...operatorRowHead,
+    op: z.literal('example'),
+    key: z.string().regex(REVIEW_KEY),
+    great_example: z.boolean(),
+    decision_id: z.string().regex(LAYA_DECISION_ID).nullable(),
+  }),
   z.strictObject({ ...operatorRowHead, op: z.literal('undo') }),
 ]);
 

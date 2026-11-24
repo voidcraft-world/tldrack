@@ -282,6 +282,14 @@
                     </section>
 
                     <div class="lr-bar">
+                        <LayaExampleButton
+                            :key="card.item_id"
+                            :surface="card.surface"
+                            :item_key="card.key"
+                            :marked="card.great_example ?? false"
+                            :disabled="in_flight"
+                            @saved="(marked) => { card.great_example = marked; }"
+                        />
                         <!-- A four-way surface answers DONE · READ · RUNNING · NEEDS YOU (`review-deck-model.ts` `is_three_way`). -->
                         <div v-if="three_way" class="lr-actions lr-actions--four" role="group" aria-label="Answer">
                             <button
@@ -423,6 +431,7 @@ import { fail_text, load_review_queue, post_review_answer, post_review_retest, p
 import { local_access_state, unlock_local_access } from '../engine/terminal/local-network-gate.ts';
 import AgentMessage from './AgentMessage.vue';
 import LayaDownState from './LayaDownState.vue';
+import LayaExampleButton from './LayaExampleButton.vue';
 import LayaConversation from './LayaConversation.vue';
 import LayaRecentList from './LayaRecentList.vue';
 import LayaThreadHeader from './LayaThreadHeader.vue';
