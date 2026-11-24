@@ -67,6 +67,7 @@ POLICY_CALLS = [
     ("GET", "/review/queue", None),
     ("GET", "/review/item", None),
     ("GET", "/review/recent", None),
+    ("POST", "/review/example", {}),
     ("POST", "/review/answer", {}),
     ("POST", "/review/retest", {}),
     ("POST", "/review/undo", {}),
@@ -835,3 +836,75 @@ def test_a_retest_is_refused_unless_it_is_the_live_label_and_due(plugin, tree, g
     assert post(plugin, "/review/undo", {"surface": SURFACE, "answer_id": old["answer_id"]})[0] == 200
     assert_refusal(retest(), 409, "retest_stale")
     assert retest(open=None, key=graded[1]["key"], of=graded[1]["answer_id"])[1]["retest"]["open"] is None, "cannot say"
+
+
+# -- great examples ------------------------------------------------------------
+
+
+def test_great_example_persists_without_changing_grades_and_can_be_removed(plugin, tree, labelled):
+    key = labelled[0]
+    request = {"surface": SURFACE, "key": key, "great_example": True}
+    before = get(plugin, "/review/queue", surface=SURFACE)[1]
+    assert get(plugin, "/review/item", surface=SURFACE, key=key)[1]["card"]["great_example"] is False
+    status, body = post(plugin, "/review/example", request)
+    assert status == 200 and body["great_example"] is True and body["key"] == key
+    after = get(plugin, "/review/queue", surface=SURFACE)[1]
+    assert before["surfaces"] == after["surfaces"]
+    assert next(c for c in after["cards"] if c["key"] == key)["great_example"] is True
+    path = review_log.operator_path(tree.base, SURFACE)
+    written = review_log.read_operator_log(path)[0]
+    assert len(written) == 1 and written[0]["op"] == "example"
+    assert "text" not in written[0]
+    assert post(plugin, "/review/example", request)[0] == 200
+    assert len(review_log.read_operator_log(path)[0]) == 1, "retrying a setting is idempotent"
+
+    graded = post(plugin, "/review/answer", {"surface": SURFACE, "key": key, "answer": "agree", "reference_open": True})[1]
+    assert post(plugin, "/review/undo", {"surface": SURFACE, "answer_id": graded["answer"]["answer_id"]})[0] == 200
+    assert get(plugin, "/review/item", surface=SURFACE, key=key)[1]["card"]["great_example"] is True
+    assert post(plugin, "/review/example", {**request, "great_example": False})[0] == 200
+    assert get(plugin, "/review/item", surface=SURFACE, key=key)[1]["card"]["great_example"] is False
+    current = review_log.read_fold(tree.base, SURFACE)[1]
+    assert current.examples[key]["great_example"] is False
+    assert current.labels == {} and current.retests == {} and current.bad_lines == 0
+
+
+def test_great_example_on_recent_keeps_the_decision_reference(plugin, tree):
+    decide_text(plugin, "All changes and checks are complete.")
+    row = get(plugin, "/review/recent", surface=SURFACE)[1]["rows"][0]
+    assert post(plugin, "/review/example", {"surface": SURFACE, "key": row["key"], "great_example": True})[0] == 200
+    assert get(plugin, "/review/recent", surface=SURFACE)[1]["rows"][0]["great_example"] is True
+    current = review_log.read_fold(tree.base, SURFACE)[1]
+    assert current.examples[row["key"]]["decision_id"] == row["decision_id"]
+    assert current.bad_lines == 0
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"great_example": "yes"},
+        {"great_example": 1},
+        {"great_example": None},
+        {"key": "../secret"},
+        {"surface": "unknown"},
+        {"extra": True},
+    ],
+)
+def test_great_example_refuses_invalid_body_without_writing(plugin, tree, labelled, change):
+    body = {"surface": SURFACE, "key": labelled[0], "great_example": True, **change}
+    assert_refusal(post(plugin, "/review/example", body), 400, "bad_body")
+    assert review_log.read_operator_log(review_log.operator_path(tree.base, SURFACE))[0] == []
+
+
+def test_great_example_refuses_missing_items_and_full_logs(plugin, tree, labelled, monkeypatch):
+    request = {"surface": SURFACE, "key": "f" * 16, "great_example": True}
+    assert_refusal(post(plugin, "/review/example", request), 409, "unknown_item")
+    monkeypatch.setattr(review_log, "LOG_MAX_ROWS", 0)
+    assert_refusal(post(plugin, "/review/example", {**request, "key": labelled[0]}), 413, "review_full")
+    assert review_log.read_operator_log(review_log.operator_path(tree.base, SURFACE))[0] == []
+
+
+def test_great_example_does_not_mark_wave_riders(plugin, wave_card):
+    request = {"surface": SURFACE, "key": wave_card["key"], "great_example": True}
+    assert post(plugin, "/review/example", request)[0] == 200
+    for member in wave_card["wave"]["members"]:
+        assert get(plugin, "/review/item", surface=SURFACE, key=member["key"])[1]["card"]["great_example"] is False

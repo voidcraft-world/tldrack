@@ -12,6 +12,7 @@ import {
     load_review_recent,
     post_laya_lab,
     post_laya_restart,
+    post_review_example,
     post_review_answer,
     post_review_undo,
 } from '../../src/decide/laya-review-client.ts';
@@ -345,5 +346,33 @@ describe('Chrome’s local-network prompt', () => {
         assert.deepEqual(got.ok ? null : [got.kind, got.status, got.error, got.hint], ['gate', 0, LOCAL_ACCESS_PROMPTING_HINT, undefined]);
         const posted = await post_review_answer(REQUEST);
         assert.deepEqual(posted.ok ? null : [posted.kind, posted.error], ['gate', LOCAL_ACCESS_PROMPTING_HINT]);
+    });
+});
+
+
+describe('great example writes', () => {
+    const request = { surface: 'agent_open_work', key: KEY, great_example: true };
+    it('posts a checked setting and reads back the saved state', async () => {
+        reply = json(200, { v: 1, ok: true, message: 'Great example saved', key: KEY, great_example: true });
+        const got = await post_review_example(request);
+        assert.ok(got.ok);
+        assert.equal(got.data.great_example, true);
+        assert.equal(calls[0].url, `${BASE}/review/example`);
+        assert.deepEqual(JSON.parse(calls[0].init?.body as string), request);
+    });
+    it('refuses an invalid setting without sending it', async () => {
+        const got = await post_review_example({ ...request, great_example: 'yes' as unknown as boolean });
+        assert.equal(got.ok, false);
+        assert.equal(calls.length, 0);
+    });
+    it('reports an older bridge and invalid response instead of claiming success', async () => {
+        reply = json(404, { error: 'not found' });
+        const old = await post_review_example(request);
+        assert.ok(!old.ok);
+        assert.equal(old.kind, 'restart');
+        reply = json(200, { v: 1, ok: true, message: 'saved', key: KEY, great_example: 'true' });
+        const bad = await post_review_example(request);
+        assert.ok(!bad.ok);
+        assert.equal(bad.kind, 'invalid');
     });
 });

@@ -9,6 +9,8 @@ import {
     operatorAnswerRowSchema,
     layaLabRequestSchema,
     layaOpsStateSchema,
+    reviewExampleRequestSchema,
+    reviewExampleResultSchema,
     reviewAnswerRequestSchema,
     reviewCardSchema,
     reviewQueueSchema,
@@ -382,5 +384,25 @@ describe('the verifier card names its own repository', () => {
         assert.ok(layaVerifierPublishSchema.safeParse({ ...reply, url: 'https://github.com/someone/fork/pull/3', repository: 'someone/fork' }).success);
         assert.ok(!layaVerifierPublishSchema.safeParse({ ...reply, url: 'https://github.com/voidcraft-world/tldrack/pull/3', repository: 'someone/fork' }).success);
         assert.ok(!layaVerifierPublishSchema.safeParse({ ...reply, url: 'https://evil.example/pull/3' }).success);
+    });
+});
+
+
+describe('great example curation', () => {
+    const request = { surface: 'agent_open_work', key: '0123456789abcdef', great_example: true };
+    it('accepts setting and removing, and refuses coercion or extra fields', () => {
+        assert.ok(reviewExampleRequestSchema.safeParse(request).success);
+        assert.ok(reviewExampleRequestSchema.safeParse({ ...request, great_example: false }).success);
+        for (const bad of [null, 1, 'true']) {
+            assert.equal(reviewExampleRequestSchema.safeParse({ ...request, great_example: bad }).success, false);
+        }
+        assert.equal(reviewExampleRequestSchema.safeParse({ ...request, text: 'unexpected' }).success, false);
+        assert.equal(reviewExampleRequestSchema.safeParse({ ...request, key: '../secret' }).success, false);
+    });
+    it('checks persisted curation separately from labels', () => {
+        const row = { v: 1, op: 'example', answer_id: 'a_0123456789abcdef', at: '2026-11-24T00:00:00Z', by: 'operator', ...request, decision_id: null };
+        assert.ok(operatorAnswerRowSchema.safeParse(row).success);
+        assert.equal(operatorAnswerRowSchema.safeParse({ ...row, open: true }).success, false);
+        assert.equal(reviewExampleResultSchema.safeParse({ v: 1, ok: true, message: 'saved', key: request.key, great_example: 'yes' }).success, false);
     });
 });

@@ -345,6 +345,48 @@ def answer(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = N
     )
 
 
+def example(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = None, now: datetime | None = None) -> Response:
+    """POST /review/example: curation owned by review_log.py — see GREAT EXAMPLES."""
+    try:
+        body = _body(body, ("surface", "key", "great_example"))
+        surface = _surface(body["surface"], "bad_body")
+        key = _key(body["key"], "bad_body")
+        marked = body["great_example"]
+        if not isinstance(marked, bool):
+            raise bad_request("bad_body", "great_example must be a boolean")
+    except Refusal as refusal:
+        return refusal_response(refusal)
+    if not params_ready(base):
+        return unavailable()
+    assert base is not None
+    try:
+        with review_log.writing(base, surface):
+            snap = review_data.snapshot(base, surface, loaded=loaded)
+            found = review_data.card(snap, key)
+            if found is None:
+                return error_response(409, "unknown_item", "No current source holds that item: nothing was recorded")
+            if found["great_example"] != marked:
+                review_log.append(
+                    base,
+                    surface,
+                    {
+                        "v": 1,
+                        "op": "example",
+                        "answer_id": review_log.new_answer_id(),
+                        "at": rows.utc_stamp(now),
+                        "by": "operator",
+                        "surface": surface,
+                        "key": key,
+                        "great_example": marked,
+                        "decision_id": found["decision"]["decision_id"] if found["decision"] else None,
+                    },
+                    snap.fold,
+                )
+    except Refusal as refusal:
+        return refusal_response(refusal)
+    return 200, ok_body("Great example saved" if marked else "Great example removed", key=key, great_example=marked)
+
+
 def retest(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = None, now: datetime | None = None) -> Response:
     """POST /review/retest {surface, key, of, open, needs?}: the operator's second, blind look at a text they graded
     (`review_data.py`: THE BLIND RETEST). `open` is true, false, or null for "cannot say"; `needs` rides on its own side of it.

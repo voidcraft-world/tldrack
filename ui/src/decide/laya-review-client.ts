@@ -14,6 +14,9 @@ import {
     layaLabResultSchema,
     layaOpsStateSchema,
     layaRestartResultSchema,
+    reviewExampleRequestSchema,
+    reviewExampleResultSchema,
+    type ReviewExampleRequest,
     reviewAnswerRequestSchema,
     reviewItemResultSchema,
     REVIEW_RECENT_MAX,
@@ -246,6 +249,12 @@ export function load_review_item(surface: string, key: string): Promise<LayaCall
 }
 
 // ── writes ───────────────────────────────────────────────────────────────────
+
+export function post_review_example(request: ReviewExampleRequest) {
+    const checked = reviewExampleRequestSchema.safeParse(request);
+    if (!checked.success) return unsent('review/example');
+    return post_route('review/example', checked.data, POST_TIMEOUT_MS, reviewExampleResultSchema, null);
+}
 
 export function post_review_answer(request: ReviewAnswerRequest): Promise<LayaCall<ReviewResult, ReviewRefusal>> {
     const checked = reviewAnswerRequestSchema.safeParse(request);

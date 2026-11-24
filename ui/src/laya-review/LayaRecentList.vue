@@ -214,6 +214,14 @@
                                                     <span class="lr-grade__label">{{ v.label }}<kbd class="fui-key">{{ v.key }}</kbd></span>
                                                     <span v-if="explain" class="lr-grade__cap">{{ v.caption }}</span>
                                                 </button>
+                                                <LayaExampleButton
+                                                    :key="`${surface_name}:${row.key}`"
+                                                    :surface="surface_name"
+                                                    :item_key="row.key"
+                                                    :marked="row.great_example ?? false"
+                                                    :disabled="in_flight || row.reference_open === null"
+                                                    @saved="(marked) => { rows = rows.map((r) => r.key === row.key ? { ...r, great_example: marked } : r); }"
+                                                />
                                                 <!-- What it says, seen; `announce` above is what assistive tech hears. -->
                                                 <div class="lr-status" :class="{ 'lr-status--bad': status_line && !status_line.ok }" aria-hidden="true">{{ status_line?.text ?? '' }}</div>
                                             </div>
@@ -263,6 +271,7 @@ import PanelDownState from './PanelDownState.vue';
 import { fail_text, load_review_recent, post_review_answer, post_review_undo } from '../decide/laya-review-client.ts';
 import { local_access_state } from '../engine/terminal/local-network-gate.ts';
 import AgentMessage from './AgentMessage.vue';
+import LayaExampleButton from './LayaExampleButton.vue';
 import LayaConversation from './LayaConversation.vue';
 import LayaDownState from './LayaDownState.vue';
 import LayaNameCard from './LayaNameCard.vue';
