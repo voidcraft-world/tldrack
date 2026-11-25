@@ -1,4 +1,6 @@
 <template>
+    <UpdateCard />
+
     <section class="fui-panel st-card" aria-labelledby="st-doctor-title">
         <div class="st-card__head">
             <h2 id="st-doctor-title" class="fui-techtext st-card__title">THIS MACHINE</h2>
@@ -50,7 +52,8 @@
 
 <script setup lang="ts">
 /**
- * SETUP: the machine's health, and the two installs a first run needs (the agent hooks, Laya).
+ * SETUP: whether the rack itself is up to date (`UpdateCard.vue`), the machine's health, and the
+ * two installs a first run needs (the agent hooks, Laya).
  *
  * The report is read when the tab opens, on REFRESH, when the browser tab comes back to the
  * front, and after an install: never on a timer (`page-bridge.ts` owns the rule). A report
@@ -60,6 +63,7 @@
 import { computed, ref } from 'vue';
 
 import LayaCard from './LayaCard.vue';
+import UpdateCard from './UpdateCard.vue';
 import {
     LEVEL_MARKS,
     LEVEL_WORDS,

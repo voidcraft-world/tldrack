@@ -8,7 +8,7 @@
 import { DIAGRAM_PAGE, EVALS_PAGE, RACK_PAGE, REVIEW_PAGE } from '../config/pages.ts';
 
 export const SETTINGS_TABS = [
-    { id: 'setup', label: 'SETUP', title: 'What this machine has, and the parts still to install' },
+    { id: 'setup', label: 'SETUP', title: 'Updates, what this machine has, and the parts still to install' },
     { id: 'features', label: 'FEATURES', title: 'Switch off the parts of the rack that cost a CPU or a GPU' },
     { id: 'appearance', label: 'APPEARANCE', title: 'The terminal’s font, renderer and theme' },
     { id: 'directories', label: 'DIRECTORIES', title: 'Where a new agent starts' },

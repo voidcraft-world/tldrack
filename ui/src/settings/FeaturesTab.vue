@@ -18,14 +18,15 @@
                 class="board-btn"
                 :class="{ 'is-on': arm.armed.value === 'defaults' }"
                 :disabled="applying"
-                title="Back to the rack as it ships: everything in this browser, and every bridge switch on. Press twice."
+                title="Back to the rack as it ships: everything in this browser, and every bridge switch at its default. Press twice."
                 @click="arm.press('defaults', () => void apply_preset('defaults'))"
             >
                 <span class="fui-corner tl"></span><span class="fui-corner br"></span>{{ arm.armed.value === 'defaults' ? 'DEFAULTS?' : 'DEFAULTS' }}
             </button>
         </div>
         <p class="st-card__about">
-            LITE is the rack with its costly parts off: the rows, the terminal and the agents all still work. DEFAULTS is everything on.
+            LITE is the rack with its costly parts off: the rows, the terminal and the agents all still work. DEFAULTS is the rack as it
+            ships: everything on, except a part that acts with no click (auto-update).
             Both set this browser and the bridge in one press.
         </p>
         <p v-if="preset_note" class="lr-status" :class="{ 'lr-status--bad': !preset_note.ok }" role="status">{{ preset_note.text }}</p>
@@ -255,7 +256,7 @@ const preset_note = ref<{ ok: boolean; text: string } | null>(null);
 
 const PRESET_DONE = {
     lite: 'LITE is in place: this browser draws no office and no motion, and the bridge’s LITE switches are off.',
-    defaults: 'Defaults are back: this browser draws everything, and every bridge switch is on.',
+    defaults: 'Defaults are back: this browser draws everything, and every bridge switch is at its default.',
 } as const;
 
 async function apply_preset(preset: keyof typeof PRESET_DONE): Promise<void> {

@@ -9,8 +9,10 @@ import pytest
 from tldrack import doctor, features, main
 from tldrack.agents_cli import PublicEntry, PublicStatus
 from tldrack.features import (
+    AUTO_UPDATE,
     BRIDGE_FEATURES,
     CODE_WATCH,
+    UPDATE_CHECK,
     LEDGER_INGEST,
     PUBLIC_STATUS,
     FeatureSwitches,
@@ -32,15 +34,39 @@ def store(tmp_path: Path, *plugins: str) -> FeatureSwitches:
 
 def test_no_file_runs_everything(tmp_path):
     switches = store(tmp_path, "laya")
-    assert all(row["on"] and not row["pending"] for row in switches.view()["features"])
+    rows = switches.view()["features"]
+    assert all(row["on"] is row["default"] and not row["pending"] for row in rows)
+    # Everything runs, except the one part that would act on the machine with no click.
+    assert [row["key"] for row in rows if not row["on"]] == [AUTO_UPDATE]
     assert switches.view()["error"] is None and switches.off_keys() == []
     assert not switches.path.exists()  # reading never writes
+
+
+def test_a_part_that_is_off_by_default_is_listed_only_once_switched_on(tmp_path):
+    switches = store(tmp_path)
+    assert switches.on(AUTO_UPDATE) is False and switches.on(UPDATE_CHECK) is True
+    switches.save({"set": {AUTO_UPDATE: True, CODE_WATCH: False}})
+    assert json.loads(switches.path.read_text()) == {"version": 1, "off": [CODE_WATCH], "on": [AUTO_UPDATE]}
+    again = store(tmp_path)
+    assert again.on(AUTO_UPDATE) is True and again.off_keys() == [CODE_WATCH]
+    again.save({"set": {AUTO_UPDATE: False}})
+    assert json.loads(switches.path.read_text()) == {"version": 1, "off": [CODE_WATCH]}
+    assert store(tmp_path).on(AUTO_UPDATE) is False and store(tmp_path).off_keys() == [CODE_WATCH]
+
+
+def test_a_file_from_before_the_on_list_and_a_bad_on_list(tmp_path):
+    path = tmp_path / "features.json"
+    path.write_text(json.dumps({"version": 1, "off": [AUTO_UPDATE]}))  # off, said the old way round
+    assert store(tmp_path).on(AUTO_UPDATE) is False and store(tmp_path).off_keys() == []
+    path.write_text(json.dumps({"version": 1, "off": [], "on": "auto_update"}))
+    broken = store(tmp_path)
+    assert broken.on(AUTO_UPDATE) is False and "on must be a list" in broken.error
 
 
 def test_a_switch_is_saved_and_survives_a_restart(tmp_path):
     switches = store(tmp_path)
     view = switches.save({"set": {CODE_WATCH: False}})
-    assert [row["key"] for row in view["features"] if not row["on"]] == [CODE_WATCH]
+    assert [row["key"] for row in view["features"] if row["on"] is not row["default"]] == [CODE_WATCH]
     assert json.loads(switches.path.read_text()) == {"version": 1, "off": [CODE_WATCH]}
     assert store(tmp_path).on(CODE_WATCH) is False and store(tmp_path).on(PUBLIC_STATUS) is True
     switches.save({"set": {CODE_WATCH: True}})
@@ -248,10 +274,10 @@ def test_feature_routes_are_registered_and_round_trip(spawner):  # noqa: F811
     assert spawner.GET_ROUTES["/features"] == "_handle_get_features"
     assert spawner.POST_ROUTES["/features"] == "_handle_save_features"
     spawner._handle_get_features()
-    assert spawner.recorded.status == 200 and all(row["on"] for row in spawner.recorded.body["features"])
+    assert spawner.recorded.status == 200 and all(row["on"] is row["default"] for row in spawner.recorded.body["features"])
     _with_body(spawner, {"set": {LEDGER_INGEST: False}})._handle_save_features()
     assert spawner.recorded.status == 200
-    assert [row["key"] for row in spawner.recorded.body["features"] if not row["on"]] == [LEDGER_INGEST]
+    assert [row["key"] for row in spawner.recorded.body["features"] if row["on"] is not row["default"]] == [LEDGER_INGEST]
     assert json.dumps(spawner.recorded.body)
     _with_body(spawner, {"set": {"nope": False}})._handle_save_features()
     assert spawner.recorded.status == 400 and "Unknown feature" in spawner.recorded.body["error"]

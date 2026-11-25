@@ -108,6 +108,11 @@
 .nv-board.lr .st-card__line {
     color: var(--lr-ink);
 }
+/* A sentence from the bridge may carry a path or a branch with no space to break at. */
+.nv-board.lr .st-card__line,
+.nv-board.lr .st-card > .fui-callout {
+    overflow-wrap: anywhere;
+}
 .nv-board.lr .st-card > .fui-callout,
 .nv-board.lr .st-panel > .fui-callout,
 .nv-board.lr .st-card > .lr-loading,
@@ -259,6 +264,44 @@
 .nv-board.lr .st-fix--log {
     max-height: 16rem;
     overflow: auto;
+}
+
+/* ── SETUP: the update card ────────────────────────────────────────────────── */
+/* The commits an update would pull: the short sha as a readout, the subject as prose that wraps. */
+.nv-board.lr .st-commits {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.nv-board.lr .st-commit {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 10px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+.nv-board.lr .st-commit code {
+    color: var(--lr-ink-3);
+}
+.nv-board.lr .st-commit span {
+    color: var(--lr-ink);
+    overflow-wrap: anywhere;
+}
+/* What UPDATE will do, in order. */
+.nv-board.lr .st-steps {
+    margin: 0;
+    padding-left: 1.6rem;
+    color: var(--lr-ink);
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+/* Rows that follow other content in a card: the rule a first row otherwise goes without. */
+.nv-board.lr .st-rows--ruled {
+    padding-top: 12px;
+    border-top: 1px solid var(--lr-well-line);
 }
 
 /* ── The switch: a real checkbox laid over its track ───────────────────────── */

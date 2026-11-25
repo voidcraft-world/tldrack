@@ -484,6 +484,34 @@ class FreshnessMonitor:
         if thread is not None:
             thread.join(timeout)
 
+    # -- for an update (update.py) ----------------------------------------------
+    def is_stale(self) -> bool | None:
+        """The last poll's answer with no busy round, for a route polled every few seconds. None
+        while switched off, like `snapshot()`."""
+        if not self._enabled():
+            return None
+        with self._lock:
+            return bool(self._changed)
+
+    def preflight_now(self) -> tuple[bool, str | None, str | None]:
+        """`(stale, preflight status, error)` for the tree as it is this instant.
+
+        For a caller that just wrote the tree itself and is about to restart into it: there is no
+        edit in flight to wait out, so no quiet period, and the operator's switch does not apply
+        (it stops the timed hashing, not a check somebody asked for). Blocks for the preflight."""
+        current = Fingerprinter().fingerprint(watched_paths(self._spec))
+        if not diff_fingerprints(self._baseline, current):
+            return False, None, None
+        status, error = self._preflight_fn(self._spec, sorted(p for p in current if p.endswith(".py")))
+        # The same re-read the timed preflight makes: a verdict is for the tree it ran against.
+        if fingerprint_key(Fingerprinter().fingerprint(watched_paths(self._spec))) != fingerprint_key(current):
+            return True, "failed", "the code changed again while it was being checked"
+        return True, status, error
+
+    def busy_now(self) -> list[str]:
+        """Every plugin's `busy_reasons()`, asked live."""
+        return self._busy.reasons()
+
     # -- the wire ---------------------------------------------------------------
     def snapshot(self) -> dict | None:
         """The `bridge.freshness` block. `busy` is asked live, every call. None while switched off:

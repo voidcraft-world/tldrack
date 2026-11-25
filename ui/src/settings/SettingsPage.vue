@@ -48,7 +48,8 @@
 /**
  * `settings.html`: the rack's settings, as a page of its own. Four tabs:
  *
- *   SETUP        what this machine has (`GET /doctor`), the hooks and Laya still to install
+ *   SETUP        the rack's own updates (`GET /update`), what this machine has (`GET /doctor`),
+ *                the hooks and Laya still to install
  *   FEATURES     what this browser draws, and what the bridge runs
  *   APPEARANCE   the terminal's font, renderer and theme
  *   DIRECTORIES  where a new agent starts
