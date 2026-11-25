@@ -890,3 +890,22 @@ def test_resolve_refuses_a_typo_rather_than_falling_back():
     assert registry.resolve("shel") is None
     with pytest.raises(KeyError):
         registry.spawn_argv("shel", "vc-1", "/repo")
+
+
+def test_profile_identity_remains_importable_without_bridge_runtime():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    code = """
+from pathlib import Path
+from tldrack.profiles import Profile, ProfileRegistry
+registry = ProfileRegistry([Profile('shell', 'SH', 'shell', None, False)],
+                           'shell', home=Path('/tmp'), source='file')
+assert registry.describe('shell')['kind'] == 'shell'
+assert registry.claude_roots() == []
+"""
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+    result = subprocess.run([sys.executable, "-S", "-c", code], env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr

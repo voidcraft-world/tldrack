@@ -45,9 +45,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable, Iterable, Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tldrack.profile_availability import ProfileAvailability
 
 from tldrack import paths
-from tldrack.profile_availability import ProfileAvailability
 from tldrack import antigravity_hooks, headless
 from tldrack.atomic_store import atomic_write
 from tldrack.session_lineage import prepare_lineage, lineage_args
@@ -987,7 +990,7 @@ class ProfileRegistry:
     ) -> None:
         self._profiles = list(profiles)
         self._by_id = {p.id: p for p in self._profiles}
-        self.availability = ProfileAvailability(list(self._by_id))
+        self._availability: ProfileAvailability | None = None
         self.default_id = default_id
         self.source = source  # "file" | "detected" — for the startup echo
         self._home = home
@@ -1024,6 +1027,16 @@ class ProfileRegistry:
     def kind_of(self, profile_id: object) -> str | None:
         profile = self.resolve(profile_id)
         return profile.kind if profile else None
+
+    @property
+    def availability(self) -> ProfileAvailability:
+        # The lab reads profile identity without installing the bridge core; only launch settings need it.
+        with self._lock:
+            if self._availability is None:
+                from tldrack.profile_availability import ProfileAvailability
+
+                self._availability = ProfileAvailability(list(self._by_id))
+            return self._availability
 
     def launch_refusal(self, profile_id: object) -> str | None:
         profile = self.resolve(profile_id)
