@@ -61,7 +61,7 @@
 
         <VerifierCard />
 
-        <details v-if="session && (name_view?.named || name_error)" class="rl-name-review">
+        <details v-if="session && (name_view?.named || name_error)" class="rl-name-review" open>
             <summary>Review the session name</summary>
             <LayaNameCard :view="name_view" :error="name_error" :since="session.since" @labelled="(v) => (name_view = v)" />
         </details>
