@@ -283,6 +283,39 @@ def test_remote_versions_skip_peeled_refs_and_odd_tags():
     assert release.remote_versions(listing) == ["0.1.0-rc.1", "0.1.0", "0.10.0"]
 
 
+def test_a_tags_commit_is_its_peeled_line_when_it_has_one():
+    listing = "\n".join(
+        [
+            "aaa1\trefs/tags/v0.1.0",
+            "bbb2\trefs/tags/v0.1.0^{}",
+            "ccc3\trefs/tags/v0.1.1",
+            "ddd4\trefs/tags/v0.1.10",
+        ]
+    )
+    assert release.tag_commit(listing, "v0.1.0") == "bbb2"  # annotated: the commit, not the tag object
+    assert release.tag_commit(listing, "v0.1.1") == "ccc3"  # lightweight
+    assert release.tag_commit(listing, "v0.1.2") is None
+
+
+def test_the_release_run_watched_is_the_one_at_the_tags_commit(monkeypatch):
+    """A tag cut a second time: the first cut's run, of another commit, must never be the one judged."""
+    runs_by_commit = {"old": [{"databaseId": 1}], "new": [{"databaseId": 2}]}
+    watched: list[str] = []
+
+    def fake_gh(*args: str, capture: bool = True) -> str:
+        if args[:2] == ("run", "list"):
+            assert args[args.index("--branch") + 1] == "v0.2.0"
+            return json.dumps(runs_by_commit[args[args.index("--commit") + 1]])
+        if args[:2] == ("run", "watch"):
+            watched.append(args[2])
+            return ""
+        raise AssertionError(f"unexpected {args}")
+
+    monkeypatch.setattr(release, "gh", fake_gh)
+    release.watch_release_run("v0.2.0", "new")
+    assert watched == ["2"]
+
+
 def test_a_consumer_manifest_moves_only_the_released_packages():
     text = (
         '{\n    "name": "host",\n    "dependencies": {\n        "@tldrack/ui": "file:../tldrack/ui",\n'
