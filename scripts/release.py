@@ -86,6 +86,16 @@ def remote_versions(ls_remote: str) -> list[str]:
     return sorted(set(found), key=pack.version_key)
 
 
+def tag_commit(ls_remote: str, ref: str) -> str | None:
+    """The commit `ref` names in `git ls-remote --tags` output. An annotated tag lists its own object
+    and then, peeled (`^{}`), the commit it points at; a lightweight tag lists the commit alone."""
+    found: dict[str, str] = {}
+    for line in ls_remote.splitlines():
+        sha, _, name = line.partition("\t")
+        found[name] = sha
+    return found.get(f"refs/tags/{ref}^{{}}") or found.get(f"refs/tags/{ref}")
+
+
 def parse_consumers(env_value: str, extra: list[str] | None = None) -> list[Path]:
     """Consumer directories from the env var plus `--consumer`, expanded, deduplicated, in order."""
     seen: dict[Path, None] = {}
@@ -335,15 +345,20 @@ def plan_lines(version: str, head: str, consumers: list[Path]) -> list[str]:
     ]
 
 
-def watch_release_run(ref: str) -> None:
+def watch_release_run(ref: str, commit: str) -> None:
+    """Wait for the release run of `ref` AT `commit`. A tag that was deleted and cut again leaves its
+    first run behind under the same name, and until GitHub starts the new one that old run is the only
+    answer to the name alone: the release would be judged by a run of another commit."""
     for _ in range(30):
-        runs = json.loads(gh("run", "list", "--workflow", RELEASE_WORKFLOW, "--branch", ref, "--json", "databaseId") or "[]")
+        runs = json.loads(
+            gh("run", "list", "--workflow", RELEASE_WORKFLOW, "--branch", ref, "--commit", commit, "--json", "databaseId") or "[]"
+        )
         if runs:
             say(f"→ watching release run {runs[0]['databaseId']}")
             gh("run", "watch", str(runs[0]["databaseId"]), "--exit-status", capture=False)
             return
         time.sleep(5)
-    raise ReleaseError(f"no {RELEASE_WORKFLOW} run started for {ref}: check the Actions tab")
+    raise ReleaseError(f"no {RELEASE_WORKFLOW} run started for {ref} at {commit[:7]}: check the Actions tab")
 
 
 def verify_release(version: str) -> None:
@@ -373,7 +388,7 @@ def tag(version: str, yes: bool, dry_run: bool, consumers: list[str]) -> None:
         if dry_run:
             say(f"  would watch {RELEASE_WORKFLOW}, verify the release, then sync consumers")
             return
-        watch_release_run(ref)
+        watch_release_run(ref, tag_commit(remote_tags, ref) or head)
         verify_release(version)
         sync_consumers(version, consumers, dry_run)
         return
@@ -413,7 +428,7 @@ def tag(version: str, yes: bool, dry_run: bool, consumers: list[str]) -> None:
         raise ReleaseError("not confirmed")
     act(False, f"tag {ref}", ["git", "tag", "-a", ref, head, "-m", f"tldrack {version}"])
     act(False, f"push {ref}", ["git", "push", "--quiet", "origin", ref])
-    watch_release_run(ref)
+    watch_release_run(ref, head)
     verify_release(version)
     sync_consumers(version, consumers, dry_run)
 
