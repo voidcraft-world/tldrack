@@ -74,10 +74,12 @@
                     <div class="st-row__body">
                         <span class="st-row__title">Auto-update</span>
                         <p id="st-update-auto-text" class="st-row__text">
-                            When main moves: pull, rebuild the page and restart the bridge with no click. Sessions keep running.
+                            Ask the remote every 5 minutes and, when main moved, pull, rebuild the page and restart the bridge with no click.
+                            Sessions keep running.
                         </p>
                         <p v-if="!view.checks" class="st-row__note" role="status">
-                            The timed check is switched off, and auto-update needs it. Switch on Update check under <a href="#features">FEATURES</a>.
+                            Nothing asks the remote on a timer, so the ⚙ shows no dot until you press CHECK NOW. For the dot without the
+                            automatic update, switch on Update check under <a href="#features">FEATURES</a>.
                         </p>
                         <p v-if="auto_error" class="st-row__note" role="alert">{{ auto_error }}</p>
                     </div>
@@ -199,6 +201,9 @@ async function set_auto(on: boolean): Promise<void> {
         return;
     }
     auto_written.value = result.data.features.find((feature) => feature.key === AUTO_UPDATE_KEY)?.on ?? null;
-    update.refresh();
+    // Switched on: ask the remote now, so the card says where the checkout stands without waiting
+    // for the bridge's next timed check.
+    if (auto_written.value) void update.press('check');
+    else update.refresh();
 }
 </script>

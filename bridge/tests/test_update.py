@@ -432,25 +432,35 @@ def test_this_checkout_is_found_from_the_package():
 # --- the timer ----------------------------------------------------------------
 
 
-def test_the_timer_only_looks_until_auto_is_switched_on(rack, switches):
+def test_a_rack_nobody_configured_asks_the_remote_nothing(rack, switches):
+    updater = rack.updater(switches)
+    rack.land("ui/src/app.ts", "export const page = 2;\n", "A new page")
+    updater.tick()
+    assert rack.calls == []  # no fetch, no git at all: the timer is off until a switch says otherwise
+    view = updater.view()
+    assert view["checks"] is False and view["auto"] is False and not rack.ran("git", "fetch")
+    updater.apply()  # a press still works
+    assert updater.view()["behind"] == 0
+
+
+def test_the_update_check_only_looks(rack, switches):
+    switches.save({"set": {UPDATE_CHECK: True}})
     updater = rack.updater(switches)
     rack.land("ui/src/app.ts", "export const page = 2;\n", "A new page")
     before = rack.head()
     updater.tick()
-    assert updater.view()["behind"] == 1 and updater.view()["auto"] is False and rack.head() == before
-    switches.save({"set": {AUTO_UPDATE: True}})
-    updater.tick()
-    assert updater.view()["behind"] == 0 and updater.view()["auto"] is True and rack.head() != before
+    view = updater.view()
+    assert view["behind"] == 1 and view["checks"] is True and view["auto"] is False and rack.head() == before
 
 
-def test_the_timer_is_silent_with_the_check_switched_off(rack, switches):
-    switches.save({"set": {AUTO_UPDATE: True, UPDATE_CHECK: False}})
+def test_auto_update_brings_its_own_check(rack, switches):
+    switches.save({"set": {AUTO_UPDATE: True}})  # one switch, not two
     updater = rack.updater(switches)
     rack.land("ui/src/app.ts", "export const page = 2;\n", "A new page")
+    before = rack.head()
     updater.tick()
-    assert rack.calls == [] and updater.view()["checks"] is False
-    updater.apply()  # a press still works
-    assert updater.view()["behind"] == 0
+    view = updater.view()
+    assert view["behind"] == 0 and view["checks"] is True and view["auto"] is True and rack.head() != before
 
 
 def test_auto_never_acts_on_a_checkout_with_an_edit_in_it(rack, switches):
