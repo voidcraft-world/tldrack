@@ -7,9 +7,10 @@ from the default, which for nearly every part is what is OFF:
 
     {"version": 1, "off": ["code_watch", "plugin:phone-link"]}
 
-A part that acts on the machine with no click (`auto_update`: pull, build, restart) is the other
-way round: off until the operator switches it on, and then listed under `"on"`. A build that
-predates `"on"` reads the file as if that key were absent.
+A part that reaches off this machine or acts on it with no click is the other way round: off until
+the operator switches it on, and then listed under `"on"`. Those are `update_check` (a `git fetch`
+on a timer: a stranger's rack makes no network request they did not ask for) and `auto_update`
+(pull, build, restart). A build that predates `"on"` reads the file as if that key were absent.
 
 WHY NOT settings.json. That file is the operator's own hand, read once at startup, and it holds
 the security posture (`allowed_origins`): no page may write it. This one is written by a page, so
@@ -71,7 +72,7 @@ class Feature:
     applies: str = NOW
     #: Whether the page's LITE preset switches it off.
     lite: bool = False
-    #: What a bridge with no file runs it as. False for a part that acts with no click (module docstring).
+    #: What a bridge with no file runs it as. False for the parts the module docstring names.
     default: bool = True
 
 
@@ -109,17 +110,19 @@ BRIDGE_FEATURES: tuple[Feature, ...] = (
         BRIDGE,
         "Update check",
         "Asks the checkout's git remote whether its main branch moved, so the ⚙ button can say an update is waiting.",
-        "One `git fetch` every 5 minutes.",
+        "One `git fetch` of the checkout's own remote every 5 minutes: a network request this machine makes unasked.",
         "No update indicator. CHECK NOW and UPDATE on the Settings page still work when pressed.",
         lite=True,
+        default=False,
     ),
     Feature(
         AUTO_UPDATE,
         BRIDGE,
         "Auto-update",
-        "When the update check finds new commits, pulls them, rebuilds the page and restarts the bridge, with no click.",
-        "A page build (about a minute of CPU) and a bridge restart of a few seconds each time main moves. Sessions keep running.",
-        "The ⚙ button shows a dot and you press UPDATE yourself. Needs the update check.",
+        "Checks the remote every 5 minutes and, when main moved, pulls, rebuilds the page and restarts the bridge, with no click.",
+        "The update check's `git fetch`, then a page build and a bridge restart of a few seconds each time main moves. "
+        "Sessions keep running.",
+        "You press UPDATE yourself, on the Settings page.",
         default=False,
     ),
 )

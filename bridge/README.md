@@ -33,8 +33,8 @@ A restart is `tldrack kill && tldrack up`. Every session reattaches.
 tldrack runs from its checkout, so an update is three steps: the checkout moves, the page is rebuilt
 from it, and the bridge restarts into the new Python. Doing only the first by hand shows the old rack.
 
-The bridge does all three. Every five minutes it runs one `git fetch` of the checkout's `origin`. When
-the remote's main branch has moved, the rack's ⚙ shows a dot, and **Settings → SETUP → UPDATE**:
+The bridge does all three. **Settings → SETUP → UPDATE** runs one `git fetch` of the checkout's
+`origin`, and when the remote's main branch has moved:
 
 1. fast-forwards the checkout (`git merge --ff-only`);
 2. rebuilds `ui/dist` beside the old one and swaps it in only if the build finished;
@@ -46,10 +46,14 @@ the remote's main branch has moved, the rack's ⚙ shows a dot, and **Settings �
 It pulls only when the checkout is on the remote's main branch, with no uncommitted change to a tracked
 file and no commit the remote lacks. Otherwise the card says what is in the way and changes nothing.
 
-**Auto-update** (Settings → SETUP, or FEATURES) does the same on the timer, with no click. It is off
-until you switch it on, never acts on a checkout with an uncommitted change, and does not retry a
-failed run until the checkout or the remote moves. **Update check** switches the timer off; CHECK NOW
-and UPDATE still work when pressed.
+Nothing asks the remote on a timer until you switch it on, so a rack you just installed makes no
+network request you did not press a button for. Two switches, both off to start:
+
+- **Update check** (FEATURES): one `git fetch` every five minutes. When main has moved, the rack's ⚙
+  shows a dot and you press UPDATE.
+- **Auto-update** (SETUP, or FEATURES): the same check, then the update itself with no click. It
+  never acts on a checkout with an uncommitted change, and does not retry a failed run until the
+  checkout or the remote moves.
 
 `GET /update` is what the card reads; `POST /update {"action": "check" | "apply"}` is its two buttons.
 
@@ -67,13 +71,12 @@ costs and what the rack is without it; **LITE** switches off the ones that only 
 | Code watch | the bridge stops hashing its own source every 5 s | at once |
 | Agent CLI cross-check | no `claude agents --json` run every 15 s | at once |
 | Session ledger ingest | no timed ingest; INGEST NOW still works | at once |
-| Update check | no `git fetch` every 5 minutes, and no update dot | at once |
 | A plugin, by name | it is not mounted: its routes and its part of the page are gone | at the next start |
 | 3D office, office quality, motion | this browser stops drawing them | at once, per browser |
 
 The bridge's switches are one file, `features.json` in the config directory, and hold for every
 device. It lists only what differs from the default, so deleting it puts every switch back: every
-part on, and Auto-update (the one switch that starts off) off. What a browser draws is that
+part on, and the two that start off (Update check and Auto-update, § Updating) off. What a browser draws is that
 browser's own choice and is kept there.
 
 ## What runs where
