@@ -9,7 +9,9 @@ and an operator who does one of them by hand still sees the old rack:
 
 This module watches all three, serves what it sees as `GET /update` (the ⚙ button's dot and the
 Settings page's UPDATE card), and on `POST /update {"action": "apply"}` does whichever are due, in
-that order. With the `auto_update` switch on, the timed check does the same with no click.
+that order. Nothing here runs on a timer until the operator switches it on: `update_check` asks
+the remote every five minutes (the dot), and `auto_update` asks and then does the same run with
+no click.
 
 ── What it will not do ────────────────────────────────────────────────────
 It only ever FAST-FORWARDS the remote's default branch, and only when the checkout is on that
@@ -41,7 +43,7 @@ of the served HTML, which names its hashed assets, so it changes with any build 
 compares it with the one it loaded to know a reload would show something newer.
 
 ── Auto ───────────────────────────────────────────────────────────────────
-Off by default (`features.py` owns why a part that acts with no click starts off). It acts only
+Off by default, like the timed check (`features.py` owns why both start off). It acts only
 on a checkout with no uncommitted tracked change at all, so an operator editing tldrack in place
 is never restarted under their hands. A run that failed is not retried until the checkout or the
 remote moves: a broken build must not loop every five minutes.
@@ -457,7 +459,7 @@ class Updater:
             "check_error": check_error,
             "checked_at": checked_at,
             "auto": self._switches.on(AUTO_UPDATE),
-            "checks": self._switches.on(UPDATE_CHECK),
+            "checks": self.timed(),
             "boot_id": self._boot_id,
         }
 
@@ -647,9 +649,15 @@ class Updater:
             return False
         return settled != (view["head"], view["target"])
 
+    def timed(self) -> bool:
+        """Whether the timer asks the remote: either switch is on. Auto-update is a check that also
+        acts, so it brings its own; the operator switches one thing on, not two."""
+        return self._switches.on(UPDATE_CHECK) or self._switches.on(AUTO_UPDATE)
+
     def tick(self) -> None:
-        """One turn of the timer: the check when its switch is on, then an update when auto is."""
-        if not self._switches.on(UPDATE_CHECK):
+        """One turn of the timer: the check when either switch is on, then an update when auto is.
+        With both off (a bridge with no file) the timer makes no request at all."""
+        if not self.timed():
             return
         self.check()
         if self.auto_due():

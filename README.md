@@ -80,11 +80,12 @@ motion in this browser, and three background loops in the bridge. Any plugin can
 `tldrack up` is safe to run again at any time: a rack that is already up is left alone. `tldrack kill` stops
 it, and your agent sessions keep running in tmux.
 
-**Updating.** The rack checks its checkout against the repository you cloned every five minutes. When `main` has moved,
-the ⚙ gets a dot, and **Settings → SETUP → UPDATE** pulls the new commits, rebuilds the page and restarts
-the bridge; your sessions keep running. Switch **Auto-update** on there and it does the same with no
-click. It only ever fast-forwards `main`: a checkout on another branch, or with uncommitted work in it,
-is left alone and the card says why.
+**Updating.** **Settings → SETUP → UPDATE** asks the repository you cloned whether `main` has moved, then
+pulls the new commits, rebuilds the page and restarts the bridge; your sessions keep running. Nothing
+checks on its own until you switch it on. **Auto-update**, on that card, asks every five minutes and
+updates with no click; **Update check**, under FEATURES, only asks and puts a dot on the ⚙. It only ever
+fast-forwards `main`: a checkout on another branch, or with uncommitted work in it, is left alone and the
+card says why.
 
 ## The loop
 

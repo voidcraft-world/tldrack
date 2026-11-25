@@ -36,15 +36,15 @@ def test_no_file_runs_everything(tmp_path):
     switches = store(tmp_path, "laya")
     rows = switches.view()["features"]
     assert all(row["on"] is row["default"] and not row["pending"] for row in rows)
-    # Everything runs, except the one part that would act on the machine with no click.
-    assert [row["key"] for row in rows if not row["on"]] == [AUTO_UPDATE]
+    # Everything runs, except the two parts that reach off this machine or act on it with no click.
+    assert [row["key"] for row in rows if not row["on"]] == [UPDATE_CHECK, AUTO_UPDATE]
     assert switches.view()["error"] is None and switches.off_keys() == []
     assert not switches.path.exists()  # reading never writes
 
 
 def test_a_part_that_is_off_by_default_is_listed_only_once_switched_on(tmp_path):
     switches = store(tmp_path)
-    assert switches.on(AUTO_UPDATE) is False and switches.on(UPDATE_CHECK) is True
+    assert switches.on(AUTO_UPDATE) is False and switches.on(UPDATE_CHECK) is False and switches.on(CODE_WATCH) is True
     switches.save({"set": {AUTO_UPDATE: True, CODE_WATCH: False}})
     assert json.loads(switches.path.read_text()) == {"version": 1, "off": [CODE_WATCH], "on": [AUTO_UPDATE]}
     again = store(tmp_path)
