@@ -16,6 +16,10 @@ under `plugins`.
 | [`laya/`](laya/) | Laya, the local model that decides when a finished turn needs the operator | on |
 | [`phone-link/`](phone-link/) | A token-gated listener the Android review app reaches over `adb reverse` | on |
 
+A plugin on that list can be switched off by name on the rack's Settings page, and is then not mounted
+at the next start. The switch only subtracts from the list: owned by `bridge/tldrack/features.py` — see
+the note there.
+
 ## The contract
 
 A plugin is a directory holding `bridge_plugin.py`:

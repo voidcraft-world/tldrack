@@ -163,6 +163,44 @@ test('the poller reports an empty session set before any data', () => {
     assert.equal(poller.sessions().size, 0);
 });
 
+test('the timer rests while its owner does not want it, and a tick asked for by name still fetches', async () => {
+    let fetches = 0;
+    let wanted = true;
+    let timer: () => void = () => {};
+    const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+    const poller = create_worktree_poller({
+        base_url: (p) => p,
+        poll_interval_ms: 5000,
+        on_change: () => {},
+        wanted: () => wanted,
+        fetch_impl: (async () => {
+            fetches += 1;
+            return new Response(JSON.stringify({ worktrees: [row('wt-a')], root: '/wt', base: 'main' }), { status: 200 });
+        }) as never,
+        set_interval: ((fn: () => void) => { timer = fn; return 0; }) as never,
+        clear_interval: () => {},
+    });
+    poller.start();
+    await flush();
+    assert.equal(fetches, 1, 'the first read is not the timer: a page opened in a background tab still gets its rows');
+    timer();
+    await flush();
+    assert.equal(fetches, 2);
+    // Nobody is looking: a `git` readout of every tree would only redraw rows nobody can see.
+    wanted = false;
+    timer();
+    timer();
+    await flush();
+    assert.equal(fetches, 2);
+    // After an action, or the moment the page is looked at again.
+    await poller.tick();
+    assert.equal(fetches, 3);
+    wanted = true;
+    timer();
+    await flush();
+    assert.equal(fetches, 4);
+});
+
 // ── create progress ────────────────────────────────────────────────────────
 //
 // Everything the user sees during a create comes from these two: the step view
@@ -253,6 +291,24 @@ test('island focus gives up on a failed create, a cancel or the timeout', () => 
     const late = create_island_focus();
     late.arm('wt-b', 0);
     assert.equal(late.take(state_of(row('wt-b')), ['wt-b'], ISLAND_FOCUS_TIMEOUT_MS + 1), null);
+});
+
+test('island focus says while a launch is still waiting, which is what keeps its poll awake', () => {
+    // A hidden page rests the worktree timer; a launch that has not landed is the reason not to.
+    const focus = create_island_focus();
+    assert.equal(focus.armed(), false);
+    focus.arm('wt-b', 0);
+    assert.equal(focus.armed(), true);
+    assert.equal(focus.take(state_of(creating('bootstrap')), ['wt-b'], 1), null);
+    assert.equal(focus.armed(), true, 'still building');
+    assert.equal(focus.take(state_of(row('wt-b')), ['wt-b'], 2), 'wt-b');
+    assert.equal(focus.armed(), false, 'landed');
+    focus.arm('wt-c', 0);
+    focus.cancel();
+    assert.equal(focus.armed(), false, 'the operator picked another row');
+    focus.arm('wt-d', 0);
+    focus.take(state_of(row('wt-d')), [], ISLAND_FOCUS_TIMEOUT_MS + 1);
+    assert.equal(focus.armed(), false, 'given up on');
 });
 
 test('the poller speeds up while a create is live and slows back down after', async () => {

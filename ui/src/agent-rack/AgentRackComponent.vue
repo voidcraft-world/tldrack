@@ -145,7 +145,7 @@ import {
     shown_key,
     type CardPress,
 } from './next-step-view.ts';
-import { DIAGRAM_PAGE, OFFICE_PAGE } from '../config/pages.ts';
+import { DIAGRAM_PAGE, OFFICE_PAGE, SETTINGS_PAGE } from '../config/pages.ts';
 import { UNKNOWN_MODEL_LABEL } from '../engine/terminal/terminal-status-logic.ts';
 import '../styles/rack-palette.css';
 const AgentSessionGraph = defineAsyncComponent(() => import('./AgentSessionGraph.vue'));
@@ -186,6 +186,12 @@ const chat_status_title = computed<string>(() => {
  *  agent-rack-diagram/rack-architecture.md. */
 function open_diagram(): void {
     window.open(new URL(DIAGRAM_PAGE, window.location.href).href, 'tldrack-diagram');
+}
+/** ALL SETTINGS: the full settings page in its own window, resolved like ⌗ HOW. The tray keeps its
+ *  own controls because it is the settings surface a host's embedded rack has: that rack talks
+ *  over a bus and may sit on an origin that does not serve the page. */
+function open_settings(): void {
+    window.open(new URL(SETTINGS_PAGE, window.location.href).href, 'tldrack-settings');
 }
 /** OFFICE: every agent at a desk, in 3D, in its own window, resolved like ⌗ HOW. This rack
  *  feeds it while it is open; a robot's click comes back as `select`, and its right-click
@@ -1653,7 +1659,7 @@ onUnmounted(() => {
                 aria-label="Rack settings"
                 :title="settings_open
                     ? 'Hide rack settings'
-                    : 'Rack settings: directories, view, terminal appearance and help'"
+                    : 'Rack settings: directories, view, terminal appearance and help · ALL SETTINGS opens the full page'"
                 @click="settings_open = !settings_open"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiCog" /></svg></button>
             <button v-if="closed_view" type="button"
                 :class="['fui-btn', { 'rack__restore-btn': (closed_view.restorable?.count ?? 0) > 0 }]"
@@ -1679,6 +1685,9 @@ onUnmounted(() => {
                     @click="open_office"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiOfficeBuildingOutline" /></svg></button>
                 <button type="button" class="fui-btn" title="How the agent rack works — opens a diagram"
                     @click="open_diagram">⌗ HOW</button>
+                <button type="button" class="fui-btn"
+                    title="Every setting on one page: setup, what the bridge runs, what this browser draws (opens a window)"
+                    @click="open_settings">ALL SETTINGS</button>
             </div>
             <div v-if="render_options" class="rack__render">
                 <span class="fui-techtext rack__render-label">FONT</span>

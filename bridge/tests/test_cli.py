@@ -65,3 +65,17 @@ def test_doctor_reports_a_broken_settings_file_instead_of_refusing_to_run(monkey
     result = run("doctor", "--port", "7781", "--status-port", "7791")
     assert "✗ settings" in result.output and "cannot read" in result.output
     assert result.exit_code == 1 and "to fix before the rack starts" in result.output
+
+
+def test_doctor_json_prints_what_the_settings_page_reads(monkeypatch):
+    monkeypatch.setattr(main, "fetch_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(main, "port_holder", lambda port: None)
+    write_config("features.json", {"version": 1, "off": ["code_watch", "plugin:not-in-this-checkout"]})
+    result = run("doctor", "--json", "--port", "7781", "--status-port", "7791")
+    body = json.loads(result.output)
+    assert set(body) == {"sections", "exit", "verdict"} and body["exit"] == result.exit_code
+    checks = {check["name"]: check for section in body["sections"] for check in section["checks"]}
+    assert checks["bridge"]["level"] == "off" and checks["port 7791"]["level"] == "ok"
+    # A stored key no offered plugin answers to is not this machine's switch, so it is not listed.
+    assert checks["switched off"]["level"] == "off" and "code_watch" in checks["switched off"]["detail"]
+    assert "not-in-this-checkout" not in checks["switched off"]["detail"]

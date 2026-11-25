@@ -53,6 +53,7 @@ import { has_unread_answer, open_work_answer, read_answer } from './open-work-cl
 import { parse_star_value, set_star } from './star-client.ts';
 import { create_missions_poller, parse_mission_request, post_mission } from './missions-client.ts';
 import { create_closed_list } from './closed-client.ts';
+import { watch_page_return } from './page-return.ts';
 import { create_chat_search } from './chat-search.ts';
 import { create_lead_poller, handle_lead_action, type LeadActionDeps } from './lead-client.ts';
 import { is_service_session } from '../engine/terminal/service-sessions.ts';
@@ -125,6 +126,25 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
     const record_metric = create_rack_metric_delivery(url);
     const report_next_step = create_next_step_delivery(url);
 
+    /**
+     * May the worktree TIMER poll? Not while the page is hidden: what it reads is mostly drawn
+     * (`worktree-client.ts` `create_worktree_poller` owns the cost). Two things read that state
+     * WITHOUT drawing it, and each keeps what it needs:
+     *
+     *   - a 🏝 launch waiting to land (`island_focus`) reads create progress, and gives up after
+     *     `ISLAND_FOCUS_TIMEOUT_MS`. Resting would turn "the operator looked away while it built"
+     *     into "the launch never took focus". So the timer runs while one is armed.
+     *   - the attach-only set (`build_payload` `attach_only`) is what keeps the pane from
+     *     re-creating a dead worktree session in the bridge's start directory. A session that
+     *     appears while the timer rests is not in it yet, so `on_snapshot` reads once whenever the
+     *     live sessions change: by event, off the stream that already delivered them.
+     *
+     * Coming back reads at once (`watch_page_return`, below), so no row on screen is a rest old.
+     */
+    const worktree_timer_wanted = (): boolean => !document.hidden || island_focus.armed();
+    /** `live_sessions` of the last snapshot, joined: the change `worktree_timer_wanted` names. */
+    let live_key = '';
+
     /** Worktree state. Absent plugin → `null` state → no `worktrees` key on the
      *  payload → no worktree UI at all. */
     const worktrees = create_worktree_poller({
@@ -134,6 +154,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
             land_island_focus();
             emit();
         },
+        wanted: worktree_timer_wanted,
     });
 
     /** A 🏝 launch waiting for its session — `worktree-client.ts::create_island_focus`. */
@@ -269,6 +290,8 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
         flags: () => TERMINAL_STATUS_FLAGS,
         // Only the session actually on screen here counts as watched.
         is_watching: (session) => !document.hidden && session === focused,
+        // The hidden-page rest: owned by rack-ingestor.ts — see the note on `should_poll`.
+        is_hidden: () => document.hidden,
         tracked_sessions: () => [],
         allow_legacy_fallback: false,
         // The `+ NEW` row, the building worktree rows and the `pending_new`
@@ -289,6 +312,12 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
             // `pending_new` is the deliberate exception — that one is *supposed*
             // to be created.
             const live = live_sessions(snapshot.sessions);
+            // Owned by `worktree_timer_wanted` — see the note there.
+            const next_live_key = live.join('\n');
+            if (next_live_key !== live_key) {
+                live_key = next_live_key;
+                if (!worktree_timer_wanted()) void worktrees.tick();
+            }
             land_island_focus();
             // A session a CLEAN is about to kill is no candidate — `cleaning_sessions` owns why.
             const leaving = cleaning_sessions(snapshot.sessions, worktrees.state()?.worktrees);
@@ -595,6 +624,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
         refresh: () => void ingestor.tick(),
         dispose: () => {
             disposed = true;
+            stop_return();
             listeners.clear();
             launch_notice.clear();
             ingestor.stop();
@@ -606,6 +636,15 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
             chat_search.dispose();
         },
     };
+
+    // The other half of every rest above: owned by page-return.ts — see the note there. `focus`
+    // is not acted on here: these two feeds also arrive without it, and a click out of the
+    // terminal would otherwise be a `/snapshot` and a `/state` each time.
+    const stop_return = watch_page_return((how) => {
+        if (how !== 'visible' || disposed) return;
+        void ingestor.tick();
+        void worktrees.tick();
+    });
 
     // Kick off. The first poll is immediate so the window paints real rows
     // rather than an empty rack for one interval.

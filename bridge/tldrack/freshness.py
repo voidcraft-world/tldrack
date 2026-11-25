@@ -391,8 +391,12 @@ class FreshnessMonitor:
         loaded_at: float | None = None,
         preflight: Callable[[WatchSpec, list[str]], tuple[str, str | None]] = run_preflight,
         log: Callable[[str], None] | None = None,
+        enabled: Callable[[], bool] = lambda: True,
     ) -> None:
         self._spec = spec
+        # The operator's switch (features.py `CODE_WATCH`), asked every poll, so it applies without a
+        # restart. Off: no hashing and no preflight, and the wire says unknown, never current.
+        self._enabled = enabled
         self._clock = clock
         self._poll_seconds = poll_seconds
         self._quiet_seconds = quiet_seconds
@@ -419,6 +423,11 @@ class FreshnessMonitor:
         self._preflight_thread: threading.Thread | None = None
 
     # -- the poll ---------------------------------------------------------------
+    def tick(self) -> None:
+        """One turn of the loop: a `check()`, unless the operator switched the watch off."""
+        if self._enabled():
+            self.check()
+
     def check(self) -> None:
         current = self._fingerprinter.fingerprint(watched_paths(self._spec))
         now = self._clock()
@@ -476,8 +485,11 @@ class FreshnessMonitor:
             thread.join(timeout)
 
     # -- the wire ---------------------------------------------------------------
-    def snapshot(self) -> dict:
-        """The `bridge.freshness` block. `busy` is asked live, every call."""
+    def snapshot(self) -> dict | None:
+        """The `bridge.freshness` block. `busy` is asked live, every call. None while switched off:
+        a tree nobody is hashing is unknown, and the consumer already reads null that way."""
+        if not self._enabled():
+            return None
         busy = self._busy.reasons()
         with self._lock:
             stale = bool(self._changed)
@@ -502,7 +514,7 @@ class FreshnessMonitor:
     def _loop(self) -> None:
         while not self._stop.wait(self._poll_seconds):
             try:
-                self.check()
+                self.tick()
             except Exception as exc:  # noqa: BLE001 — the watcher must never take the bridge down
                 self._log(f"  freshness: check failed — {type(exc).__name__}: {exc}")
 
@@ -513,12 +525,17 @@ def start_freshness(
     plugins_config: Path | None,
     profiles_path: Path,
     log: Callable[[str], None],
+    enabled: Callable[[], bool] = lambda: True,
 ) -> FreshnessMonitor | None:
     """Build, baseline and start the watcher; None (→ `freshness: null`, which
     the consumer reads as unknown, never as stale) when any of that fails."""
     try:
         monitor = FreshnessMonitor(
-            bridge_watch_spec(plugin_dirs, plugins_config, profiles_path), plugins=plugins, loaded_at=IMPORTED_AT, log=log
+            bridge_watch_spec(plugin_dirs, plugins_config, profiles_path),
+            plugins=plugins,
+            loaded_at=IMPORTED_AT,
+            log=log,
+            enabled=enabled,
         )
         monitor.start()
     except Exception as exc:  # noqa: BLE001 — a broken watcher must never stop the bridge

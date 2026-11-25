@@ -10,6 +10,7 @@ can import the same modules as a package.
 | `diagram.html` | How the rack works, one diagram per tab (the rack's ⌗ HOW button) |
 | `office.html` | Every agent at a desk, in 3D (the rack's office button) |
 | `evals.html` | The eval results: one results file from `bench/results/`, eight panels |
+| `settings.html` | The rack's settings: setup, features, the terminal's appearance, launch directories (the rack's ALL SETTINGS button) |
 
 ## Build and run
 

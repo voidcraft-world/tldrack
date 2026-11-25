@@ -28,6 +28,27 @@ tldrack kill                    # stop the bridge; tmux sessions survive
 
 A restart is `tldrack kill && tldrack up`. Every session reattaches.
 
+The page does the rest. **Settings** (the ⚙ in the rack, or `/settings.html`) shows the same checks
+as `tldrack doctor` with a button beside each one a request can fix, installs the hooks and Laya,
+and holds every switch below.
+
+## Running lighter
+
+Everything runs until you switch it off. **Settings → Features** lists each part with what it
+costs and what the rack is without it; **LITE** switches off the ones that only cost.
+
+| Switch | Off means | Applies |
+|---|---|---|
+| Code watch | the bridge stops hashing its own source every 5 s | at once |
+| Agent CLI cross-check | no `claude agents --json` run every 15 s | at once |
+| Session ledger ingest | no timed ingest; INGEST NOW still works | at once |
+| A plugin, by name | it is not mounted: its routes and its part of the page are gone | at the next start |
+| 3D office, office quality, motion | this browser stops drawing them | at once, per browser |
+
+The bridge's switches are one file, `features.json` in the config directory, and hold for every
+device. It lists only what is off, so deleting it turns everything back on. What a browser draws
+is that browser's own choice and is kept there.
+
 ## What runs where
 
 | Port | What | Reached by |
@@ -88,8 +109,8 @@ All off until you turn them on. `tldrack doctor` lists each one.
 |---|---|
 | A hosted page may call the bridge | `settings.json`: `"allowed_origins": ["https://rack.example"]` |
 | A small model names each session from its first prompt | `settings.json`: `"session_namer": true` |
-| A local model suggests the next step for a finished session | `tldrack next-step --mode shadow` (or `live`) |
-| Phone pushes when an agent has waited a while | `tldrack notify --init` |
+| A local model suggests the next step for a finished session | Settings → Features, or `tldrack next-step --mode shadow` (or `live`) |
+| Phone pushes when an agent has waited a while | `tldrack notify --init` once, then the switch in Settings → Features |
 | An app of yours owns and restarts the bridge | `settings.json`: `"supervisor_url": "myapp://bridge/start"` |
 | Standing missions, decision import, a resource lease | `settings.json`: see `tldrack/settings.py` |
 
@@ -110,6 +131,9 @@ TLDRACK_PLUGINS="/path/to/tldrack/plugins/worktree" tldrack up
 Mounted plugins are listed at startup and on `/snapshot` under `plugins`. The rack treats each as a
 capability: with no `worktree` plugin there are no worktree controls, and with no `laya` plugin no
 turn-end verdicts. Nothing else changes.
+
+To leave one out without editing that list, switch it off in Settings → Features. The switch only
+subtracts: it can never mount a directory the list above does not name.
 
 ## Running the server in the foreground
 

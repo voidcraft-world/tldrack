@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+    HIDDEN_HEARTBEAT_MS,
     create_rack_ingestor,
+    should_poll,
+    tracker_settled,
     type RackIngestorDeps,
     type RackNoticeSets,
     type IngestorFlags,
 } from '../../src/engine/terminal/rack-ingestor.ts';
-import type { PortSnapshot, SessionStatus } from '../../src/engine/terminal/terminal-status-logic.ts';
+import { new_tracker, type PortSnapshot, type SessionStatus } from '../../src/engine/terminal/terminal-status-logic.ts';
 
 const FLAGS: IngestorFlags = {
     poll_interval_ms: 3000,
@@ -553,4 +556,197 @@ test('a bridge that sends no profiles leaves the key ABSENT — the /spawn capab
     const h = harness({ routes: snapshot_route([status({ session: 'vc-1' })]) });
     await h.ingestor.tick();
     assert.equal('profiles' in h.last(), false);
+});
+
+// ── a hidden page's poll may rest, and what it must never cost ──────────────
+//
+// The stream pushes the same document the poll fetches, so a page nobody is looking at can stop
+// asking for it. `should_poll` owns the four things only the poll delivers; each has a case here.
+
+test('should_poll rests only a hidden page with an open stream and settled trackers, and never past the heartbeat', () => {
+    const resting = { hidden: true, stream_open: true, settled: true, since_poll_ms: 3000 };
+    assert.equal(should_poll(resting), false);
+    assert.equal(should_poll({ ...resting, hidden: false }), true, 'a page being looked at keeps its cadence');
+    assert.equal(should_poll({ ...resting, stream_open: false }), true, 'the poll is the fallback');
+    assert.equal(should_poll({ ...resting, settled: false }), true, 'a tracker is owed an observation');
+    assert.equal(should_poll({ ...resting, since_poll_ms: HIDDEN_HEARTBEAT_MS - 1 }), false);
+    assert.equal(should_poll({ ...resting, since_poll_ms: HIDDEN_HEARTBEAT_MS }), true, 'a rest is slower, never none');
+    assert.equal(should_poll({ ...resting, since_poll_ms: Infinity }), true, 'nothing polled yet');
+});
+
+test('a tracker is settled once its state has been seen as often as the debounce asks', () => {
+    const seen_once = { ...new_tracker(), committed: 'attention' as const, committed_polls: 1 };
+    assert.equal(tracker_settled(seen_once, 2), false, 'the attention notice is still one observation away');
+    assert.equal(tracker_settled({ ...seen_once, committed_polls: 2 }, 2), true);
+    assert.equal(tracker_settled(seen_once, 1), true);
+    const finishing = {
+        ...new_tracker(), committed: 'busy' as const, committed_polls: 9, downgrade_candidate: 'free' as const, downgrade_polls: 1,
+    };
+    assert.equal(tracker_settled(finishing, 2), false, 'a downgrade is waiting to commit');
+});
+
+/** A rack page: the timer's tick in hand, a stream to push through, a clock and a visibility to set. */
+function page(sessions: SessionStatus[], reports_hidden = true) {
+    const stream = {
+        onopen: null as (() => void) | null,
+        onerror: null as (() => void) | null,
+        listeners: new Map<string, (event: { data: string }) => void>(),
+        addEventListener(type: string, fn: (event: { data: string }) => void) {
+            this.listeners.set(type, fn);
+        },
+        close() {},
+    };
+    const env = { hidden: false, now: 0, timer: (() => {}) as () => void };
+    const h = harness({
+        routes: snapshot_route(sessions),
+        flags: { sse_enabled: true },
+        deps: {
+            event_source: () => stream as unknown as EventSource,
+            set_interval: ((fn: () => void) => {
+                env.timer = fn;
+                return 0;
+            }) as never,
+            ...(reports_hidden ? { is_hidden: () => env.hidden } : {}),
+            now: () => env.now,
+        },
+    });
+    const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+    return {
+        ...h,
+        env,
+        settle,
+        polls: () => h.calls.filter((path) => path === '/snapshot').length,
+        /** One timer tick `ms` after the last, and whatever poll it started. */
+        timed_tick: async (ms = 3000) => {
+            env.now += ms;
+            env.timer();
+            await settle();
+        },
+        push: (next: SessionStatus[]) => stream.listeners.get('snapshot')?.({ data: JSON.stringify({ sessions: next }) }),
+        open: () => stream.onopen?.(),
+        drop: () => stream.onerror?.(),
+    };
+}
+
+/** Start polling, open the stream, and tick until every tracker has its second observation. */
+async function settled_page(sessions: SessionStatus[]) {
+    const p = page(sessions);
+    p.ingestor.start_polling();
+    await p.settle();
+    p.open();
+    await p.timed_tick();
+    return p;
+}
+
+test('a page being looked at polls on every tick, stream or no stream', async () => {
+    const p = await settled_page([status({ session: 'alpha', state: 'busy' })]);
+    const before = p.polls();
+    await p.timed_tick();
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 2);
+});
+
+test('a hidden page with an open stream rests, then polls once each heartbeat', async () => {
+    const p = await settled_page([status({ session: 'alpha', state: 'busy' })]);
+    p.env.hidden = true;
+    const before = p.polls();
+    for (let i = 0; i < 9; i += 1) await p.timed_tick();
+    assert.equal(p.polls(), before, '27 s of ticks, nothing asked');
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 1, 'the heartbeat: what no hook reports is at most this old');
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 1, 'and the rest begins again');
+});
+
+test('the heartbeat is measured on the clock, so a browser that slows the timer loses nothing', async () => {
+    const p = await settled_page([status({ session: 'alpha' })]);
+    p.env.hidden = true;
+    const before = p.polls();
+    // A hidden page's timer run once a minute: every tick is already past the heartbeat.
+    await p.timed_tick(60_000);
+    await p.timed_tick(60_000);
+    assert.equal(p.polls(), before + 2);
+});
+
+test('a hidden page whose stream is down polls as it always did', async () => {
+    const p = await settled_page([status({ session: 'alpha' })]);
+    p.env.hidden = true;
+    p.drop();
+    const before = p.polls();
+    await p.timed_tick();
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 2);
+    p.open();
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 2, 'the stream came back: rest again');
+});
+
+test('an agent that finishes behind a hidden page is still latched done, by the poll the push asks for', async () => {
+    const p = await settled_page([status({ session: 'alpha', state: 'busy' })]);
+    p.env.hidden = true;
+    await p.timed_tick();
+    const before = p.polls();
+    // The Stop hook: one pushed observation. A downgrade needs two.
+    p.push([status({ session: 'alpha', state: 'free' })]);
+    assert.equal(p.last().sessions[0].display, 'busy', 'one observation commits nothing');
+    p.set_routes(snapshot_route([status({ session: 'alpha', state: 'free' })]));
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 1, 'the tick after the push does not rest');
+    assert.equal(p.last().sessions[0].display, 'done', 'latched while away, not lost on the return poll');
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 2, 'and once more, for the new state to be seen twice');
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 2, 'settled: rest');
+});
+
+test('a pushed wait is noticed behind a hidden page on the next tick, not the next heartbeat', async () => {
+    const p = await settled_page([status({ session: 'alpha', state: 'busy' })]);
+    p.env.hidden = true;
+    const waiting = [status({ session: 'alpha', state: 'attention', message: 'help' })];
+    p.push(waiting);
+    assert.equal(p.last().sessions[0].display, 'attention', 'an upgrade shows at once: the tab title counts it');
+    assert.deepEqual(p.notices.at(-1)?.attention, [], 'but the notice waits for the debounce');
+    p.set_routes(snapshot_route(waiting));
+    await p.timed_tick();
+    assert.deepEqual(p.notices.at(-1)?.attention, [{ session: 'alpha', message: 'help' }]);
+});
+
+test('a hidden page keeps polling while a session is in its absence grace or the bridge is unreachable', async () => {
+    const p = await settled_page([status({ session: 'alpha' }), status({ session: 'beta' })]);
+    p.env.hidden = true;
+    // One answer drops a session (a flaky `tmux ls`): it must be seen again, or stay gone, soon.
+    p.push([status({ session: 'alpha' })]);
+    const before = p.polls();
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 1);
+    assert.deepEqual(p.last().sessions.map((s) => s.session), ['alpha', 'beta'], 'the blink is corrected in one tick');
+    // The stream still reads open, but the bridge is gone: the heartbeat finds out, and stays on it.
+    p.set_routes({});
+    await p.timed_tick(HIDDEN_HEARTBEAT_MS);
+    assert.equal(p.last().reachable, false);
+    const down = p.polls();
+    await p.timed_tick();
+    await p.timed_tick();
+    assert.equal(p.polls(), down + 2);
+});
+
+test('a pass asked for by name never rests: it is how the page catches up when it is looked at again', async () => {
+    const p = await settled_page([status({ session: 'alpha' })]);
+    p.env.hidden = true;
+    const before = p.polls();
+    await p.ingestor.tick();
+    assert.equal(p.polls(), before + 1);
+});
+
+test('an owner that never says it is hidden never rests', async () => {
+    // A host's payload owner passes no `is_hidden`: its cadence is exactly what it was.
+    const p = page([status({ session: 'alpha' })], false);
+    p.ingestor.start_polling();
+    await p.settle();
+    p.open();
+    await p.timed_tick();
+    const before = p.polls();
+    await p.timed_tick();
+    await p.timed_tick();
+    assert.equal(p.polls(), before + 2);
 });

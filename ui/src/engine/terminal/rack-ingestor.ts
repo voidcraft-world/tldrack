@@ -119,6 +119,59 @@ const ACTIVITY_LOG_CAP = 50;
  */
 const TRACKER_ABSENCE_GRACE = 3;
 
+/** The longest a resting poll goes without one pass. Why it is not "never": `should_poll`. */
+export const HIDDEN_HEARTBEAT_MS = 30_000;
+
+/** What `should_poll` weighs. */
+export interface PollRest {
+    /** Nobody can see the page (`RackIngestorDeps.is_hidden`). */
+    hidden: boolean;
+    /** The SSE stream is connected, switched on, and the bridge is not a legacy one. */
+    stream_open: boolean;
+    /** The last pass reached the bridge, and no tracker is waiting on another observation. */
+    settled: boolean;
+    since_poll_ms: number;
+}
+
+/**
+ * Should this TIMED tick poll `/snapshot`, or may it rest?
+ *
+ * THE COST. The stream delivers the same document the poll fetches (`ingest_sse_snapshot`), so
+ * a page nobody is looking at was asking the bridge every 3 s, each answer a `tmux` subprocess
+ * there, for state it had already been pushed.
+ *
+ * WHY IT CANNOT SIMPLY STOP. The bridge pushes when a HOOK changes something. Four things reach
+ * a page only through the poll, and a hidden page still owes them: its tab title counts the
+ * waiting agents, and a ✅ must be latched while the operator is away, not when they return.
+ *
+ *   1. The debounce's second observation. A downgrade commits, and an attention notice fires,
+ *      after `debounce_polls` observations; a push is one. Resting through the next would hold
+ *      a finished agent at `busy`, and then commit it on the return poll with the operator
+ *      watching, which is exactly the ✅ that gets dropped. So nothing rests until every
+ *      tracker is `settled`: the tick after a push that moved a state still polls.
+ *   2. What no hook reports: a session killed from a terminal (`live` is `tmux ls` at answer
+ *      time), a `busy` going stale by age, a hookless agent's pane-title state.
+ *   3. Whether the stream is still alive. An `EventSource` whose connection died silently (a
+ *      sleeping laptop, a dropped tailnet) still reads "open", and its keep-alive comments are
+ *      invisible to script.
+ *   4. A legacy bridge's `/snapshot` re-probe, which counts timed ticks.
+ *
+ * So a rest is a slower poll, never none: at most `HIDDEN_HEARTBEAT_MS` passes between two
+ * passes, which bounds 2 and 3 (an unreachable pass un-settles the loop and the full cadence
+ * returns), and 4 never rests at all. Measured against the CLOCK, not in ticks: a browser may
+ * already run a hidden page's timers about once a minute, and "every tenth tick" would then mean
+ * ten minutes. Coming back polls at once; the page's owner does that (`agent-rack/page-return.ts`).
+ */
+export function should_poll(rest: PollRest): boolean {
+    if (!rest.hidden || !rest.stream_open || !rest.settled) return true;
+    return rest.since_poll_ms >= HIDDEN_HEARTBEAT_MS;
+}
+
+/** Has this tracker seen its state as often as the debounce asks, with no downgrade pending? */
+export function tracker_settled(tracker: SessionTracker, debounce_polls: number): boolean {
+    return tracker.downgrade_candidate === null && tracker.committed_polls >= debounce_polls;
+}
+
 /** A command pushed FROM the bridge TO this app (bridge: POST /focus). */
 export type BridgeCommandTarget = 'world' | 'rack';
 export interface BridgeCommand {
@@ -168,6 +221,12 @@ export interface RackIngestorDeps {
      */
     is_watching: (session: string) => boolean;
     /**
+     * Can nobody see this page right now? Per-document truth, injected like `is_watching`.
+     * Omit it and the timed poll never rests, which is every owner that has not asked for the
+     * rest (`should_poll` owns what it is).
+     */
+    is_hidden?: () => boolean;
+    /**
      * Sessions to keep advancing even when the snapshot omits them: the
      * caller's per-session subscribers. They advance toward `unknown` and do
      * not freeze at their last state. Also the probe list for the legacy
@@ -208,6 +267,8 @@ export interface RackIngestorDeps {
     event_source?: (url: string) => EventSource | null;
     set_interval?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
     clear_interval?: (handle: ReturnType<typeof setInterval>) => void;
+    /** The clock `should_poll` measures a rest against. */
+    now?: () => number;
 }
 
 export interface RackIngestor {
@@ -284,6 +345,7 @@ export function create_rack_ingestor(deps: RackIngestorDeps): RackIngestor {
     const start_timer = deps.set_interval ?? ((fn, ms) => setInterval(fn, ms));
     const stop_timer = deps.clear_interval ?? ((handle) => clearInterval(handle));
     const open_event_source = deps.event_source ?? ((url: string) => local_event_source(url));
+    const now = deps.now ?? (() => Date.now());
 
     const trackers = new Map<string, SessionTracker>();
     /** Consecutive answers that did not mention a tracked session — see the
@@ -303,13 +365,15 @@ export function create_rack_ingestor(deps: RackIngestorDeps): RackIngestor {
     let timer: ReturnType<typeof setInterval> | null = null;
     let tick_in_flight = false;
     let stopped = false;
+    /** When the last pass began, by `now`. */
+    let last_poll_ms = -Infinity;
 
     // ── SSE push (GET /events): an ACCELERATOR, never a replacement ─────────
     //
     // Snapshot frames are ingested the instant a hook fires instead of on the
     // next poll, but the poll keeps its full cadence regardless: the tracker's
     // downgrade debounce counts POLL OBSERVATIONS, and older bridges have no
-    // /events at all.
+    // /events at all. The one exception, a hidden page's rest: `should_poll`.
 
     function open_sse(): void {
         if (sse || !deps.flags().sse_enabled) return;
@@ -602,11 +666,33 @@ export function create_rack_ingestor(deps: RackIngestorDeps): RackIngestor {
     async function tick(): Promise<void> {
         if (stopped || tick_in_flight) return; // slow bridge — skip, don't stack
         tick_in_flight = true;
+        last_poll_ms = now();
         try {
             await poll();
         } finally {
             tick_in_flight = false;
         }
+    }
+
+    /** `PollRest.settled`. A session in its absence grace is waiting on an observation too. */
+    function settled(): boolean {
+        if (!last_snapshot?.reachable || absences.size > 0) return false;
+        const { debounce_polls } = deps.flags();
+        for (const tracker of trackers.values()) {
+            if (!tracker_settled(tracker, debounce_polls)) return false;
+        }
+        return true;
+    }
+
+    /** The timer's tick. `tick()` itself never rests: a caller that asks for a pass gets one. */
+    function timed_tick(): void {
+        const rest: PollRest = {
+            hidden: deps.is_hidden?.() ?? false,
+            stream_open: sse_connected && deps.flags().sse_enabled && !legacy,
+            settled: settled(),
+            since_poll_ms: now() - last_poll_ms,
+        };
+        if (should_poll(rest)) void tick();
     }
 
     return {
@@ -621,7 +707,7 @@ export function create_rack_ingestor(deps: RackIngestorDeps): RackIngestor {
             // setInterval, NOT the render loop: browsers throttle a hidden tab's
             // intervals to ~1/min, which only DELAYS alerts. A rAF-driven poll
             // would stop entirely.
-            timer = start_timer(() => void tick(), deps.flags().poll_interval_ms);
+            timer = start_timer(timed_tick, deps.flags().poll_interval_ms);
             void tick(); // don't make the first subscriber wait a full interval
         },
         stop_polling: () => {

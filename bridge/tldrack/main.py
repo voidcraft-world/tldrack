@@ -123,6 +123,7 @@ from tldrack.open_work import (
 from tldrack.verdicts import SessionVerdictStore, resolve_verdicts_path, restorable
 from tldrack import framing, live_marks, plugin_sources, ttyd_front, ui_static
 from tldrack import next_step as next_step_mod
+from tldrack import doctor as doctor_mod
 from tldrack.codex_closing import read_codex_closing
 from tldrack.codex_rollout import codex_uses_auto_review
 from tldrack.notify import (
@@ -158,6 +159,7 @@ from tldrack.permission_ledger import resolve_path as resolve_permissions_path
 from tldrack.state_arbiter import StateArbiter, refine_turn_end, settled_state
 from tldrack.launch_pick import pick_launch_profile
 from tldrack.launch_directories import LaunchDirectories
+from tldrack.features import CODE_WATCH, LEDGER_INGEST, PUBLIC_STATUS, FeatureSwitches, mountable
 from tldrack.profiles import (
     AUTO_PROFILE_ID,
     PROFILE_ID_RE,
@@ -887,7 +889,11 @@ def build_status_handler(
     topic_labels: TopicLabels | None = None,
     settings: Settings | None = None,
     find_ui: Callable[[], Path | None] | None = None,
+    features: FeatureSwitches | None = None,
 ) -> type[BridgeHandler]:
+    # `features` (features.py) is what the operator switched off on the Settings page. Absent, it is
+    # read from the config role, which a test's own empty directories make "everything on".
+    switches: FeatureSwitches = features if features is not None else FeatureSwitches()
     # `settings` (settings.py) is what the operator turned on; absent, every optional part is off and
     # only loopback pages are served. `find_ui` finds the built rack page served at `/`
     # (ui_static.py), asked per request so a build that lands after startup is served without a
@@ -1421,7 +1427,12 @@ def build_status_handler(
     # `claude agents --json`, the SUPPORTED surface, checks that index every
     # 15 s and stands in for a root whose index format drifted (agents_cli.py
     # owns why it is the check and not the fast path). Started with the arbiter.
-    public_status = PublicStatus(index_roots, claude_cli, os.path.realpath(os.path.expanduser("~/.claude")))
+    public_status = PublicStatus(
+        index_roots,
+        claude_cli,
+        os.path.realpath(os.path.expanduser("~/.claude")),
+        enabled=lambda: switches.on(PUBLIC_STATUS),
+    )
     arbiter = StateArbiter(
         store,
         AgentIndexReader(index_roots, public=public_status),
@@ -1936,6 +1947,9 @@ def build_status_handler(
 
         GET_ROUTES = {
             "/launch-directories": "_handle_get_launch_directories",
+            "/features": "_handle_get_features",
+            # Shells out (`ps`, `lsof`) on every call, so it also refuses a no-cors browser GET.
+            "/doctor": "_route_doctor",
             "/ws": "_handle_ws_proxy",
             # /events, /capture and /wait each cost real resources per call (an
             # SSE slot, a tmux shell-out, a held thread), so they additionally
@@ -1968,6 +1982,7 @@ def build_status_handler(
         }
         POST_ROUTES = {
             "/launch-directories": "_handle_save_launch_directories",
+            "/features": "_handle_save_features",
             "/images": "_handle_image",
             "/shutdown": "_handle_shutdown",
             "/kill-session": "_handle_kill_session",
@@ -2281,6 +2296,48 @@ def build_status_handler(
                 self._send_json(500, {"error": "Could not save launch directories to disk"})
                 return
             self._send_json(200, state)
+
+        def _handle_get_features(self) -> None:
+            """GET /features: every feature switch, on or off, in the Settings page's words (features.py)."""
+            self._send_json(200, switches.view())
+
+        def _handle_save_features(self) -> None:
+            """POST /features `{"set": {key: bool}}`: switch parts of this bridge off or back on.
+            Origin-guarded: it writes the operator's config. It can name no path and load no code."""
+            if not self._origin_allowed():
+                return
+            body = self._read_json_object()
+            if body is None:
+                return
+            try:
+                view = switches.save(body)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            except OSError:
+                self._send_json(500, {"error": "Could not save the feature switches to disk"})
+                return
+            click.echo(f"  features: off → {', '.join(switches.off_keys()) or 'nothing'}")
+            self._send_json(200, view)
+
+        def _route_doctor(self) -> None:
+            if self._expensive_route_guard():
+                self._handle_doctor()
+
+        def _handle_doctor(self) -> None:
+            """GET /doctor: `tldrack doctor` as JSON, for the Settings page's SETUP tab (doctor.py
+            `wire`). The same facts the command gathers, with this bridge's own snapshot in place
+            of the one the command fetches. Changes nothing."""
+            status_port = bridge_info.get("status_port")
+            if not status_port:  # a test-built handler: there are no ports to describe
+                self._send_json(503, {"error": "this bridge does not know its ports"})
+                return
+            try:
+                facts = doctor_facts(bridge_info.get("port") or status_port - 1, status_port, self.snapshot_payload(), switches)
+            except Exception as exc:  # noqa: BLE001 — a check that cannot run is an error line, never a traceback
+                self._send_json(500, {"error": f"doctor could not read this machine: {type(exc).__name__}"})
+                return
+            self._send_json(200, doctor_mod.wire(doctor_mod.run_checks(facts)))
 
         def _handle_rename_session(self) -> None:
             """POST /rename-session {"session": <old>, "name": <new>} — rename ONE
@@ -3952,6 +4009,7 @@ def start_status_server(
     profiles: ProfileRegistry | None = None,
     freshness: FreshnessMonitor | None = None,
     settings: Settings | None = None,
+    features: FeatureSwitches | None = None,
 ) -> None:
     """Bind loopback-only and serve from a daemon thread (dies with ttyd).
 
@@ -3959,10 +4017,15 @@ def start_status_server(
     a handler built by a test is never reconciled against this machine's
     real Claude sessions."""
     settings = settings if settings is not None else Settings()
+    switches = features if features is not None else FeatureSwitches()
     live_marks.configure(settings.lease_module)
     rack_path = resolve_rack_db_path()
     # The session ledger's timer (ledger/scheduler.py) — production only, like the arbiter.
-    ledger = LedgerScheduler(ledger_dir(), log=lambda message: click.echo(message, err=True))
+    ledger = LedgerScheduler(
+        ledger_dir(),
+        log=lambda message: click.echo(message, err=True),
+        enabled=lambda: switches.on(LEDGER_INGEST),
+    )
     handler = build_status_handler(
         StatusStore(),
         SessionIconStore(resolve_icons_path()),
@@ -3997,6 +4060,7 @@ def start_status_server(
         rack_db=RackDb(rack_path),
         settings=settings,
         find_ui=lambda: ui_static.find_ui_dist(settings.ui_dist),
+        features=switches,
     )
     server = ThreadingHTTPServer(("127.0.0.1", status_port), handler)
     handler.arbiter.start()
@@ -4035,6 +4099,7 @@ def load_rack_plugins(
     start_dir: str | None,
     profiles: ProfileRegistry | None = None,
     settings: Settings | None = None,
+    features: FeatureSwitches | None = None,
 ) -> tuple[dict[str, object], list[Path]]:
     """The core's built-ins (local-llm), then the configured plugin dirs (or the
     checkout's defaults: plugin_sources.py), and echo what mounted. This bridge hands local-llm one agent runtime the bare
@@ -4057,6 +4122,11 @@ def load_rack_plugins(
     source = plugin_sources.resolve_plugin_source(os.environ, plugins_config_path())
     dirs = source.dirs
     click.echo(f"  plugins from:      {source.describe()}")
+    if features is not None:
+        # The source decides what MAY mount; the operator's switches only subtract (features.py).
+        dirs, skipped = mountable(dirs, features)
+        if skipped:
+            click.echo(f"  plugins off:       {', '.join(skipped)}  (switched off on the Settings page)")
     builtins = builtin_plugins(context, agent_runtimes=agent_runtimes)
     registry = load_plugins(dirs, context, preloaded=builtins)
     for name in registry:
@@ -4080,7 +4150,11 @@ def serve_status(
     `/spawn` and a worktree create can never disagree about a profile.
     Raises OSError when the status port cannot be bound."""
     profiles = load_bridge_profiles()
-    plugins, plugin_dirs = load_rack_plugins(port, status_port, session, start_dir, profiles, settings)
+    # One store reaches the plugin loader, the code watch and the handler (features.py).
+    features = FeatureSwitches()
+    if features.error:
+        click.echo(f"  features:          {features.error}", err=True)
+    plugins, plugin_dirs = load_rack_plugins(port, status_port, session, start_dir, profiles, settings, features)
     # After the plugins, so the baseline hashes exactly what was just imported.
     # The config file counts only when the env override did not shadow it (plugin_sources.py).
     # Watched even while it does not exist, so writing one over the checkout defaults is noticed.
@@ -4092,6 +4166,7 @@ def serve_status(
             plugins_config=None if os.environ.get(PLUGINS_ENV) else plugins_config_path(),
             profiles_path=resolve_profiles_path(),
             log=click.echo,
+            enabled=lambda: features.on(CODE_WATCH),
         )
         start_status_server(
             status_port,
@@ -4103,6 +4178,7 @@ def serve_status(
             profiles=profiles,
             freshness=freshness,
             settings=settings,
+            features=features,
         )
     except BaseException:
         if freshness is not None:
@@ -4909,12 +4985,29 @@ def port_holder(port: int) -> tuple[int, str] | None:
 @click.option(
     "--status-port", default=None, type=int, help="Status listener port (env TLDRACK_STATUS_PORT). [default: --port + 1]"
 )
-def doctor_command(port: int, status_port: int | None) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print the checks as JSON (what the rack's Settings page reads).")
+def doctor_command(port: int, status_port: int | None, as_json: bool) -> None:
     """Check this machine: tmux, ttyd, node, uv, an agent CLI, the hooks, the ports, the directories,
     and which optional parts are on. Changes nothing. Exit 1 when something stops the rack starting."""
-    from tldrack import doctor  # noqa: PLC0415
-
     status_port = resolve_status_port(port, status_port)
+    sections = doctor_mod.run_checks(doctor_facts(port, status_port, fetch_snapshot(status_port)))
+    code, closing = doctor_mod.verdict(sections)
+    if as_json:
+        click.echo(json.dumps(doctor_mod.wire(sections), indent=2))
+        sys.exit(code)
+    for title, checks in sections:
+        click.echo(f"{title}")
+        for check in checks:
+            click.echo(check.line())
+    click.echo(f"\ntldrack doctor: {closing}")
+    sys.exit(code)
+
+
+def doctor_facts(port: int, status_port: int, snapshot: dict | None, features: FeatureSwitches | None = None) -> doctor_mod.Facts:
+    """Everything `doctor` reads from this machine (doctor.py `Facts`), for the command and for
+    `GET /doctor`. `snapshot` is the running bridge's, or None when none answers; `features` is the
+    running bridge's store, or None to read the file. Raises nothing a broken config file causes:
+    each becomes the check that names it."""
     try:
         settings: Settings | None = load_settings()
         parts: Mapping[str, bool] | str = settings.enabled()
@@ -4940,30 +5033,27 @@ def doctor_command(port: int, status_port: int | None) -> None:
             parts = parts if isinstance(parts, str) else f"profiles: {exc}"
         notify_on = NotifyConfigStore(resolve_notify_path()).get().topic is not None
         mode = next_step_mod.stored_mode(next_step_mod.resolve_state_path())
-    facts = doctor.Facts(
-        tools=doctor.find_tools(),
+    source = plugin_sources.resolve_plugin_source(os.environ, plugins_config_path()) if "error" not in described else None
+    switches: FeatureSwitches | None = features
+    if switches is None and source is not None:
+        # No bridge handed its store over: read the file, and offer the same plugins a start would.
+        switches = FeatureSwitches(plugins=(path.name for path in source.dirs))
+    return doctor_mod.Facts(
+        tools=doctor_mod.find_tools(),
         paths=described,
         settings=parts,
         profiles=profiles,
         ports={port: port_holder(port), status_port: port_holder(status_port)},
         status_port=status_port,
-        snapshot=fetch_snapshot(status_port),
+        snapshot=snapshot,
         ui_dist=ui_static.find_ui_dist(settings.ui_dist if settings is not None else None),
         notify_on=notify_on,
         next_step_mode=mode,
-        plugin_source=plugin_sources.resolve_plugin_source(os.environ, plugins_config_path()).describe()
-        if "error" not in described
-        else None,
+        plugin_source=source.describe() if source is not None else None,
         plugin_settings=tuple(settings.plugins) if settings is not None else (),
+        features_off=tuple(switches.off_keys()) if switches is not None else (),
+        features_error=switches.error if switches is not None else None,
     )
-    sections = doctor.run_checks(facts)
-    for title, checks in sections:
-        click.echo(f"{title}")
-        for check in checks:
-            click.echo(check.line())
-    code, closing = doctor.verdict(sections)
-    click.echo(f"\ntldrack doctor: {closing}")
-    sys.exit(code)
 
 
 @main.command()

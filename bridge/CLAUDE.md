@@ -11,7 +11,7 @@ A module's own docstring owns its why. This file is the map, the route contract,
 ```bash
 cd bridge && uv run pytest                 # all tests; one file: uv run pytest tests/test_snapshot.py
 tldrack up                                 # start the rack (or find it up); the only way an agent gets a bridge
-tldrack doctor                             # what this machine has, what is missing, the fix for each; changes nothing
+tldrack doctor [--json]                    # what this machine has, what is missing, the fix for each; changes nothing
 tldrack hooks [--install [--profile ID]]   # print the hooks JSON, or merge it into every launch profile that lacks it
 tldrack status                             # the running bridge: pid, who started it, live sessions, the `code:` line
 tldrack kill [--with-tmux]                 # stop the bridge; tmux sessions survive unless --with-tmux
@@ -69,6 +69,8 @@ Also off by default, each with its own owner: phone pushes (`notify.json`, off u
 **Environment**: `TLDRACK_PORT` (7681, ttyd), `TLDRACK_STATUS_PORT` (port + 1, so 7682), `TLDRACK_SESSION` (default `tldrack`), `TLDRACK_START_DIR`, `TLDRACK_PLUGINS` (colon-separated plugin dirs), `TLDRACK_UI_DIST`, `TLDRACK_NTFY_TOPIC` (a secret; under 24 characters is refused), `TLDRACK_LEAD_SKILL`, `TLDRACK_FIX_CAP_USD`. The `Host` allowlist is the core's variable, `VOIDCRAFT_BRIDGE_ALLOWED_HOSTS` (see Security posture).
 
 **Server flags**: `--port`, `--status-port`, `--session`, `--start-dir`, `--cmd` (full command override), `--pinned`, `--font-size`, `--read-only`, `--no-status`, `--no-index-patch`, `--print-hooks`, `--print-statusline`.
+
+**Feature switches** (`tldrack/features.py` owns why this is not `settings.json`): `<config>/features.json` holds only what the operator switched OFF on the rack's Settings page; no file means everything runs. `GET /features` is every switch in the page's words, `POST /features {"set": {key: bool}}` writes it (Origin-guarded). A `now` switch (`code_watch`, `public_status`, `ledger_ingest`) is a callable its loop asks each tick; a `restart` switch (`plugin:<directory name>`) is read once by `load_rack_plugins` and only ever subtracts from what `plugin_sources.py` resolved. A new loop that deserves a switch takes an `enabled` callable and a `tick()` a test can call, like those three.
 
 **Start directory**: the startup directory (`DEFAULT_START_DIR`, or `TLDRACK_START_DIR`) seeds the saved launch default. `GET/POST /launch-directories` and `/spawn`’s optional `cwd`: owned by `tldrack/launch_directories.py`. Worktree and LEAD keep their own repository configuration.
 
@@ -163,6 +165,7 @@ A stdlib `ThreadingHTTPServer` on a daemon thread, loopback only, that subclasse
 - Additive row keys include `profile`, `created_at`, `launch_permission_mode`, `launch_model`, `icon`, `tasks`, `fresh`, `stuck`, `stop_failure`, `persona`, `auto_name`, `lineage`, `context_left`, `open_work`, `lead` / `worker` (`worker` is also written as `crew`, its name before step 6.8, for one release), and `exited` + `exit_code` for a pane held open after its job ended (`snapshot.py` `TMUX_DEAD_FIELD`).
 - Additive top-level keys: `bridge`, `plugins`, `profiles` (its presence is the client's capability signal for `/spawn`), `launch_pick`, `usage_limits`, `clients`, `state_sources`, `restorable`, `closed`, `next_step`. The counts are omitted at 0.
 - `GET /events` is SSE: a `snapshot` event at once and on every state-affecting change, an `activity` event per ticker entry, and a ping when idle. Broker: `tldrack/events.py`, one queue per client so a wedged client never blocks a hook POST, capped at `MAX_SSE_CLIENTS` (503 above). An overflowing queue drops its OLDEST chunk. Polling stays fully supported.
+- `GET /doctor` is `tldrack doctor` as JSON (`doctor.py` `wire`): the Settings page's SETUP tab. It shells out, so it sits behind `_expensive_route_guard`. A check the page can fix with one request carries `action`, a closed set of kinds that each name a route which already guards itself; a new kind is a new constant in `doctor.py` and a button in `ui/src/settings/`.
 - `GET /activity?limit=N` returns recent transitions newest first from a ring buffer (`tldrack/history.py`). Entries append only on a real state or activity change.
 - `GET /capture?session=&lines=` returns the VISIBLE rows of a pane, never scrollback: full-screen agents draw on the alternate screen, where history returns less, not more. `GET /wait?session=&for=<state,…>[&timeout_ms=]` blocks until a session reaches a state (`tldrack/wait.py`).
 
