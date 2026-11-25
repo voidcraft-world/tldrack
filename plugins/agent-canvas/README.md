@@ -178,7 +178,8 @@ nothing deletes copies automatically.
 `GET /artifact` serves a trusted viewer, never the raw file. `artifact_page.py` and
 `assets/artifact-viewer.js` own the isolation: HTML runs in an opaque-origin `allow-scripts` sandbox
 whose CSP blocks network requests, external assets, forms and nested frames; it cannot navigate the
-parent or open popups. PDFs are download-only. Registration refuses every browser caller.
+parent, open popups or download. A page that exports a picture hands it to the viewer, which saves
+PNG, JPEG and WebP only, after a click. PDFs are download-only. Registration refuses every browser caller.
 
 ## Why the key is the tmux session ID
 

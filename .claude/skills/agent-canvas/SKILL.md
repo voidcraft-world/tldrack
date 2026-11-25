@@ -15,8 +15,10 @@ canvas path. Do not register application source files or intermediate output.
 1. Save the deliverable inside this session's starting workspace. Hidden paths and symlinks are
    refused. HTML must be self-contained: inline scripts and embedded assets work, but external
    resources, network calls, forms and nested frames are blocked. Use ordinary DOM or shadow roots
-   for comparison panels. The viewer's policy is owned by
-   `plugins/agent-canvas/agent_canvas/artifact_page.py` — see the note there.
+   for comparison panels. A download link inside the page saves nothing there: a button that
+   exports an image posts it to the viewer (`artifact-save`), which saves it. The viewer's policy
+   and that message are owned by `plugins/agent-canvas/agent_canvas/artifact_page.py` — see the
+   note there.
 2. Run `python3 plugins/agent-canvas/scripts/register-artifact.py <path>` from the tldrack checkout,
    or use the absolute register-script path supplied by SessionStart when working in another
    repository. The script resolves the current tmux pane; outside it, pass the known

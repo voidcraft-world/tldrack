@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -125,3 +128,25 @@ def test_viewer_never_interpolates_untrusted_markup_or_names():
     assert "frame-src 'none'" in ARTIFACT_CSP
     assert "form-action 'none'" in ARTIFACT_CSP
     assert "base-uri 'none'" in ARTIFACT_CSP
+
+
+def test_viewer_saves_only_clicked_images_from_its_own_sandbox():
+    viewer = Path(__file__).parents[1] / "agent_canvas/assets/artifact-viewer.js"
+    assert "allow-downloads" not in viewer.read_text()
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("needs node on PATH")
+    harness = Path(__file__).parent / "fixtures/viewer-save-harness.cjs"
+    result = subprocess.run([node, str(harness), str(viewer)], capture_output=True, text=True, timeout=60, check=False)
+    assert result.returncode == 0, result.stderr.strip()
+    played = json.loads(result.stdout)
+    batch = [f"batch-{i}.png" for i in range(31)]
+    assert played["saved"] == ["My Chart_.png", "sheet-web.webp", "image.jpg", "slow.png", *batch]
+    replies = {reply["id"]: reply for reply in played["replies"]}
+    assert "stranger" not in replies
+    assert [replies[id]["ok"] for id in ("png", "webp", "jpeg")] == [True, True, True]
+    assert replies["html"]["error"] == "only PNG, JPEG and WebP images can be saved"
+    assert replies["text"]["error"] == "no image bytes were sent"
+    assert replies["huge"]["error"] == "the image is larger than 16 MiB"
+    for refused in ("no-click", "stranger-click", "past-budget", "past-minute"):
+        assert replies[refused]["error"] == "saving needs a click: press the button again"
