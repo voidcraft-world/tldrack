@@ -29,7 +29,7 @@ import {
 const props = defineProps<{ run: LeadRun; decisions: Decision[]; frozen: boolean }>();
 const emit = defineEmits<{ (event: 'decide', request: DecisionRequest): void }>();
 
-/** The rack's arm window (KILL?, PR?): long enough to read the label change, short enough to forget. */
+/** The rack's arm window (CLOSE?, PR?): long enough to read the label change, short enough to forget. */
 const ARM_MS = 4000;
 const arm = useArmedAction(ARM_MS);
 

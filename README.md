@@ -61,13 +61,14 @@ If your shell says `tldrack: command not found`, run `uv tool update-shell` and 
 port 7681 or 7682 that is taken (another rack on this machine, perhaps another account's) gets its own
 ports in that shell, then carry on: `export TLDRACK_PORT=7781 TLDRACK_STATUS_PORT=7791`.
 
-In the rack's **LAUNCH** row, press **CLAUDE** (or **CODEX**), then **HERE** (or **MAIN** on an older bridge). A terminal opens with the
+At the top of the rack, press the button named for the directory to work in, then **CLAUDE** (or **CODEX**), then **HERE**
+(or **MAIN** on an older bridge). A terminal opens with the
 agent in it: give it a task. Its row picks up a readable name from your prompt. When its turn ends,
 the row shows the local model's verdict: ✅ done, or ⚠️ it needs you.
 
 Use **Settings → Directories** to add project names and absolute paths (or `~/…`), choose
-one default, and save. The project buttons above **LAUNCH** choose where the next regular
-agent starts; a fresh page uses the saved default. These settings belong to the bridge, so
+one default, and save. Each directory is a button at the top of the rack, and the one you
+press is where the next regular agent starts. These settings belong to the bridge, so
 other devices see the same directories. Worktree and LEAD launches remain tied to the bridge's
 startup repository; their buttons explain when the selected project cannot use them.
 Settings also holds the list/graph view, office, diagram and terminal appearance. **Close finished**

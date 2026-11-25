@@ -4,17 +4,17 @@
 When a session's turn is over, the bridge names ONE of the rack's own per-row controls the operator
 would likely press next, with a reason and the evidence for it. The rack draws it as a chip on the
 row and a card on the canvas. Nothing runs until [Do it], and [Do it] presses the existing control
-exactly as a hand would: the ✕'s KILL? arm, PR's and CLEAN's arms and their refusals all still run.
+exactly as a hand would: the ✕'s CLOSE? arm, PR's and CLEAN's arms and their refusals all still run.
 No code path in this module, the bridge or the rack executes a suggestion on its own.
 
 ── THE VOCABULARY IS THE RACK'S ───────────────────────────────────────────────
 `ACTIONS` is the per-row control set of `ui/src/agent-rack/AgentRackComponent.vue`, read off
 the code on 2026-11-04, and nothing else:
 
-    select   ▶ open, or a row click: the live pane. How you answer, reply or resume a cut-off turn.
+    select   a row click: the live pane. How you answer, reply or resume a cut-off turn.
     pr       PR → PR?  (a worktree row with work on it)
     cleanup  CLEAN → CLEAN?  (a worktree whose work has landed)
-    kill     ✕ → KILL?
+    kill     ✕ → CLOSE?
 
 Left out on purpose: `rename` (needs a string only the operator has), `dismiss_open_work` (a verdict on
 Laya's ⚠️, not a next step), `reopen` / RESTORE (rows already gone), `mission` (needs a mission), and

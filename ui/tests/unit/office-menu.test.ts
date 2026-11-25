@@ -51,7 +51,7 @@ describe('the office menu', () => {
         const turned = office_menu(agent(), worktree(LANDED), 'pr', true).find(item => item.id === 'cleanup');
         assert.deepEqual([turned?.label, turned?.armed], ['CLEAN', false]);
         const closing = office_menu(agent(), worktree(), 'kill', true).find(item => item.id === 'kill');
-        assert.deepEqual([closing?.label, closing?.armed, closing?.detail], ['CLOSE?', true, "Click again: kills 'wt-nav'"]);
+        assert.deepEqual([closing?.label, closing?.armed, closing?.detail], ['CLOSE?', true, "Click again: closes 'wt-nav'"]);
     });
 
     test('a rack that cannot act leaves every entry dead but the link to GitHub', () => {

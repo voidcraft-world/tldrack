@@ -32,7 +32,8 @@ bridge, so the page has to be told where one is:
 http://localhost:5173/?remote=http://127.0.0.1:7681&bridge=http://127.0.0.1:7682
 ```
 
-`remote` is the ttyd origin and `bridge` the bridge's. The page remembers them; the rack's
+`remote` is the ttyd origin and `bridge` the bridge's. The page remembers them, and the pages
+it opens by name (settings, Laya review) talk to the same bridge; the rack's
 ⇄ SWITCH MACHINE forgets them. For a dev bridge use its ports (`7781` and `7791`).
 
 ## The office

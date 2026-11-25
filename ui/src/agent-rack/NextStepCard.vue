@@ -5,7 +5,7 @@
  *
  * It owns no behaviour. [Do it] emits `do`, and the rack presses the row's own control through
  * `next-step-view.ts::press_next_step`, so the control's arm and refusals still run; the button's
- * label is that control's (`KILL?`, `PR?`) once armed. Placement (the canvas pane where one is
+ * label is that control's (`CLOSE?`, `PR?`) once armed. Placement (the canvas pane where one is
  * mounted, under the row anywhere else) is the rack's (`AgentRackComponent.vue`, the `<Teleport>`).
  */
 import type { NextStep } from '@tldrack/schemas/next-step.ts';

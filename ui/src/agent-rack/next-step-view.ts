@@ -4,7 +4,7 @@
  *
  * [Do it] is not a second door to an action. It presses the row's own control handler — `select`
  * (▶), the ✕'s `on_kill_click`, the PR/CLEAN button's `on_worktree_click` — so the control's arm
- * (KILL?, PR?, CLEAN?) and its refusals run exactly as for a hand on the row. The first [Do it] on an
+ * (CLOSE?, PR?, CLEAN?) and its refusals run exactly as for a hand on the row. The first [Do it] on an
  * armed control ARMS it; only a second press fires. Nothing here runs on a timer, a payload or a
  * render: `press_next_step` is reached from a click handler and nowhere else. What a suggestion is: owned by
  * `bridge/tldrack/next_step.py` — see the note there.
@@ -27,7 +27,7 @@ export function is_next_step_control(action: string): action is NextStepAction {
 /** What the row's control looks like right now, as the card needs it. */
 export interface RowControlState {
     frozen: boolean;
-    /** The row's ✕ shows `KILL?`. */
+    /** The row's ✕ shows `CLOSE?`. */
     kill_armed: boolean;
     /** The row's PR/CLEAN button, or undefined when the row has none. */
     worktree?: WorktreeButtonView;
@@ -35,7 +35,7 @@ export interface RowControlState {
     worktree_armed: boolean;
 }
 
-/** The card's [Do it]: its label mirrors the control's arm, so the second press reads `KILL?`. */
+/** The card's [Do it]: its label mirrors the control's arm, so the second press reads `CLOSE?`. */
 export interface CardPress {
     label: string;
     title: string;
@@ -57,8 +57,8 @@ export function card_press(step: NextStep | undefined | null, row: RowControlSta
             return ready('Open this session in the live terminal — the row’s ▶');
         case 'kill':
             return row.kill_armed
-                ? { label: 'KILL?', title: 'Confirm: kills this session — the row’s ✕, pressed twice', disabled: row.frozen, armed: true }
-                : ready('Press the row’s ✕ — it asks again (KILL?) before it kills');
+                ? { label: 'CLOSE?', title: 'Confirm: closes this session — the row’s ✕, pressed twice', disabled: row.frozen, armed: true }
+                : ready('Press the row’s ✕ — it asks again (CLOSE?) before it closes');
         case 'pr':
         case 'cleanup': {
             const words = WORKTREE_WORDS[step.action];

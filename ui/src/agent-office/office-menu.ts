@@ -63,7 +63,7 @@ export function office_menu(
     }
     const closing = armed === 'kill';
     items.push({ id: 'kill', label: closing ? 'CLOSE?' : '✕ CLOSE',
-        detail: closing ? `Click again: kills '${agent.session}'` : 'Kill this tmux session · asks twice',
+        detail: closing ? `Click again: closes '${agent.session}'` : 'Close this session · asks twice',
         press: usable ? 'arm' : 'none', url: null, tone: 'danger', armed: closing });
     return items;
 }
