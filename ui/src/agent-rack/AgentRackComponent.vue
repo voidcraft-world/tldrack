@@ -1664,7 +1664,7 @@ onUnmounted(() => {
                 aria-label="Rack settings"
                 :title="settings_open
                     ? 'Hide rack settings'
-                    : 'Rack settings: view, terminal appearance and help'"
+                    : 'Rack settings: directories, view, terminal appearance and help'"
                 @click="settings_open = !settings_open"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiCog" /></svg></button>
             <button v-if="closed_view" type="button"
                 :class="['fui-btn', { 'rack__restore-btn': (closed_view.restorable?.count ?? 0) > 0 }]"
@@ -1683,6 +1683,7 @@ onUnmounted(() => {
              the accelerator, hinted in the ⚙ and button titles. Never disabled
              by `frozen` — see the note on `patch_render`. -->
         <section v-show="settings_open" id="rack-settings" class="rack__settings">
+            <button type="button" class="fui-btn" @click="launch_open = true; directories_open = true; settings_open = false">Edit launch directories</button>
             <div class="rack__render">
                 <label class="fui-techtext rack__render-label" for="rack-view">VIEW</label>
                 <select id="rack-view" v-model="session_view" class="rack__render-select">
