@@ -1,6 +1,6 @@
 {
   "name": "@tldrack/ui",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "tldrack's pages: the agent rack, Laya review, the architecture diagram, the agent office, the evals and the settings. The bridge serves the build; a host application imports the modules.",
   "license": "MIT",
   "repository": {
