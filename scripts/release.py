@@ -14,7 +14,8 @@ A GitHub tag can be deleted and its release made again, so here the version bump
 told the version.
 
 `tag` checks that `main` is clean, even with GitHub and green in CI, that the tag is new and newer than
-every release, and that the tarballs build HERE (`scripts/pack.py`). Then it asks, tags, pushes the tag,
+every release, that a final tag passes the gate `release.yml` holds for one (`check_cited_commits`), and
+that the tarballs build HERE (`scripts/pack.py`). Then it asks, tags, pushes the tag,
 waits for `release.yml` (which runs the same `pack.py` on GitHub and attaches both tarballs), checks that
 the release carries them, and syncs the consumers. It is re-runnable: a tag already on GitHub skips to
 the wait and the verification.
@@ -46,6 +47,10 @@ import pack  # noqa: E402  (scripts/ is not a package)
 CONSUMERS_ENV = "TLDRACK_CONSUMERS"
 RELEASE_WORKFLOW = "release.yml"
 CI_WORKFLOW = "ci.yml"
+# The gate `release.yml` runs for a final tag: this test, switched on by this variable.
+CITED_COMMITS_TEST = "ui/tests/unit/bench-commits.test.ts"
+CITED_COMMITS_ENV = "TLDRACK_REQUIRE_CITED_COMMITS"
+CITED_FILE_RE = re.compile(r"'([^'/]+\.json)'")
 # The repository is public; a commit or tag with a personal address publishes it for good.
 NOREPLY_SUFFIX = "@users.noreply.github.com"
 # The push URLs that reach the public repository. Anything else (a fork, a disabled URL) cannot publish.
@@ -139,10 +144,25 @@ def say(message: str) -> None:
     print(message, flush=True)
 
 
-def run(cmd: list[str], cwd: Path | None = None, *, capture: bool = True, check: bool = True) -> str:
-    """Run a command. Captured output is returned; on failure, it is the error."""
+def run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    *,
+    capture: bool = True,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> str:
+    """Run a command. Captured output is returned; on failure, it is the error. `env` adds to this
+    process's environment."""
     try:
-        proc = subprocess.run(cmd, cwd=cwd or pack.ROOT, text=True, capture_output=capture, check=False)
+        proc = subprocess.run(
+            cmd,
+            cwd=cwd or pack.ROOT,
+            text=True,
+            capture_output=capture,
+            check=False,
+            env={**os.environ, **env} if env else None,
+        )
     except FileNotFoundError:
         raise ReleaseError(f"`{cmd[0]}` is not installed") from None
     if check and proc.returncode != 0:
@@ -261,7 +281,32 @@ def check_ci(head: str) -> Check:
     return Check(OK, f"ci is green on {head[:7]}")
 
 
+def cited_commits_gate() -> None:
+    """Run the release job's gate for a final tag on this checkout; a refusal is the error."""
+    run(["node", "--test", CITED_COMMITS_TEST], env={CITED_COMMITS_ENV: "1"})
+
+
+def check_cited_commits() -> Check:
+    """`release.yml` refuses a final tag whose bench results cite a commit outside `main`'s history, and
+    it runs after the tag is pushed: the refusal leaves a public tag with no release, to be deleted and
+    cut again. The same gate run here refuses before anything is public. The test it runs owns the rule,
+    why a release candidate is exempt, and the fix."""
+    try:
+        cited_commits_gate()
+    except ReleaseError as err:
+        files = sorted(set(CITED_FILE_RE.findall(str(err))))
+        if not files:
+            raise  # node is missing or the test broke another way: `safely` reports what it said
+        return Check(
+            FAIL,
+            f"bench/results/ cites a commit outside `main`'s history ({', '.join(files)}): {RELEASE_WORKFLOW} "
+            f"would refuse this tag after it is public. {CITED_COMMITS_TEST} owns the fix",
+        )
+    return Check(OK, "every bench results file cites a commit in `main`'s history")
+
+
 def preflight(version: str, head: str, released: list[str]) -> list[Check]:
+    final = pack.parse_version(version)[3] is None
     return [
         safely("identity", check_identity),
         safely("push URL", check_push_url),
@@ -269,6 +314,7 @@ def preflight(version: str, head: str, released: list[str]) -> list[Check]:
         safely("tag", lambda: check_tag(version, released)),
         safely("version", lambda: check_tree(version)),
         safely("ci", lambda: check_ci(head)),
+        *([safely("bench commits", check_cited_commits)] if final else []),
     ]
 
 

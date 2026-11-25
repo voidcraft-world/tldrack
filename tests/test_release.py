@@ -363,6 +363,8 @@ def scratch(tmp_path, monkeypatch):
     monkeypatch.setattr(pack, "ROOT", work)
     monkeypatch.setattr(release, "PUSH_URLS", (str(origin),))
     monkeypatch.setattr(release, "gh", fake_gh)
+    # The invented tree has no bench results: the gate is recorded, and passes unless a test says otherwise.
+    monkeypatch.setattr(release, "cited_commits_gate", lambda: calls.append(("cited commits gate",)))
     monkeypatch.delenv(release.CONSUMERS_ENV, raising=False)
     return work, origin, calls
 
@@ -420,3 +422,42 @@ def test_a_push_url_that_is_not_the_public_repository_refuses(scratch, capsys):
     git(work, "remote", "set-url", "--push", "origin", "DISABLED")
     assert release.main(["tag", "0.1.0", "--dry-run"]) == 1
     assert "✗ origin's push URL is 'DISABLED': this checkout cannot publish" in capsys.readouterr().out
+
+
+def test_a_final_tag_runs_the_release_jobs_gate_and_a_candidate_does_not(scratch, capsys):
+    _, _, calls = scratch
+
+    assert release.main(["tag", "0.1.0-rc.1", "--dry-run"]) == 0
+    assert ("cited commits gate",) not in calls
+
+    assert release.main(["tag", "0.1.0", "--dry-run"]) == 0
+    assert ("cited commits gate",) in calls
+    assert "✓ every bench results file cites a commit in `main`'s history" in capsys.readouterr().out
+
+
+def test_a_bench_result_that_cites_a_commit_outside_main_refuses_before_the_tag(scratch, capsys, monkeypatch):
+    work, origin, _ = scratch
+    before = snapshot(work, origin)
+
+    def refuses() -> None:
+        # What `node --test` prints for the test's assertion: the files, each beside the commit it cites.
+        raise release.ReleaseError(
+            "`node --test` failed (1):\n+ [\n+   [\n+     '2026-01-02.json',\n+     '0123abc'\n+   ]\n+ ]\nℹ fail 1"
+        )
+
+    monkeypatch.setattr(release, "cited_commits_gate", refuses)
+    assert release.main(["tag", "0.1.0", "--dry-run"]) == 1
+
+    printed = capsys.readouterr().out
+    assert "✗ bench/results/ cites a commit outside `main`'s history (2026-01-02.json)" in printed
+    assert "1 check would refuse this tag" in printed
+    assert snapshot(work, origin) == before
+
+
+def test_a_gate_that_cannot_run_is_a_refusal_that_says_why(scratch, capsys, monkeypatch):
+    def no_node() -> None:
+        raise release.ReleaseError("`node` is not installed")
+
+    monkeypatch.setattr(release, "cited_commits_gate", no_node)
+    assert release.main(["tag", "0.1.0", "--dry-run"]) == 1
+    assert "✗ bench commits: `node` is not installed" in capsys.readouterr().out
