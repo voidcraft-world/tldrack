@@ -52,13 +52,13 @@ function save(): void {
                 <div v-for="(row, index) in rows" :key="index" class="directories__row">
                     <input v-model="default_index" type="radio" name="launch-default" :value="index"
                         :aria-label="`Use ${row.label || 'directory'} by default`" title="Default directory" @change="dirty = true" />
-                    <input v-model="row.label" aria-label="Directory name" placeholder="Project name" maxlength="40"
-                        required @input="dirty = true" />
+                    <label class="directories__name">Name<input v-model="row.label" aria-label="Directory name" placeholder="Project name" maxlength="40"
+                        required @input="dirty = true" /></label>
                     <button type="button" class="fui-btn" :disabled="rows.length === 1"
                         :aria-label="`Remove ${row.label || 'directory'}`" title="Remove directory" @click="remove(index)">×</button>
-                    <input v-model="row.path" class="directories__path" aria-label="Directory path"
+                    <label class="directories__path">Path<input v-model="row.path" aria-label="Directory path"
                         placeholder="~/code/project" maxlength="4096" autocomplete="off" spellcheck="false"
-                        required @input="dirty = true" />
+                        required @input="dirty = true" /></label>
                 </div>
                 <div class="directories__actions">
                     <button type="button" class="fui-btn" :disabled="rows.length >= 16" @click="add">+ DIRECTORY</button>
@@ -79,6 +79,7 @@ function save(): void {
 .directories__row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 5px; align-items: center; }
 .directories input:not([type='radio']) { min-width: 0; padding: 5px; min-height: 32px; border: 1px solid rgba(180, 190, 200, 0.4); background: transparent; color: inherit; font-size: 0.8rem; }
 .directories__path { grid-column: 2 / -1; }
+.directories label { display: grid; gap: 4px; min-width: 0; font-size: 12px; color: var(--rack-muted); }
 .directories__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .directories :is(button, input):focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 @media (pointer: coarse) { .directories :is(button, input:not([type='radio'])) { min-height: 44px; } }

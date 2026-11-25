@@ -906,6 +906,11 @@ class WorktreePlugin:
         described = profiles.describe(requested or None)
         if described is None:
             return {}, (400, {"error": f"unknown profile '{requested}'"})
+        # Launch availability: owned by bridge/tldrack/profile_availability.py — see the note there.
+        if hasattr(profiles, "launch_refusal"):
+            refused = profiles.launch_refusal(described["id"])
+            if refused:
+                return {}, (400, {"error": refused})
         kind = described["kind"]
         if kind == "claude":
             cli_bin = _resolve_claude_bin()

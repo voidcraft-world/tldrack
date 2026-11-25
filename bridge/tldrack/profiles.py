@@ -45,6 +45,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable, Iterable, Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tldrack.profile_availability import ProfileAvailability
 
 from tldrack import paths
 from tldrack import antigravity_hooks, headless
@@ -986,6 +990,7 @@ class ProfileRegistry:
     ) -> None:
         self._profiles = list(profiles)
         self._by_id = {p.id: p for p in self._profiles}
+        self._availability: ProfileAvailability | None = None
         self.default_id = default_id
         self.source = source  # "file" | "detected" — for the startup echo
         self._home = home
@@ -1023,6 +1028,22 @@ class ProfileRegistry:
         profile = self.resolve(profile_id)
         return profile.kind if profile else None
 
+    @property
+    def availability(self) -> ProfileAvailability:
+        # The lab reads profile identity without installing the bridge core; only launch settings need it.
+        with self._lock:
+            if self._availability is None:
+                from tldrack.profile_availability import ProfileAvailability
+
+                self._availability = ProfileAvailability(list(self._by_id))
+            return self._availability
+
+    def launch_refusal(self, profile_id: object) -> str | None:
+        profile = self.resolve(profile_id)
+        if profile is not None and self.availability.paused(profile.id):
+            return f"Profile '{profile.label}' is paused; resume it in Launch profiles"
+        return None
+
     # -- AUTO -----------------------------------------------------------------
     def capacities(self) -> dict[str, float]:
         return {p.id: p.capacity for p in self._profiles}
@@ -1048,7 +1069,7 @@ class ProfileRegistry:
             return None
         pick = self._launch_picker()
         chosen = pick.get("id") if isinstance(pick, dict) else None
-        if not isinstance(chosen, str) or chosen not in self._by_id:
+        if not isinstance(chosen, str) or chosen not in self._by_id or self.launch_refusal(chosen):
             return None
         if model is None and subagent_model is None and permission_mode is None:
             return chosen
@@ -1056,6 +1077,8 @@ class ProfileRegistry:
         rows = [row for row in ranking if isinstance(row, dict) and row.get("id") in self._by_id]
         ordered = [chosen, *(row["id"] for row in rows if not row.get("spent")), *(row["id"] for row in rows if row.get("spent"))]
         for candidate in dict.fromkeys(ordered):
+            if self.launch_refusal(candidate):
+                continue
             if self.model_refusal(candidate, model, subagent_model) is not None:
                 continue
             if permission_mode is not None and self.permission_refusal(candidate, permission_mode) is not None:
@@ -1152,6 +1175,9 @@ class ProfileRegistry:
         profile = self.resolve(profile_id)
         if profile is None:
             raise KeyError(profile_id)
+        refused = self.launch_refusal(profile.id)
+        if refused:
+            raise ValueError(refused)
         binary = cli_bin if profile.kind == "claude" else None
         if profile.kind in ("claude", antigravity_hooks.KIND) and binary is None:
             binary = self.cli_path(profile.id)
@@ -1411,6 +1437,7 @@ class ProfileRegistry:
                 "label": profile.label,
                 "kind": profile.kind,
                 "default": profile.id == self.default_id,
+                "paused": self.availability.paused(profile.id),
                 "hooks_ok": None if (missing := self.hooks_missing(profile, status_port, events)) is None else not missing,
                 # What INSTALL would add (`hooks_missing`), for the OPS row's readout.
                 "hooks_missing": missing,

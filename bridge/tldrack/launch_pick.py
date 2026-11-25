@@ -295,7 +295,7 @@ def pick_launch_profile(
     candidates = [
         score_profile(summary, by_profile.get(str(summary["id"]), []), (capacities or {}).get(str(summary["id"]), 1.0), now)
         for summary in summaries
-        if summary.get("kind") in AGENT_KINDS and summary.get("cli_found")
+        if summary.get("kind") in AGENT_KINDS and summary.get("cli_found") and summary.get("paused") is not True
     ]
     # Stable sort: equal scores go to the week with most to burn, then keep
     # profiles.json order.
@@ -307,5 +307,5 @@ def pick_launch_profile(
         # An out account has no reset to wait for: last, whatever its stale windows say.
         best = min(ranking, key=lambda c: (c.out, math.inf if c.resets_at is None else c.resets_at))
     else:
-        return LaunchPick(None, None, "no agent CLI found", False, ())
+        return LaunchPick(None, None, "no available agent profile", False, ())
     return LaunchPick(best.id, best.label, reason_for(best, now), best.spent, ranking)

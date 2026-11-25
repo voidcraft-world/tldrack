@@ -389,6 +389,8 @@ export interface ProfileInfo {
     /** Are the bridge's status hooks merged into this profile's config? Null
      *  where hooks do not apply (`shell`). False → amber `!` on the chip. */
     hooks_ok: boolean | null;
+    /** Retained for existing sessions, excluded from new launches. */
+    paused?: boolean;
     /** Did the bridge find this profile's CLI? False → the chip is disabled. */
     cli_found: boolean;
     /** Display model for a kind whose model the bridge cannot read. */
@@ -488,6 +490,7 @@ export function parse_profiles(value: unknown): ProfileInfo[] | null {
                     : null,
             usage: parse_usage_limits(raw.usage),
             standing: parse_profile_standing(raw.standing),
+            ...(typeof raw.paused === 'boolean' ? { paused: raw.paused } : {}),
         });
     }
     return out;

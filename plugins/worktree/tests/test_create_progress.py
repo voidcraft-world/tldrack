@@ -403,6 +403,13 @@ def profiled(plugin, monkeypatch):
 
 
 class TestLaunchProfiles:
+    def test_paused_profile_refuses_before_creating_a_worktree(self, profiled, monkeypatch):
+        plugin, profiles = profiled
+        monkeypatch.setattr(profiles, "launch_refusal", lambda _profile: "Profile is paused", raising=False)
+        status, body = plugin._handle_create({}, {"branch": "feature", "profile": "claude-a"})
+        assert status == 400 and "paused" in body["error"]
+        assert not plugin.started
+
     def test_parent_identity_is_captured_before_the_worker_starts(self, profiled, monkeypatch):
         plugin, profiles = profiled
         lineage = {"id": "child-id", "parent_id": "parent-id"}
