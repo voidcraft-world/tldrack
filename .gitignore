@@ -38,3 +38,7 @@ android/**/build/
 
 # Editors
 .idea/
+
+# Agents: screenshots and previews an agent writes while it works (a browser tool's default
+# directory). They show local paths and session names, so they never ride along by accident.
+output/
