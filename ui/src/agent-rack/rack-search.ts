@@ -24,10 +24,15 @@ function with_context(rows: readonly RackRow[], matches: readonly RackRow[]): Ra
     const keep = new Set(matches);
     const ancestors = new Set(matches.flatMap((row) => row.ancestors ?? []));
     for (const row of rows) if (row.node_id && ancestors.has(row.node_id)) keep.add(row);
+    const headings = new Map(rows.filter((row) => row.kind === 'cohort').map((row) => [row.cohort, row]));
     let heading: RackRow | undefined;
     for (const row of rows) {
         if (row.kind === 'cohort') heading = row;
-        if (keep.has(row) && heading) keep.add(heading);
+        if (keep.has(row) && heading) {
+            keep.add(heading);
+            const parent = heading.cohort_parent ? headings.get(heading.cohort_parent) : undefined;
+            if (parent) keep.add(parent);
+        }
     }
     return rows.filter((row) => keep.has(row));
 }

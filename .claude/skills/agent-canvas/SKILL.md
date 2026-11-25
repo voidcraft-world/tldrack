@@ -1,24 +1,42 @@
 ---
 name: agent-canvas
-description: Write to your agent canvas — a small pane the user sees beside your terminal in the agent rack — as a typed JSON doc of readout blocks (stat, meter, table, diff, tabs, Mermaid…) that is checked on every write, and ask questions the user answers with one click or a short form (the answers arrive as your next message). Use when the SessionStart context names an "Agent canvas" path AND you created directories or a module layout, added a process, service, hook, plugin or route, traced a request, or have a before/after, a plan, a comparison or a decision to show; also when a prompt says "Draw what you just did on your agent canvas" (the terminal's ◧ DRAW button) or a hook reminds you of the canvas. Skip for routine replies, and skip when no canvas path was given.
+description: Create or update user-facing file previews in TLDRack (HTML proposals, reports, images, PDFs), or fix a missing preview; artifact delivery does not require an assigned canvas path. Also draw structured diagrams, comparisons and questions when SessionStart supplies an Agent canvas path, the operator requests a canvas, or a canvas hook prompts you. Skip routine chat and application source edits without a user-facing deliverable.
 ---
 
 # Agent canvas
 
 ## Generated files: artifact shelf
 
-When you create a deliverable for the user (HTML proposal, report, image, PDF), register it with
-`python3 plugins/agent-canvas/scripts/register-artifact.py <path>`. This works without an
-assigned canvas path: the command resolves the current tmux pane, or accepts `--session <name>`.
-The bridge must have the updated agent-canvas plugin running. Report a registration failure;
-still give the user the file link. Do not register application source files or intermediate output.
+When running inside TLDRack, creating or updating a user-facing file includes putting the result
+on this session's artifact shelf before the final reply. A filesystem link in terminal text does
+not put a file on the shelf. This applies to every agent and writing tool, without an assigned
+canvas path. Do not register application source files or intermediate output.
 
-With the plugin's Claude Code hooks installed (`plugins/agent-canvas/README.md` § Hooks), a Write of
-an HTML file registers it automatically. Without them, and for shell, apply_patch or other tools, run
-the command explicitly; repeated registration updates one shelf entry. The shelf stores a copy
-and offers Preview/Open/Download. HTML previews are self-contained: scripts work inside an isolated
-sandbox, external resources and bridge calls are blocked. Use embedded assets for offline proposals.
-The source must be inside this session's starting workspace; hidden paths and symlinks are refused.
+1. Save the deliverable inside this session's starting workspace. Hidden paths and symlinks are
+   refused. HTML must be self-contained: inline scripts and embedded assets work, but external
+   resources, network calls, forms and nested frames are blocked. Use ordinary DOM or shadow roots
+   for comparison panels. The viewer's policy is owned by
+   `plugins/agent-canvas/agent_canvas/artifact_page.py` — see the note there.
+2. Run `python3 plugins/agent-canvas/scripts/register-artifact.py <path>` from the tldrack checkout,
+   or use the absolute register-script path supplied by SessionStart when working in another
+   repository. The script resolves the current tmux pane; outside it, pass the known
+   `--session <name>`. Never guess another session. Registration is local delivery, part of the
+   requested artifact; it needs no separate publishing step.
+3. Confirm registration succeeded. Repeat after revising the file: the shelf stores a copy, so
+   editing the source alone leaves a stale preview. Re-registering an unchanged file is a no-op.
+   Claude's Write hook may register HTML automatically; shell, apply_patch and other tools do not
+   have that guarantee. Explicit registration makes the handoff independent of the writing tool.
+4. For interactive HTML, verify the saved copy in TLDRack's artifact viewer, including its main
+   controls. A browser check of the source file alone does not exercise the viewer's restrictions.
+   Resolve the shelf entry through `GET /plugin/agent-canvas/frag?session=<name>` and use its actual
+   key and artifact id for `GET /plugin/agent-canvas/artifact?key=<key>&id=<id>` on the configured
+   bridge status port. Do not weaken the viewer policy to make an artifact work.
+5. In the final reply, name the file under **Artifacts → Preview**, and provide its verified viewer
+   URL when available. A local file link can be a fallback. If registration or verification fails,
+   report what failed and give the source-file link; do not claim it is visible in TLDRack.
+
+The bridge must have the agent-canvas plugin running. Registration failures and viewer behavior:
+owned by `plugins/agent-canvas/README.md` § Artifact shelf — see the note there.
 
 **A deliverable is read by a person, so its text comes first.** A label that names a section is
 bold and never the faintest ink in it. Body text is at least 16px on a page and 14px in a figure.

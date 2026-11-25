@@ -24,6 +24,7 @@ import { defineAsyncComponent, computed, nextTick, onMounted, onUnmounted, ref, 
 import { useArmedAction } from '../composables/useArmedAction.ts';
 import {
     build_rack_rows,
+    cohort_label_for,
     hold_row_order,
     rack_row_key,
     type RackActionId,
@@ -126,7 +127,7 @@ import {
 } from './family-fold.ts';
 import IslandGlyph from './IslandGlyph.vue';
 import LaunchDirectorySettings from './LaunchDirectorySettings.vue';
-import { attention_rows } from './attention-rows.ts';
+import { attention_rows, fold_sidebar_rows, is_directory_heading } from './attention-rows.ts';
 import IslandMark from './IslandMark.vue';
 import { auto_branch } from './auto-branch.ts';
 import { chat_query, focus_snippet, highlight_terms, search_rack_rows, starred_rack_rows } from './rack-search.ts';
@@ -158,6 +159,32 @@ const settings_open = ref(false);
 const launch_open = ref(false);
 const profiles_open = ref(false);
 const directories_open = ref(false);
+const DENSITY_KEY = 'tldrack:rack-density';
+const SERVICES_OPEN_KEY = 'tldrack:rack-services-open';
+const DIRECTORY_FOLDS_KEY = 'tldrack:rack-directory-folds';
+function read_sidebar_choice(key: string): string | null {
+    try { return localStorage.getItem(key); } catch { return null; }
+}
+const density = ref(read_sidebar_choice(DENSITY_KEY) === 'comfortable' ? 'comfortable' : 'compact');
+const services_open = ref(read_sidebar_choice(SERVICES_OPEN_KEY) !== '0');
+const directory_folds = ref(read_fold_choices(read_sidebar_choice(DIRECTORY_FOLDS_KEY)));
+function save_sidebar_choice(key: string, value: string): void {
+    try { localStorage.setItem(key, value); } catch { /* The choice still lasts this page. */ }
+}
+watch(density, (value) => save_sidebar_choice(DENSITY_KEY, value));
+watch(services_open, (value) => save_sidebar_choice(SERVICES_OPEN_KEY, value ? '1' : '0'));
+// Search and stars reveal folded bands, just as they reveal folded families.
+const filter_active = computed(() => !!session_search.value.trim() || starred_only.value);
+const services_expanded = computed(() => services_open.value || filter_active.value);
+function directory_expanded(row: RackRow): boolean {
+    return filter_active.value || directory_folds.value.get(row.cohort ?? '') !== true;
+}
+function toggle_directory(row: RackRow): void {
+    if (!row.cohort) return;
+    directory_folds.value = choose_fold(directory_folds.value, row.cohort, directory_expanded(row));
+    save_sidebar_choice(DIRECTORY_FOLDS_KEY, write_fold_choices(directory_folds.value));
+}
+
 function toggle_launch(): void {
     launch_open.value = !launch_open.value;
     close_fork();
@@ -268,6 +295,9 @@ function toggle_complete(): void {
     }
 }
 function on_storage(event: StorageEvent): void {
+    if (event.key === DENSITY_KEY || event.key === null) density.value = read_sidebar_choice(DENSITY_KEY) === 'comfortable' ? 'comfortable' : 'compact';
+    if (event.key === SERVICES_OPEN_KEY || event.key === null) services_open.value = read_sidebar_choice(SERVICES_OPEN_KEY) !== '0';
+    if (event.key === DIRECTORY_FOLDS_KEY || event.key === null) directory_folds.value = read_fold_choices(read_sidebar_choice(DIRECTORY_FOLDS_KEY));
     if (event.key === COMPLETE_OPEN_KEY) complete_open.value = read_complete_open();
     if (event.key === MEMORY_OPEN_KEY) memory_open.value = event.newValue === '1';
     if (event.key === JOBS_OPEN_KEY) jobs_open.value = event.newValue === '1';
@@ -294,6 +324,12 @@ const rows = computed<RackRow[]>(() => {
         max_sessions: data.sessions.length,
     });
 });
+
+/** Project naming: owned by `multi-terminal-layout.ts` — see `cohort_label_for`. */
+const session_directories = computed(() => new Map((payload.value?.sessions ?? []).flatMap((session) => {
+    const label = cohort_label_for(session);
+    return label ? [[session.session, label] as const] : [];
+})));
 
 /**
  * The row's state mark: an emoji (`TERMINAL_STATUS_FLAGS.state_emoji`, the
@@ -770,10 +806,17 @@ function is_auto_target(chip: LaunchChip): boolean {
  *  — the bridge drops those, see tldrack usage.py). */
 function used_pct(profile: ProfileInfo, window: 'five_hour' | 'seven_day'): number | null {
     const used = profile.usage?.[window]?.used_percentage;
-    return typeof used === 'number' ? Math.min(100, Math.max(0, used)) : null;
+    return typeof used === 'number' && Number.isFinite(used) ? Math.min(100, Math.max(0, used)) : null;
 }
 const five_hour = (profile: ProfileInfo): number | null => used_pct(profile, 'five_hour');
 const weekly = (profile: ProfileInfo): number | null => used_pct(profile, 'seven_day');
+const weekly_profiles = computed(() => available_profiles.value.filter((profile) => profile.cli_found && profile.kind !== 'shell'));
+function weekly_title(profile: ProfileInfo): string {
+    if (is_out(profile)) return out_title(profile);
+    const percent = weekly(profile);
+    return percent === null ? `${profile.label}: weekly usage unavailable`
+        : `${profile.label}: ${Math.round(percent)}% of weekly allowance used${resets_label(profile.usage?.seven_day?.resets_at)}${usage_age_label(profile.usage?.age_seconds)}`;
+}
 
 /** Past this a launch on that account is likely to hit its cap mid-task. */
 const USAGE_WARN_PCT = 80;
@@ -1427,14 +1470,14 @@ watch(rows, (list) => {
 
 /** What the list renders: the live rows, in the held order while renaming. */
 const shown_rows = computed<RackRow[]>(() => {
-    const attention = attention_rows(rows.value, asks_now);
-    const ordered = held_order.value ? hold_row_order(held_order.value, attention) : attention;
+    const attention = attention_rows(rows.value, asks_now, session_directories.value);
     // ★ narrows first, so FIND then searches inside the starred sessions.
-    const base = starred_only.value ? starred_rack_rows(ordered) : ordered;
-    if (session_search.value.trim()) return search_rack_rows(base, session_search.value, chat_matches.value);
-    if (starred_only.value) return base;
-    return fold_rows(ordered, folded.value, asks_now)
-        .filter((row) => complete_open.value || !row.complete || row.kind === 'cohort');
+    const base = starred_only.value ? starred_rack_rows(attention) : attention;
+    const visible = session_search.value.trim() ? search_rack_rows(base, session_search.value, chat_matches.value)
+        : starred_only.value ? base
+        : fold_sidebar_rows(fold_rows(attention, folded.value, asks_now), services_open.value, directory_folds.value)
+            .filter((row) => complete_open.value || !row.complete || row.kind === 'cohort');
+    return held_order.value ? hold_row_order(held_order.value, visible) : visible;
 });
 // A suggested next step that reached the screen is reported `shown`, once per hash (§ suggested next step).
 watch(shown_rows, report_shown, { immediate: true });
@@ -1465,7 +1508,7 @@ function start_rename(session: string | undefined): void {
     disarm_kill();
     disarm_worktree();
     editing.value = session;
-    held_order.value = attention_rows(rows.value, asks_now).map(rack_row_key);
+    held_order.value = attention_rows(rows.value, asks_now, session_directories.value).map(rack_row_key);
     pressed_away = false;
     const title = rows.value.find((row) => row.session === session)?.auto_name;
     draft.value = title?.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || session;
@@ -1681,7 +1724,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <div class="rack fui-panel">
+    <div :class="['rack fui-panel', { 'rack--compact': density === 'compact' }]">
         <div class="rack__body">
         <header class="rack__head">
             <span class="fui-techtext rack__title">Rack <span class="rack__session-count">{{ payload?.sessions.filter(session => session.live).length ?? 0 }} sessions</span></span>
@@ -1702,8 +1745,20 @@ onUnmounted(() => {
         </header>
 
         <section v-if="payload?.reachable" class="rack__attention" aria-label="Rack attention summary">
-            <strong><span>{{ attention_count }}</span> {{ attention_count === 1 ? 'session needs you' : 'sessions need you' }}</strong>
-            <p>{{ working_count }} working · {{ complete_sessions.length }} completed</p>
+            <div class="rack__summary-copy">
+                <strong><span>{{ attention_count }}</span> {{ attention_count === 1 ? 'session needs you' : 'sessions need you' }}</strong>
+                <p>{{ working_count }} working · {{ complete_sessions.length }} completed</p>
+            </div>
+            <aside v-if="weekly_profiles.length" class="rack__weekly" aria-label="Weekly allowance used by active profiles">
+                <span class="rack__weekly-label">Weekly used</span>
+                <div class="rack__weekly-profiles">
+                    <div v-for="profile in weekly_profiles" :key="profile.id"
+                        :class="['rack__weekly-profile', { 'rack__weekly-profile--warn': (weekly(profile) ?? 0) >= USAGE_WARN_PCT, 'rack__weekly-profile--out': is_out(profile) }]"
+                        :title="weekly_title(profile)" :aria-label="weekly_title(profile)">
+                        <span>{{ profile.label }}</span><b>{{ is_out(profile) ? 'OUT' : weekly(profile) === null ? '—' : `${Math.round(weekly(profile)!)}%` }}</b>
+                    </div>
+                </div>
+            </aside>
         </section>
 
         <!-- Terminal render controls, behind the head's ⚙ (closed by default since
@@ -1733,6 +1788,12 @@ onUnmounted(() => {
                 <button type="button" class="fui-btn"
                     title="Every setting on one page: setup, what the bridge runs, what this browser draws (opens a window)"
                     @click="open_settings()">ALL SETTINGS</button>
+            </div>
+            <div class="rack__render">
+                <label class="fui-techtext rack__render-label" for="rack-density">SESSION DENSITY</label>
+                <select id="rack-density" v-model="density" class="rack__render-select">
+                    <option value="compact">Compact</option><option value="comfortable">Comfortable</option>
+                </select>
             </div>
             <div v-if="render_options" class="rack__render">
                 <span class="fui-techtext rack__render-label">FONT</span>
@@ -2061,9 +2122,7 @@ onUnmounted(() => {
         <!-- THE LEDGER GRID. The list is the grid and every session row a
              subgrid, so the trailing CTX and PROFILE columns are shared by every
              row: a value there sits at one x however much the row carries before
-             it. The actions live INSIDE the name cell for the same reason: beside
-             the profile chip and hidden by opacity they would still take width,
-             and the chip would move with each row's button count. -->
+             it. Action placement: owned by `AgentRackComponent.vue` — see the `.row__actions` note there. -->
         <ul
             v-else
             :class="['rack__list', { 'rack__list--emoji': use_state_emoji, 'rack__list--profiles': show_who_column }]"
@@ -2074,7 +2133,7 @@ onUnmounted(() => {
             <li
                 v-for="row in shown_rows"
                 :key="rack_row_key(row)"
-                :class="['row', `row--${row.kind}`, { 'row--focused': row.focused, 'row--dim': row.dim, 'row--frozen': frozen, 'row--child': (row.depth ?? 0) > 0, 'row--family': (row.child_count ?? 0) > 0 }]"
+                :class="['row', `row--${row.kind}`, { 'row--directory': is_directory_heading(row), 'row--service': shows_service_mark(row.session, row.state), 'row--focused': row.focused, 'row--dim': row.dim, 'row--frozen': frozen, 'row--child': (row.depth ?? 0) > 0, 'row--family': (row.child_count ?? 0) > 0 }]"
                 :style="family_depth_style(row)"
                 @click="row.kind === 'session' && !row.dim && row.session && editing !== row.session ? send('select', row.session) : null"
                 @contextmenu="row.kind === 'session' && !row.dim && row.session
@@ -2196,19 +2255,9 @@ onUnmounted(() => {
                                 @click.stop="start_rename(row.session)"
                             >{{ row.auto_name || row.session }}</button>
                             <span v-else class="row__name row__name--static">{{ row.auto_name || row.session }}</span>
-                            <!-- The operator's star, beside the name it marks. Solid and always
-                                 drawn once set; an outline on hover or the focused row before.
-                                 `.stop`, or the click also selects the row. -->
-                            <button
-                                v-if="shows_star(row)"
-                                type="button"
-                                :class="['row__star', 'rack__icon', { 'row__star--on': row.starred }]"
-                                :disabled="frozen"
-                                :aria-pressed="row.starred === true"
-                                :title="star_title(row.starred === true)"
-                                :aria-label="star_title(row.starred === true)"
-                                @click.stop="toggle_star(row)"
-                            ><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="row.starred ? mdiStar : mdiStarOutline" /></svg></button>
+                            <span v-if="row.starred" class="row__star-mark" role="img" aria-label="Starred session">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiStar" /></svg>
+                            </span>
                             <!-- Beside the NAME, not out by the actions: the point is
                                  to read "this agent is not in your checkout" with the
                                  name it belongs to. Owner: `IslandMark.vue`. -->
@@ -2233,8 +2282,17 @@ onUnmounted(() => {
                             </span>
                         </template>
 
-                        <small class="row__status">{{ row.dim ? 'Closed' : asks_now(row) ? 'Needs you' : row.complete ? 'Completed' : row.state === 'busy' || row.state === 'background' ? 'Working' : state_label(row.state ?? 'unknown') }}</small>
                         <span v-if="row.actions.length && editing !== row.session" class="row__actions">
+                            <button
+                                v-if="shows_star(row)"
+                                type="button"
+                                :class="['row__star', 'rack__icon', { 'row__star--on': row.starred }]"
+                                :disabled="frozen"
+                                :aria-pressed="row.starred === true"
+                                :title="star_title(row.starred === true)"
+                                :aria-label="star_title(row.starred === true)"
+                                @click.stop="toggle_star(row)"
+                            ><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="row.starred ? mdiStar : mdiStarOutline" /></svg></button>
                             <!-- PR / CLEAN. Deliberately NOT a `RackActionId`: that union
                                  is the per-row action set, where `kill` must stay last
                                  (pinned by a test). Only this surface needs it.
@@ -2283,15 +2341,15 @@ onUnmounted(() => {
                     <!-- CTX: context left, the number only — the column says what
                          it is, the title says it in words. Amber ≤25, red ≤10. -->
                     <span
-                        v-if="role_segment(row, 'context')"
+                        v-if="!shows_service_mark(row.session, row.state) && role_segment(row, 'context')"
                         :class="['row__ctx-col', `row__ctx--${role_segment(row, 'context')!.tone}`]"
                         :title="`${role_segment(row, 'context')!.text.replace(' left', '')} of the context window left`"
                     >{{ role_segment(row, 'context')!.text.replace(' left', '') }}</span>
-                    <span v-else class="row__ctx-col" />
+                    <span v-else-if="!shows_service_mark(row.session, row.state)" class="row__ctx-col" />
 
                     <!-- PROFILE: every row, so the column reads top to bottom;
                          `—` is "no account on record", never a blank. -->
-                    <span v-if="show_who_column" class="row__who">
+                    <span v-if="show_who_column && !shows_service_mark(row.session, row.state)" class="row__who">
                         <!-- MODEL: every live row, when the rack is wide enough
                              (the container query on `.row__model`). -->
                         <span v-if="row_model(row)" class="row__model" :title="`Running ${row_model(row)}`">{{ row_model(row) }}</span>
@@ -2423,6 +2481,19 @@ onUnmounted(() => {
                         @click.stop="delete_all_complete"
                     >{{ complete_delete_armed ? `CLOSE ${complete_sessions.length}?` : 'CLOSE ALL' }}</button>
                 </div>
+                <button v-else-if="is_directory_heading(row)" type="button" class="row__directory-toggle"
+                    :aria-expanded="directory_expanded(row)" :disabled="filter_active"
+                    :title="`${directory_expanded(row) ? 'Collapse' : 'Expand'} ${row.text}`"
+                    @click.stop="toggle_directory(row)">
+                    <span class="row__directory-arrow" aria-hidden="true">{{ directory_expanded(row) ? '▾' : '▸' }}</span>
+                    <span class="row__directory-name">{{ row.text }}</span><span class="row__directory-count">{{ row.cohort_count }}</span>
+                </button>
+                <button v-else-if="row.kind === 'cohort' && row.cohort === 'Services'" type="button"
+                    class="row__fold" :aria-expanded="services_expanded"
+                    :disabled="filter_active"
+                    @click.stop="services_open = !services_open">
+                    <span>{{ row.text }}</span><span aria-hidden="true">{{ services_expanded ? '▾' : '▸' }}</span>
+                </button>
                 <span v-else class="row__text">{{ row.text }}</span>
                 <FamilyFoldLine v-if="row.kind === 'session' && row.node_id && fold_readouts.has(row.node_id)"
                     class="row__line2" :readout="fold_readouts.get(row.node_id)!" />
@@ -2851,7 +2922,7 @@ onUnmounted(() => {
     --rack-depth-name-step: 14px;
 }
 .rack__list--profiles { grid-template-columns: auto minmax(0, 1fr) auto auto; }
-.rack__list--emoji { --rack-mark-w: 18px; }
+.rack__list--emoji { --rack-mark-w: 24px; }
 
 /* ↺ CLOSED: under the head, above LAUNCH — the undo sits next to where you look
    first. Capped so a long list scrolls instead of pushing the rack off. */
@@ -3095,14 +3166,23 @@ onUnmounted(() => {
 }
 
 .row__text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The name cell: indent, family chips, ▶, the name, its island, the detail,
-   and — on hover / the focused row — the actions at its end. */
-.row__main { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
-.row__status { flex-basis: 100%; order: 2; font-size: 12px; color: var(--rack-muted); padding-left: var(--rack-depth-indent); }
+/* The name cell uses all remaining width; controls overlay it only while interacting. */
+.row__main { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
+.row--service .row__main { grid-column: 2 / -1; }
+.row--service .row__name { flex: 0 1 auto; overflow-wrap: anywhere; white-space: normal; }
+.row--session { min-height: 30px; }
+.rack--compact .row--session { padding-top: 3px; padding-bottom: 3px; }
+.rack--compact .row__main { row-gap: 1px; }
+.rack--compact .row--cohort { margin-top: 4px; padding-top: 4px; padding-bottom: 4px; }
+.rack--compact .rack__body { gap: 8px; }
+.rack--compact .rack__attention { padding-top: 2px; padding-bottom: 4px; }
+@media (pointer: coarse) { .rack--compact .row--session { min-height: 44px; } }
 .row__indent { flex: 0 0 auto; width: var(--rack-depth-indent); }
 /* After the name: muted and smaller, so the name is what the eye lands on. */
 .row--session .row__text { flex-basis: 100%; order: 3; font-size: 12px; color: var(--rack-muted); }
+.row--service .row__text { flex: 0 1 auto; order: 0; white-space: normal; overflow-wrap: anywhere; }
 .row--session .row__text:empty { display: none; }
+.row__ctx-col:empty { min-width: 0; }
 .row__ctx-col { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; min-width: 4ch; white-space: nowrap; }
 
 /* The session name, boxed: the rename door. Same frame and padding as the
@@ -3110,7 +3190,7 @@ onUnmounted(() => {
    without the row moving. Neutral ink at rest, the input's mint on hover —
    the box is chrome until you reach for it. */
 .row__name {
-    flex: 0 1 auto;
+    flex: 1 1 0;
     min-width: 0;
     max-width: 100%;
     overflow: hidden;
@@ -3147,7 +3227,7 @@ onUnmounted(() => {
    is the rack's reading of a session, and this one mark is the operator's own. */
 .rack { --rack-star: #ff9ad5; }
 .row__star {
-    display: none;
+    display: inline-flex;
     flex: 0 0 auto;
     width: 24px;
     height: 24px;
@@ -3158,7 +3238,6 @@ onUnmounted(() => {
     border-radius: 2px;
     color: var(--rack-muted);
 }
-.row:hover .row__star, .row--focused .row__star, .row__star--on { display: inline-flex; }
 .row__star--on { color: var(--rack-star); }
 .row__star:hover:not(:disabled), .row__star:focus-visible { color: var(--rack-star); border-color: currentColor; outline: none; }
 @media (pointer: coarse) {
@@ -3253,13 +3332,7 @@ onUnmounted(() => {
    here. */
 .dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #6b7683; }
 .dot--fresh { background: transparent; box-shadow: inset 0 0 0 2px currentColor; }
-/* The emoji mark (display_state_emoji) — the rack's at-a-glance "what needs
-   me" signal. ~1.35x the 14px row text: much larger, a column of emoji is the
-   heaviest ink in the window and out-shouts the names it marks. Colour emoji
-   read at this size; the column
-   (`--rack-mark-w`) is fixed so a name starts in the same place whatever the
-   glyph. The emoji stack first, or the mono row font's own fallback picks a
-   monochrome glyph for some of them. */
+/* Emoji remain the visible state label; their title and accessible name carry the words. */
 /* The state mark plus, on a finished turn with work left, Laya's ⚠️ pinned to
    its lower-right corner — it rides the mark rather than taking a column, so
    names stay aligned whether or not a row carries it. */
@@ -3302,7 +3375,7 @@ span.mark__open-work { cursor: default; }
 .glyph {
     flex: 0 0 auto;
     width: var(--rack-mark-w);
-    font-size: 16px;
+    font-size: 22px;
     line-height: 1;
     text-align: center;
     font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
@@ -3356,11 +3429,19 @@ span.mark__open-work { cursor: default; }
     letter-spacing: 0.04em;
 }
 
-/* NOT `opacity: 0`: hidden actions that keep their width make the profile
-   label drift row to row. `display: none` takes no width, and when they
-   show they squeeze the muted detail text inside the name cell — never a column. */
-.row__actions { display: none; gap: 4px; flex: 0 0 auto; margin-left: auto; }
-.row:hover .row__actions, .row--focused .row__actions { display: flex; }
+/* Full-width names at rest. Absolute controls cannot resize a row on hover, focus or arming.
+   Touch keeps controls below the name; starred rows retain an independent visible mark. */
+.row__actions { position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 3;
+    display: flex; align-items: center; gap: 4px; max-width: 100%; padding: 3px 5px;
+    border: 1px solid color-mix(in srgb, var(--rack-muted) 55%, transparent); border-radius: 5px;
+    background: var(--rack-raised); box-shadow: 0 2px 8px #0005; opacity: 0; pointer-events: none; }
+.row:hover .row__actions, .row:focus-within .row__actions, .row__actions:has(.row__btn--armed) { opacity: 1; pointer-events: auto; }
+.row__star-mark { display: inline-flex; flex: 0 0 auto; color: var(--rack-star); }
+.row__star-mark svg { width: 12px; height: 12px; fill: currentColor; }
+@media (hover: none) {
+    .row__actions { position: static; transform: none; flex: 0 0 100%; justify-content: flex-end;
+        opacity: 1; pointer-events: auto; background: transparent; border: 0; box-shadow: none; padding: 2px 0; }
+}
 
 /* PR / CLEAN sit in the same row strip as ▶ / ✕ but act on the BRANCH (push it,
    or clear it away once landed), so they get their own hue rather than the blue
@@ -3404,8 +3485,17 @@ span.mark__open-work { cursor: default; }
 .rack__body { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .rack__head, .rack__search, .rack__attention, .rack__create { flex-shrink: 0; }
 .rack__session-count { font-size: 12px; font-weight: 400; color: var(--rack-muted); margin-left: 8px; }
-.rack__attention { padding: 8px 2px 12px; }
-.rack__attention strong { font-size: 22px; font-weight: 500; letter-spacing: -0.03em; }
+.rack__attention { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; padding: 8px 2px 12px; }
+.rack__summary-copy { flex: 1 1 164px; min-width: 0; }
+.rack__weekly { flex: 1 1 142px; min-width: 0; max-width: 260px; }
+.rack__weekly-label { display: block; margin-bottom: 7px; color: var(--rack-muted); font-size: 11px; }
+.rack__weekly-profiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; }
+.rack__weekly-profile { display: flex; align-items: baseline; gap: 5px; min-width: 0; color: var(--rack-muted); font-size: 11px; }
+.rack__weekly-profile span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rack__weekly-profile b { margin-left: auto; color: var(--rack-text); font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+.rack__weekly-profile--warn b { color: var(--fui-warn, #f8c146); }
+.rack__weekly-profile--out b { color: #ff7b72; }
+.rack__attention strong { display: block; font-size: 20px; line-height: 1.2; font-weight: 500; letter-spacing: -0.03em; }
 .rack__attention strong span { color: var(--fui-warn, #f8c146); }
 .rack__attention p { margin: 6px 0 0; color: var(--rack-muted); font-size: 12px; }
 .rack__create-toggle { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--rack-muted) 40%, transparent); border-radius: 6px; background: var(--rack-raised); color: var(--rack-text); font: inherit; cursor: pointer; }
@@ -3416,7 +3506,16 @@ span.mark__open-work { cursor: default; }
 .rack__profile-setting { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
 .rack__profile-setting small { margin-left: 6px; color: var(--rack-muted); }
 .rack__devices { border-top: 1px solid var(--rack-raised); padding-top: 8px; max-height: 35%; min-height: 36px; }
-.row__name { font-weight: 550; }
+.rack .row--directory { margin-top: 0; padding: 7px 6px 4px calc(var(--rack-mark-w) + 11px); border-bottom: 0;
+    color: var(--color-accent-green, #a9e2c9); font-size: 15px; font-weight: 550; }
+.row__directory-toggle { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0;
+    padding: 4px 6px; margin-left: -6px; border: 0; border-radius: 5px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.row__directory-toggle:hover:not(:disabled) { background: color-mix(in srgb, currentColor 8%, transparent); box-shadow: inset 2px 0 currentColor; }
+.row__directory-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row__directory-count { margin-left: auto; font-size: 12px; opacity: 0.75; }
+.row__directory-arrow { width: 10px; opacity: 0.85; }
+@media (pointer: coarse) { .row__directory-toggle { min-height: 40px; } }
+.row__name { font-size: 15px; font-weight: 550; }
 .row__who, .row__ctx-col { font-size: 11px; }
 .row__who { color: var(--rack-muted); }
 .rack :is(button, input):focus-visible { outline: 2px solid var(--color-accent-green, #93ffd4); outline-offset: 2px; }
