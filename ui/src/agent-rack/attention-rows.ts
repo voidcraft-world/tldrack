@@ -3,7 +3,8 @@ import { shows_service_mark } from '../engine/terminal/service-sessions.ts';
 
 /** Attention bands keep whole families and their notes together. A worker's ask lifts its
  * parent too, so folding cannot bury an ask or detach a worker from its context. */
-export function attention_rows(rows: readonly RackRow[], asks: (row: RackRow) => boolean): RackRow[] {
+export function attention_rows(rows: readonly RackRow[], asks: (row: RackRow) => boolean,
+    directories?: ReadonlyMap<string, string>): RackRow[] {
     const families: RackRow[][] = [];
     const other: RackRow[] = [];
     for (const row of rows) {
@@ -27,20 +28,45 @@ export function attention_rows(rows: readonly RackRow[], asks: (row: RackRow) =>
     return [...bands.flatMap((band, index): RackRow[] => {
         if (!band.groups.length) return [];
         const count = band.groups.flat().filter((row) => row.kind === 'session').length;
+        const members = index === 1 && directories ? directory_rows(band.groups, directories) : band.groups.flat();
         return [{ kind: 'cohort', cohort: band.label, text: `${band.label} · ${count}`, dim: false,
-            focused: false, actions: [], ...(index === 3 ? { complete: true } : {}) }, ...band.groups.flat()];
+            focused: false, actions: [], ...(index === 3 ? { complete: true } : {}) }, ...members];
     }), ...other];
 }
 
-/** Fold only the service band, including its notes. Services that need attention stay visible
- * in Needs you. Call after family folding, and bypass it while searching or filtering stars. */
-export function fold_services(rows: readonly RackRow[], open: boolean): RackRow[] {
-    let in_services = false;
+/** A family stays under its parent's directory; an absent parent uses its first known worker.
+ * Only In progress is subdivided, so a newly asking family leaves any collapsed directory. */
+function directory_rows(families: readonly RackRow[][], directories: ReadonlyMap<string, string>): RackRow[] {
+    const groups = new Map<string, RackRow[]>();
+    for (const family of families) {
+        const label = family.map((row) => row.session ? directories.get(row.session) : undefined)
+            .find((value) => value !== undefined) ?? 'No directory';
+        const group = groups.get(label) ?? [];
+        group.push(...family);
+        groups.set(label, group);
+    }
+    return [...groups].flatMap(([label, members]): RackRow[] => [
+        { kind: 'cohort', cohort: `directory:${label}`, cohort_parent: 'In progress', text: label,
+            cohort_count: members.filter((row) => row.kind === 'session').length,
+            dim: false, focused: false, actions: [] }, ...members,
+    ]);
+}
+
+export function is_directory_heading(row: RackRow): boolean {
+    return row.kind === 'cohort' && row.cohort_parent === 'In progress';
+}
+
+/** Apply band folds to freshly grouped rows, before holding rename order. Search and stars
+ * bypass these folds. Keep headers/counts and trailing overflow, including when every row folds. */
+export function fold_sidebar_rows(rows: readonly RackRow[], services_open: boolean,
+    directory_choices: ReadonlyMap<string, boolean> = new Map()): RackRow[] {
+    let hidden = false;
     return rows.filter((row) => {
         if (row.kind === 'cohort') {
-            in_services = row.cohort === 'Services';
+            hidden = row.cohort === 'Services' ? !services_open
+                : is_directory_heading(row) && directory_choices.get(row.cohort!) === true;
             return true;
         }
-        return open || !in_services || (row.kind !== 'session' && row.kind !== 'note');
+        return !hidden || (row.kind !== 'session' && row.kind !== 'note');
     });
 }

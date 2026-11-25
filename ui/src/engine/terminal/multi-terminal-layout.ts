@@ -217,6 +217,10 @@ export interface RackRow {
     /** Cohort header rows only: the cohort's label — its identity, where `text`
      *  carries counts that change every poll ({@link rack_row_key}). */
     cohort?: string;
+    /** A nested heading's parent cohort, retained by search and star filtering. */
+    cohort_parent?: string;
+    /** Session count for a heading whose label and count are drawn separately. */
+    cohort_count?: number;
     text: string;
     /** Session rows only: `text` before it was joined. */
     segments?: RowSegment[];
