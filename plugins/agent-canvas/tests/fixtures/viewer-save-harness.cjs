@@ -48,7 +48,7 @@ send('text', { name: 'a.png', bytes: PNG });
 send('huge', { name: 'a.png', bytes: bytes(PNG, 16 * 1024 * 1024 + 1) });
 send('stranger', { name: 'a.png', bytes: bytes(PNG) }, { postMessage: reply => replies.push({ ...reply, stranger: true }) });
 
-// A click the viewer saw holds for a minute and 32 saves, then nothing saves until the next one.
+// A click the viewer saw holds for a minute, 32 saves and 64 MiB, and nothing tops it up inside the minute.
 activation.isActive = false;
 later(61);
 send('no-click', { name: 'a.png', bytes: bytes(PNG) });
@@ -65,9 +65,18 @@ for (let i = 0; i < 31; i++) send(`batch-${i}`, { name: `batch-${i}`, bytes: byt
 send('past-budget', { name: 'a.png', bytes: bytes(PNG) });
 activation.isActive = true;
 listeners.message({ source: sandbox, data: { type: 'artifact-save-click' } });
+send('same-minute-click', { name: 'a.png', bytes: bytes(PNG) });
 activation.isActive = false;
 later(61);
 send('past-minute', { name: 'a.png', bytes: bytes(PNG) });
+
+// A live click is no exception: the 33rd save and the bytes past 64 MiB are refused while it is still live.
+activation.isActive = true;
+for (let i = 0; i < 32; i++) send(`live-${i}`, { name: `live-${i}`, bytes: bytes(PNG) });
+send('live-flood', { name: 'a.png', bytes: bytes(PNG) });
+later(61);
+for (let i = 0; i < 4; i++) send(`big-${i}`, { name: `big-${i}`, bytes: bytes(PNG, 16 * 1024 * 1024) });
+send('live-bytes', { name: 'a.png', bytes: bytes(PNG) });
 
 process.stdout.write(JSON.stringify({ replies, saved }));
 process.exit(0);

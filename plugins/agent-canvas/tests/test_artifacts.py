@@ -141,12 +141,16 @@ def test_viewer_saves_only_clicked_images_from_its_own_sandbox():
     assert result.returncode == 0, result.stderr.strip()
     played = json.loads(result.stdout)
     batch = [f"batch-{i}.png" for i in range(31)]
-    assert played["saved"] == ["My Chart_.png", "sheet-web.webp", "image.jpg", "slow.png", *batch]
+    live = [f"live-{i}.png" for i in range(32)]
+    big = [f"big-{i}.png" for i in range(4)]
+    assert played["saved"] == ["My Chart_.png", "sheet-web.webp", "image.jpg", "slow.png", *batch, *live, *big]
     replies = {reply["id"]: reply for reply in played["replies"]}
     assert "stranger" not in replies
     assert [replies[id]["ok"] for id in ("png", "webp", "jpeg")] == [True, True, True]
     assert replies["html"]["error"] == "only PNG, JPEG and WebP images can be saved"
     assert replies["text"]["error"] == "no image bytes were sent"
     assert replies["huge"]["error"] == "the image is larger than 16 MiB"
-    for refused in ("no-click", "stranger-click", "past-budget", "past-minute"):
+    for refused in ("no-click", "stranger-click", "past-minute"):
         assert replies[refused]["error"] == "saving needs a click: press the button again"
+    for refused in ("past-budget", "same-minute-click", "live-flood", "live-bytes"):
+        assert replies[refused]["error"] == "this click has saved its limit: press the button again in a minute"

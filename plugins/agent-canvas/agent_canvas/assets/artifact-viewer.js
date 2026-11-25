@@ -18,14 +18,22 @@
     const SAVE_LIMIT = 16 * 1024 * 1024;
     const CLICK_WINDOW_MS = 60000;
     const CLICK_SAVES = 32;
+    const CLICK_BYTES = 64 * 1024 * 1024;
     let click_until = 0;
     let click_saves = 0;
-    function clicked() {
-        if (navigator.userActivation?.isActive) {
-            click_until = Date.now() + CLICK_WINDOW_MS;
-            click_saves = CLICK_SAVES;
-        }
-        return Date.now() < click_until && click_saves > 0;
+    let click_bytes = 0;
+    // Armed once a window and never refilled inside one, so a page cannot stretch a click into more.
+    function arm_click() {
+        if (!navigator.userActivation?.isActive || Date.now() < click_until) return;
+        click_until = Date.now() + CLICK_WINDOW_MS;
+        click_saves = CLICK_SAVES;
+        click_bytes = CLICK_BYTES;
+    }
+    function refuse_click(size) {
+        arm_click();
+        if (Date.now() >= click_until) return 'saving needs a click: press the button again';
+        if (click_saves < 1 || size > click_bytes) return 'this click has saved its limit: press the button again in a minute';
+        return '';
     }
     const starts_with = (view, offset, text) => [...text].every((char, i) => view[offset + i] === char.charCodeAt(0));
     function image_extension(view) {
@@ -44,14 +52,13 @@
         if (!(data.bytes instanceof ArrayBuffer) || !data.bytes.byteLength) return 'no image bytes were sent';
         if (data.bytes.byteLength > SAVE_LIMIT) return 'the image is larger than 16 MiB';
         if (!image_extension(new Uint8Array(data.bytes))) return 'only PNG, JPEG and WebP images can be saved';
-        if (!clicked()) return 'saving needs a click: press the button again';
-        return '';
+        return refuse_click(data.bytes.byteLength);
     }
     function listen_for_saves(frame) {
         window.addEventListener('message', event => {
             const data = event.data;
             if (event.source !== frame.contentWindow) return;
-            if (data?.type === 'artifact-save-click') clicked();
+            if (data?.type === 'artifact-save-click') arm_click();
             if (data?.type !== 'artifact-save') return;
             const error = refuse_save(data);
             const reply = { type: 'artifact-save-result', id: String(data.id ?? '').slice(0, 64), ok: !error };
@@ -59,6 +66,7 @@
                 reply.error = error;
             } else {
                 click_saves -= 1;
+                click_bytes -= data.bytes.byteLength;
                 reply.name = save_name(data.name, image_extension(new Uint8Array(data.bytes)));
                 const link = document.createElement('a');
                 link.href = URL.createObjectURL(new Blob([data.bytes], { type: 'application/octet-stream' }));

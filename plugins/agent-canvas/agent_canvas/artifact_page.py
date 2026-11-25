@@ -18,9 +18,11 @@ link's. So a page still cannot save a script, a document or a file nobody clicke
 
 A click is the browser's own report (`navigator.userActivation`; a click inside the sandbox counts),
 and it lasts about five seconds. Chrome can take longer than that to encode one large PNG, and a
-"save every figure" button sends many files. So the viewer holds a click it has seen for one minute
-and 32 saves, and a page's button sends `{type: "artifact-save-click"}` in its click handler, before
-it starts encoding, for the viewer to see the click while it is live.
+"save every figure" button sends many files. So the viewer holds a click it has seen for one minute,
+32 saves and 64 MiB, and a page's button sends `{type: "artifact-save-click"}` in its click handler,
+before it starts encoding, for the viewer to see the click while it is live. That allowance is set
+once a minute and never topped up inside it, by a new click or by a save, so a page cannot turn one
+click into an endless run of files.
 """
 
 from __future__ import annotations
