@@ -15,7 +15,17 @@ from voidcraft_world_bridge.plugins import PluginContext, PluginRegistry, load_p
 def test_status_server_owns_plugin_cleanup(tmp_path, monkeypatch, bind_fails, watching):
     calls, callbacks = [], []
     plugins = {"owned": SimpleNamespace(close=lambda: calls.append("plugin closed"))}
-    watcher = SimpleNamespace(stop=lambda: calls.append("watcher stopped")) if watching else None
+    # The watch also answers the updater (update.py): is the code stale, does it start, who is busy.
+    watcher = (
+        SimpleNamespace(
+            stop=lambda: calls.append("watcher stopped"),
+            is_stale=lambda: False,
+            preflight_now=lambda: (False, None, None),
+            busy_now=list,
+        )
+        if watching
+        else None
+    )
     expected = (["watcher stopped"] if watching else []) + ["plugin closed"]
     monkeypatch.setattr(main, "load_bridge_profiles", lambda: None)
     monkeypatch.setattr(main, "load_rack_plugins", lambda *a: (plugins, []))

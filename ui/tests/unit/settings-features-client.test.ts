@@ -27,6 +27,7 @@ function row(over: Partial<Feature> = {}): Feature {
         applies: 'now',
         pending: false,
         lite: true,
+        default: true,
         ...over,
     };
 }
@@ -77,13 +78,30 @@ test('only a restart switch whose answer is not live yet waits for a restart', (
     assert.equal(waits_for_restart(row({ applies: 'now', pending: true })), false);
 });
 
-test('LITE turns off exactly the switches the bridge marks lite; DEFAULTS turns every switch on', () => {
+test('LITE turns off exactly the switches the bridge marks lite; DEFAULTS puts every switch at its own default', () => {
     const features = [row(), row({ key: 'ledger_ingest', on: false }), laya];
     assert.deepEqual(lite_changes(features), { code_watch: false, ledger_ingest: false });
     assert.deepEqual(default_changes(features), { code_watch: true, ledger_ingest: true, 'plugin:laya': true });
     assert.equal(changes_needed(features, lite_changes(features)), 1);
     assert.equal(changes_needed(features, default_changes(features)), 1);
     assert.equal(changes_needed([row({ on: false })], lite_changes([row({ on: false })])), 0);
+});
+
+test('DEFAULTS never switches on a part that ships off: auto-update acts with no click', () => {
+    const auto = (on: boolean): Feature => row({ key: 'auto_update', title: 'Auto-update', lite: false, default: false, on });
+    // Off already: DEFAULTS has nothing to do, and must not send `true`.
+    assert.deepEqual(default_changes([row(), auto(false)]), { code_watch: true, auto_update: false });
+    assert.equal(changes_needed([row(), auto(false)], default_changes([row(), auto(false)])), 0);
+    // Switched on by the operator: DEFAULTS puts it back off.
+    assert.equal(changes_needed([row(), auto(true)], default_changes([row(), auto(true)])), 1);
+});
+
+test('a row from a bridge that predates `default` ran by default: it reads as on', () => {
+    const { default: _dropped, ...older } = row();
+    assert.equal(parse_features({ features: [older] })?.features[0]?.default, true);
+    assert.equal(parse_features({ features: [{ ...older, default: false }] })?.features[0]?.default, false);
+    // A `default` that is not a boolean is a row this page cannot read, like any other field.
+    assert.equal(parse_features({ features: [{ ...older, default: 'off' }] })?.unreadable, 1);
 });
 
 // ── the wire ─────────────────────────────────────────────────────────────────

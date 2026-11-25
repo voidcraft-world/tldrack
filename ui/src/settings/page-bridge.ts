@@ -7,8 +7,9 @@
  * RETRY bumps `asks`, and every mounted tab reloads on it.
  *
  * NO TIMER LIVES HERE. A tab reads when it mounts, when the browser tab comes back to the front,
- * and on RETRY (`use_reload`). The one poll on the page is the Laya card's, and only while an
- * install or a start is under way: owned by `LayaCard.vue` — see the note there.
+ * and on RETRY (`use_reload`). The page has two polls, and each belongs to a card on SETUP: the
+ * Laya card's, only while an install or a start is under way (owned by `LayaCard.vue` — see the
+ * note there), and the update card's (owned by `update/update-poller.ts` — see the note there).
  */
 import { inject, onBeforeUnmount, onMounted, provide, ref, watch, type InjectionKey, type Ref } from 'vue';
 

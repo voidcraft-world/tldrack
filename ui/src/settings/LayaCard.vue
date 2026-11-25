@@ -52,7 +52,7 @@
  * SETUP's Laya card: the state of the local review model, INSTALL and START. The routes and
  * what each state means: owned by `laya-install-client.ts` — see the note there.
  *
- * THE PAGE'S ONE POLL. While the state is `installing` or `starting` the card asks again every
+ * THE CARD'S POLL. While the state is `installing` or `starting` the card asks again every
  * two seconds, because those two states end by themselves and the operator is waiting on them.
  * In every other state, and whenever the browser tab is hidden, no timer is set: the next read is
  * the page's own (`page-bridge.ts` `use_reload`), which also picks the poll back up on return.

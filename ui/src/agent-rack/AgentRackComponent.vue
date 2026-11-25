@@ -146,6 +146,9 @@ import {
     type CardPress,
 } from './next-step-view.ts';
 import { DIAGRAM_PAGE, OFFICE_PAGE, SETTINGS_PAGE } from '../config/pages.ts';
+import { tab_hash, type SettingsTabId } from '../settings/settings-tabs.ts';
+import { notice_line, notice_words, update_notice } from '../update/update-status.ts';
+import { useUpdateStatus } from '../update/useUpdateStatus.ts';
 import { UNKNOWN_MODEL_LABEL } from '../engine/terminal/terminal-status-logic.ts';
 import '../styles/rack-palette.css';
 const AgentSessionGraph = defineAsyncComponent(() => import('./AgentSessionGraph.vue'));
@@ -208,9 +211,26 @@ function open_diagram(): void {
 /** ALL SETTINGS: the full settings page in its own window, resolved like ⌗ HOW. The tray keeps its
  *  own controls because it is the settings surface a host's embedded rack has: that rack talks
  *  over a bus and may sit on an origin that does not serve the page. */
-function open_settings(): void {
-    window.open(new URL(SETTINGS_PAGE, window.location.href).href, 'tldrack-settings');
+function open_settings(tab: SettingsTabId | null = null): void {
+    // The hash names the tab: owned by settings/settings-tabs.ts — see the note there.
+    window.open(new URL(`${SETTINGS_PAGE}${tab ? tab_hash(tab) : ''}`, window.location.href).href, 'tldrack-settings');
 }
+/** The rack's one word about updates: a dot on the ⚙ and a line in its tray, or nothing at all on
+ *  a bridge with no self-update. What is worth saying, and every word of it: owned by
+ *  update/update-status.ts — see the note there. The dot is never the only signal: the ⚙'s name
+ *  and title say the same in words, and so does the tray's line. */
+const update = useUpdateStatus();
+const update_note = computed(() => update_notice(update.state.value));
+const settings_label = computed(() => (update_note.value ? `Rack settings · ${notice_words(update_note.value)}` : 'Rack settings'));
+function act_on_update(): void {
+    if (update_note.value?.action === 'reload') window.location.reload();
+    else open_settings('setup');
+}
+// A bridge that just came back may be a new one: an update ends in a restart, and so does a
+// hand-made one. The poller's own timer would take up to five minutes to notice.
+watch(() => payload.value?.reachable, (reachable, before) => {
+    if (reachable && before === false) update.refresh();
+});
 /** OFFICE: every agent at a desk, in 3D, in its own window, resolved like ⌗ HOW. This rack
  *  feeds it while it is open; a robot's click comes back as `select`, and its right-click
  *  menu's verb as the row action of the same name. The wire: owned by
@@ -1667,11 +1687,13 @@ onUnmounted(() => {
             <span class="fui-techtext rack__title">Rack <span class="rack__session-count">{{ payload?.sessions.filter(session => session.live).length ?? 0 }} sessions</span></span>
             <button type="button" class="fui-btn rack__icon"
                 :aria-pressed="settings_open" :aria-expanded="settings_open" aria-controls="rack-settings"
-                aria-label="Rack settings"
-                :title="settings_open
+                :aria-label="settings_label"
+                :title="(settings_open
                     ? 'Hide rack settings'
-                    : 'Rack settings: directories, view, terminal appearance and help · ALL SETTINGS opens the full page'"
-                @click="settings_open = !settings_open"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiCog" /></svg></button>
+                    : 'Rack settings: directories, view, terminal appearance and help · ALL SETTINGS opens the full page')
+                    + (update_note ? ` · ${notice_words(update_note)}` : '')"
+                @click="settings_open = !settings_open"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiCog" /></svg><span
+                    v-if="update_note" :class="['rack__update-dot', `rack__update-dot--${update_note.level}`]" aria-hidden="true"></span></button>
             <button v-if="closed_view" type="button"
                 :class="['fui-btn', { 'rack__restore-btn': (closed_view.restorable?.count ?? 0) > 0 }]"
                 :aria-pressed="closed_view.open" :aria-expanded="closed_view.open" :disabled="frozen"
@@ -1689,6 +1711,14 @@ onUnmounted(() => {
              the accelerator, hinted in the ⚙ and button titles. Never disabled
              by `frozen` — see the note on `patch_render`. -->
         <section v-show="settings_open" id="rack-settings" class="rack__settings">
+            <div v-if="update_note" :class="['rack__update', `rack__update--${update_note.level}`]" role="status">
+                <span class="rack__update-text">{{ notice_line(update_note) }}</span>
+                <button type="button" class="fui-btn"
+                    :title="update_note.action === 'reload'
+                        ? 'The bridge now serves a newer build of this page. Reload to use it: sessions keep running.'
+                        : 'Open the Settings page at SETUP: the update card'"
+                    @click="act_on_update">{{ update_note.action === 'reload' ? 'RELOAD' : 'OPEN' }}</button>
+            </div>
             <button type="button" class="fui-btn" @click="launch_open = true; directories_open = true; settings_open = false">Edit launch directories</button>
             <div class="rack__render">
                 <label class="fui-techtext rack__render-label" for="rack-view">VIEW</label>
@@ -1702,7 +1732,7 @@ onUnmounted(() => {
                     @click="open_diagram">⌗ HOW</button>
                 <button type="button" class="fui-btn"
                     title="Every setting on one page: setup, what the bridge runs, what this browser draws (opens a window)"
-                    @click="open_settings">ALL SETTINGS</button>
+                    @click="open_settings()">ALL SETTINGS</button>
             </div>
             <div v-if="render_options" class="rack__render">
                 <span class="fui-techtext rack__render-label">FONT</span>
@@ -3402,6 +3432,18 @@ span.mark__open-work { cursor: default; }
 @media (pointer: coarse) { .row__family-toggle { min-width: 44px; min-height: 44px; } }
 .rack__head > [aria-pressed="true"] { border-color: var(--color-accent-green, #93ffd4); }
 .rack__icon { display: inline-flex; align-items: center; justify-content: center; }
+/* The ⚙'s update dot (`update_note`). Colour is the level, and never the only signal: the button's
+   name and the tray's line say it in words. BUSY blinks in two held states, and only while the
+   page's motion is on (`.fui-motion-off`: owned by styles/fui-panel.css — see the note there). */
+.rack__head > .rack__icon { position: relative; }
+.rack__update-dot { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--rack-surface); background: var(--color-accent-green, #93ffd4); }
+.rack__update-dot--held { background: var(--fui-warn, #f8c146); }
+html:not(.fui-motion-off) .rack__update-dot--busy { animation: rack-update-busy 1.2s steps(2, jump-none) infinite; }
+@keyframes rack-update-busy { from { opacity: 1; } to { opacity: 0.3; } }
+.rack__update { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 6px 8px; border: 1px solid color-mix(in srgb, var(--color-accent-green, #93ffd4) 45%, transparent); border-radius: 3px; font-size: 12px; }
+.rack__update--held { border-color: color-mix(in srgb, var(--fui-warn, #f8c146) 55%, transparent); }
+.rack__update-text { min-width: 0; overflow-wrap: anywhere; letter-spacing: 0.02em; }
+.rack__update .fui-btn { flex: 0 0 auto; }
 .rack__icon svg { width: 14px; height: 14px; fill: currentColor; }
 /* LABEL: a glyph sized to sit level with the ▶ / ✕ text beside it. */
 .rack__icon.row__btn--label svg { width: 12px; height: 12px; }

@@ -2,9 +2,14 @@
 
 A bridge with no file runs everything: that is the whole product, and it is what a stranger
 gets. The rack's Settings page (`ui/src/settings/`) lists each part with what it costs and what
-is lost without it, and writes the answer here. `<config>/features.json` holds only what is OFF:
+is lost without it, and writes the answer here. `<config>/features.json` holds only what differs
+from the default, which for nearly every part is what is OFF:
 
     {"version": 1, "off": ["code_watch", "plugin:phone-link"]}
+
+A part that acts on the machine with no click (`auto_update`: pull, build, restart) is the other
+way round: off until the operator switches it on, and then listed under `"on"`. A build that
+predates `"on"` reads the file as if that key were absent.
 
 WHY NOT settings.json. That file is the operator's own hand, read once at startup, and it holds
 the security posture (`allowed_origins`): no page may write it. This one is written by a page, so
@@ -51,6 +56,7 @@ MAX_OFF = 64
 MAX_KEY = 80
 
 CODE_WATCH, PUBLIC_STATUS, LEDGER_INGEST = "code_watch", "public_status", "ledger_ingest"
+UPDATE_CHECK, AUTO_UPDATE = "update_check", "auto_update"
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,8 @@ class Feature:
     applies: str = NOW
     #: Whether the page's LITE preset switches it off.
     lite: bool = False
+    #: What a bridge with no file runs it as. False for a part that acts with no click (module docstring).
+    default: bool = True
 
 
 #: The bridge's own loops that have a switch. The state arbiter and the hooks are the rack, not a part of it.
@@ -96,7 +104,28 @@ BRIDGE_FEATURES: tuple[Feature, ...] = (
         "History search stops seeing new conversations until you ingest by hand (`tldrack ledger ingest`, or INGEST NOW).",
         lite=True,
     ),
+    Feature(
+        UPDATE_CHECK,
+        BRIDGE,
+        "Update check",
+        "Asks the checkout's git remote whether its main branch moved, so the ⚙ button can say an update is waiting.",
+        "One `git fetch` every 5 minutes.",
+        "No update indicator. CHECK NOW and UPDATE on the Settings page still work when pressed.",
+        lite=True,
+    ),
+    Feature(
+        AUTO_UPDATE,
+        BRIDGE,
+        "Auto-update",
+        "When the update check finds new commits, pulls them, rebuilds the page and restarts the bridge, with no click.",
+        "A page build (about a minute of CPU) and a bridge restart of a few seconds each time main moves. Sessions keep running.",
+        "The ⚙ button shows a dot and you press UPDATE yourself. Needs the update check.",
+        default=False,
+    ),
 )
+
+#: The parts that are off until switched on. A plugin never is: its key is not one of these.
+DEFAULT_OFF = frozenset(feature.key for feature in BRIDGE_FEATURES if not feature.default)
 
 #: The checkout's plugins, in the page's words. `plugins/README.md` owns what each one is; a plugin
 #: directory not named here still gets a switch, with `UNKNOWN_PLUGIN`'s lines.
@@ -157,17 +186,20 @@ def features_path() -> Path:
     return paths.config_file(FEATURES_FILE)
 
 
-def parse_stored(body: object) -> frozenset[str]:
-    """`features.json`'s parsed body → the keys that are off. Raises `ValueError`."""
+def parse_stored(body: object) -> tuple[frozenset[str], frozenset[str]]:
+    """`features.json`'s parsed body → `(the keys that are off, the keys that are on)`. `"on"` is
+    optional: only a default-off part is ever listed there. Raises `ValueError`."""
     data: dict = typed(body, dict, {})
     if not data or data.get("version") != VERSION:
         raise ValueError(f"expected an object with version {VERSION}")
-    off = data.get("off")
-    if not isinstance(off, list) or len(off) > MAX_OFF:
-        raise ValueError(f"off must be a list of at most {MAX_OFF} keys")
-    if not all(isinstance(key, str) and 0 < len(key) <= MAX_KEY and key.isprintable() for key in off):
-        raise ValueError("every key in off must be a short one-line string")
-    return frozenset(off)
+    lists: list[frozenset[str]] = []
+    for name, keys in (("off", data.get("off")), ("on", data.get("on", []))):
+        if not isinstance(keys, list) or len(keys) > MAX_OFF:
+            raise ValueError(f"{name} must be a list of at most {MAX_OFF} keys")
+        if not all(isinstance(key, str) and 0 < len(key) <= MAX_KEY and key.isprintable() for key in keys):
+            raise ValueError(f"every key in {name} must be a short one-line string")
+        lists.append(frozenset(keys))
+    return lists[0], lists[1]
 
 
 class FeatureSwitches:
@@ -178,12 +210,13 @@ class FeatureSwitches:
         self._lock = RLock()
         self._plugins: tuple[str, ...] = ()
         self.error: str | None = None
+        self._off: frozenset[str] = frozenset()
+        self._on: frozenset[str] = frozenset()
         try:
-            self._off = parse_stored(json.loads(self.path.read_text()))
+            self._off, self._on = parse_stored(json.loads(self.path.read_text()))
         except FileNotFoundError:
-            self._off = frozenset()
+            pass
         except (OSError, ValueError) as exc:
-            self._off = frozenset()
             self.error = f"{self.path.name} could not be read, so nothing is switched off: {exc}"
         #: What this process started with: a `restart` switch runs as this says, whatever is saved since.
         self._boot_off = self._off
@@ -201,7 +234,7 @@ class FeatureSwitches:
 
     def on(self, key: str) -> bool:
         with self._lock:
-            return key not in self._off
+            return key in self._on if key in DEFAULT_OFF else key not in self._off
 
     def started_on(self, key: str) -> bool:
         """Whether `key` was on when this bridge started: what a `restart` switch runs as."""
@@ -209,15 +242,16 @@ class FeatureSwitches:
             return key not in self._boot_off
 
     def off_keys(self) -> list[str]:
-        """The known switches that are off, for `doctor` and the startup echo."""
+        """The known switches the operator turned off, for `doctor` and the startup echo. A part that
+        is off by default and still off is not one of them."""
         with self._lock:
-            return [feature.key for feature in self.known() if feature.key in self._off]
+            return [feature.key for feature in self.known() if feature.default and feature.key in self._off]
 
     def view(self) -> dict:
         with self._lock:
             rows = []
             for feature in self.known():
-                on = feature.key not in self._off
+                on = self.on(feature.key)
                 rows.append(
                     {
                         "key": feature.key,
@@ -230,6 +264,7 @@ class FeatureSwitches:
                         "applies": feature.applies,
                         "pending": feature.applies == RESTART and on != (feature.key not in self._boot_off),
                         "lite": feature.lite,
+                        "default": feature.default,
                     }
                 )
             return {"features": rows, "error": self.error}
@@ -242,31 +277,33 @@ class FeatureSwitches:
             raise ValueError('Send {"set": {"<feature key>": true or false}}')
         with self._lock:
             known = {feature.key for feature in self.known()}
-            off = set(self._off)
+            off, on = set(self._off), set(self._on)
             for key, value in changes.items():
                 if key not in known:
                     raise ValueError(f"Unknown feature: {key!r}")
                 if not isinstance(value, bool):
                     raise ValueError(f"{key} must be true or false")
-                if value:
-                    off.discard(key)
+                # Each list holds only what differs from that part's default.
+                listed, differs = (on, value) if key in DEFAULT_OFF else (off, not value)
+                if differs:
+                    listed.add(key)
                 else:
-                    off.add(key)
+                    listed.discard(key)
             if len(off) > MAX_OFF:
                 raise ValueError(f"At most {MAX_OFF} switches can be off")
-            self._write(off)
-            self._off = frozenset(off)
+            self._write(off, on)
+            self._off, self._on = frozenset(off), frozenset(on)
             # A save replaces the file, so whatever made it unreadable is gone.
             self.error = None
             return self.view()
 
-    def _write(self, off: set[str]) -> None:
+    def _write(self, off: set[str], on: set[str]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         name = None
         try:
             fd, name = tempfile.mkstemp(dir=self.path.parent, prefix="features-", suffix=".tmp")
             with os.fdopen(fd, "w") as handle:
-                json.dump({"version": VERSION, "off": sorted(off)}, handle)
+                json.dump({"version": VERSION, "off": sorted(off), **({"on": sorted(on)} if on else {})}, handle)
                 handle.write("\n")
             os.replace(name, self.path)
         finally:

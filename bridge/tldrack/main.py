@@ -124,6 +124,7 @@ from tldrack.verdicts import SessionVerdictStore, resolve_verdicts_path, restora
 from tldrack import framing, live_marks, plugin_sources, ttyd_front, ui_static
 from tldrack import next_step as next_step_mod
 from tldrack import doctor as doctor_mod
+from tldrack import update as update_mod
 from tldrack.codex_closing import read_codex_closing
 from tldrack.codex_rollout import codex_uses_auto_review
 from tldrack.notify import (
@@ -839,6 +840,8 @@ class ShutdownControl:
     def __init__(self, mode: str) -> None:
         self.event = threading.Event()
         self.requested = False
+        #: Set by `trigger_restart`: the exit that follows ends in `restart_in_place`, not in an exit.
+        self.restart = False
         self.ttyd_proc: subprocess.Popen | None = None
         self.mode = mode
         self.external_ttyd_pid: int | None = None
@@ -848,6 +851,32 @@ class ShutdownControl:
         if self.ttyd_proc is not None:
             self.ttyd_proc.terminate()
         self.event.set()
+
+    def trigger_restart(self) -> bool:
+        """Stop the way `/shutdown` does, then come back as the code on disk. False in status-only
+        mode, where the ttyd is somebody else's: stopping it to restart would take a terminal
+        server this bridge did not start."""
+        if self.mode != "full":
+            return False
+        self.restart = True
+        self.trigger()
+        return True
+
+
+def restart_in_place(control: ShutdownControl) -> None:
+    """The last step of an exit that `trigger_restart` asked for: become the code on disk.
+
+    Registered with `atexit` BEFORE anything else this process registers, so it runs after all of
+    it: by now ttyd has exited, the plugins are closed and the socket directory is gone, exactly
+    as on a `/shutdown`. Then the same pid re-executes its own command line. Why in place and not
+    exit-and-be-restarted: owned by update.py — see the note there. Listening sockets are not
+    inherited across exec, so the new process binds its ports like any first start."""
+    if not control.restart:
+        return
+    click.echo("tldrack: restarting in place to run the code on disk")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
 
 
 def build_status_handler(
@@ -890,10 +919,13 @@ def build_status_handler(
     settings: Settings | None = None,
     find_ui: Callable[[], Path | None] | None = None,
     features: FeatureSwitches | None = None,
+    updater: update_mod.Updater | None = None,
 ) -> type[BridgeHandler]:
     # `features` (features.py) is what the operator switched off on the Settings page. Absent, it is
     # read from the config role, which a test's own empty directories make "everything on".
     switches: FeatureSwitches = features if features is not None else FeatureSwitches()
+    # `updater` (update.py) is the checkout's self-update; absent, `/update` answers 503, so a
+    # test-built handler never runs git or npm in the tree the tests run from.
     # `settings` (settings.py) is what the operator turned on; absent, every optional part is off and
     # only loopback pages are served. `find_ui` finds the built rack page served at `/`
     # (ui_static.py), asked per request so a build that lands after startup is served without a
@@ -1954,6 +1986,7 @@ def build_status_handler(
             "/profile-availability": "_handle_get_profile_availability",
             "/launch-directories": "_handle_get_launch_directories",
             "/features": "_handle_get_features",
+            "/update": "_handle_get_update",
             # Shells out (`ps`, `lsof`) on every call, so it also refuses a no-cors browser GET.
             "/doctor": "_route_doctor",
             "/ws": "_handle_ws_proxy",
@@ -1990,6 +2023,7 @@ def build_status_handler(
             "/profile-availability": "_handle_save_profile_availability",
             "/launch-directories": "_handle_save_launch_directories",
             "/features": "_handle_save_features",
+            "/update": "_handle_post_update",
             "/images": "_handle_image",
             "/shutdown": "_handle_shutdown",
             "/kill-session": "_handle_kill_session",
@@ -2352,6 +2386,31 @@ def build_status_handler(
                 return
             click.echo(f"  features: off → {', '.join(switches.off_keys()) or 'nothing'}")
             self._send_json(200, view)
+
+        def _handle_get_update(self) -> None:
+            """GET /update: is the checkout behind its remote, is the page built from it, is the
+            running code the code on disk (update.py). The last look, never a fetch: cheap to poll."""
+            if updater is None:  # a test-built handler: there is no checkout to speak for
+                self._send_json(503, {"error": "this bridge cannot update itself"})
+                return
+            self._send_json(200, updater.view())
+
+        def _handle_post_update(self) -> None:
+            """POST /update `{"action": "check" | "apply"}`: look at the remote, or pull, rebuild the
+            page and restart as due. Origin-guarded: it runs git and npm and can restart the bridge.
+            The body names an action and nothing else; what is pulled is read from the checkout."""
+            if not self._origin_allowed():
+                return
+            if updater is None:
+                self._send_json(503, {"error": "this bridge cannot update itself"})
+                return
+            body = self._read_json_object()
+            if body is None:
+                return
+            status, payload = updater.request(body.get("action"))
+            if status == 202:
+                click.echo(f"  update: {body.get('action')} requested (origin: {self._requesting_origin() or 'none'})")
+            self._send_json(status, payload)
 
         def _route_doctor(self) -> None:
             if self._expensive_route_guard():
@@ -4043,6 +4102,7 @@ def start_status_server(
     freshness: FreshnessMonitor | None = None,
     settings: Settings | None = None,
     features: FeatureSwitches | None = None,
+    updater: update_mod.Updater | None = None,
 ) -> None:
     """Bind loopback-only and serve from a daemon thread (dies with ttyd).
 
@@ -4094,6 +4154,7 @@ def start_status_server(
         settings=settings,
         find_ui=lambda: ui_static.find_ui_dist(settings.ui_dist),
         features=switches,
+        updater=updater,
     )
     server = ThreadingHTTPServer(("127.0.0.1", status_port), handler)
     handler.arbiter.start()
@@ -4188,6 +4249,15 @@ def serve_status(
     if features.error:
         click.echo(f"  features:          {features.error}", err=True)
     plugins, plugin_dirs = load_rack_plugins(port, status_port, session, start_dir, profiles, settings, features)
+    # The checkout's self-update (update.py). Built before the code watch, which asks it whether
+    # an update is mid-run (its `busy_reasons`), and bound to that watch once it exists.
+    ui_dist = settings.ui_dist if settings is not None else None
+    updater = update_mod.Updater(
+        update_mod.checkout_root(),
+        switches=features,
+        find_ui=lambda: ui_static.find_ui_dist(ui_dist),
+        log=click.echo,
+    )
     # After the plugins, so the baseline hashes exactly what was just imported.
     # The config file counts only when the env override did not shadow it (plugin_sources.py).
     # Watched even while it does not exist, so writing one over the checkout defaults is noticed.
@@ -4195,12 +4265,19 @@ def serve_status(
     try:
         freshness = start_freshness(
             plugin_dirs,
-            plugins,
+            {**plugins, "update": updater},
             plugins_config=None if os.environ.get(PLUGINS_ENV) else plugins_config_path(),
             profiles_path=resolve_profiles_path(),
             log=click.echo,
             enabled=lambda: features.on(CODE_WATCH),
         )
+        if freshness is not None:
+            updater.bind(
+                stale=freshness.is_stale,
+                preflight=freshness.preflight_now,
+                busy=freshness.busy_now,
+                restart=control.trigger_restart,
+            )
         start_status_server(
             status_port,
             session,
@@ -4212,13 +4289,16 @@ def serve_status(
             freshness=freshness,
             settings=settings,
             features=features,
+            updater=updater,
         )
     except BaseException:
         if freshness is not None:
             freshness.stop()
         close_plugins(plugins, click.echo)
         raise
+    updater.start()
     atexit.register(close_plugins, plugins, click.echo)
+    atexit.register(updater.stop)
     if freshness is not None:
         atexit.register(freshness.stop)
 
@@ -4787,6 +4867,7 @@ def main(
         os.execvp("ttyd", argv)
 
     control = ShutdownControl(mode="full")
+    atexit.register(restart_in_place, control)  # first registered, so last to run: see the note there
     # ttyd's pid isn't known yet (Popen comes after the server so /snapshot is
     # never up without identity); the dict is patched in place right below.
     bridge_info = capture_identity(
@@ -4919,6 +5000,9 @@ def build_ui_if_missing(settings: Settings, say: Callable[[str], None]) -> None:
         if done.returncode != 0:
             say(f"tldrack up: the page build failed (exit {done.returncode}) — starting without it")
             return
+    root = update_mod.checkout_root()
+    if root is not None:
+        update_mod.stamp_build(root)  # so `/update` knows which source this page is (update.py)
 
 
 @main.command(name="up")

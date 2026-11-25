@@ -28,6 +28,8 @@ const feature_schema = z.object({
     applies: z.enum(FEATURE_APPLIES),
     pending: z.boolean(),
     lite: z.boolean(),
+    /** What a bridge with no stored switches runs it as. A bridge that predates the key ran everything. */
+    default: z.boolean().optional().default(true),
 });
 export type Feature = z.infer<typeof feature_schema>;
 
@@ -99,9 +101,13 @@ export function lite_changes(features: readonly Feature[]): Record<string, boole
     return Object.fromEntries(features.filter((feature) => feature.lite).map((feature) => [feature.key, false]));
 }
 
-/** DEFAULTS' half for the bridge: every switch on, which is a bridge with no stored switches. */
+/**
+ * DEFAULTS' half for the bridge: every switch at its own default, which is a bridge with no
+ * stored switches. That is on for nearly all of them and OFF for a part that acts on the machine
+ * with no click (auto-update), so DEFAULTS never switches one of those on behind the operator.
+ */
 export function default_changes(features: readonly Feature[]): Record<string, boolean> {
-    return Object.fromEntries(features.map((feature) => [feature.key, true]));
+    return Object.fromEntries(features.map((feature) => [feature.key, feature.default]));
 }
 
 /** How many of `changes` would move a switch: 0 means the preset is already in place. */
