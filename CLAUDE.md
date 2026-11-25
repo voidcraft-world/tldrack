@@ -58,6 +58,10 @@ A session here starts with no memory. What follows is everything durable it need
    takes for one release (step 6.8: wire messages, stored fields, step kinds, fine-tune names) each sit
    beside a comment naming that step.
 
+9. **Deliver files through the rack.** Before handing off a generated deliverable in TLDRack,
+   read `.claude/skills/agent-canvas/SKILL.md` § Generated files: artifact shelf; it owns registration,
+   preview verification and the final link for every agent, even without a SessionStart canvas path.
+
 ## Durable rack facts
 
 - **The bridge is a host on the public core** `voidcraft-world-bridge` (MIT, stdlib only, on PyPI). It
