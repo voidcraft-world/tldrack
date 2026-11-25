@@ -38,6 +38,7 @@ export type RackAction =
     | 'metric'
     /** Save Settings' launch directories; handled by launch-directories-client.ts. */
     | 'directories'
+    | 'profile_pause'
     | 'select' | 'kill' | 'rename' | 'render'
     /** Start a session. `value` is a profile id or JSON `{profile, cwd}` when the
      *  payload advertises `launch_cwd`. `POST /spawn` on a bridge with `profiles`,

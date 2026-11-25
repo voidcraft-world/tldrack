@@ -31,6 +31,7 @@ import AgentRackComponent from './AgentRackComponent.vue';
 import { create_bus_transport } from './rack-bus-transport.ts';
 import { create_http_transport } from './rack-http-transport.ts';
 import { with_launch_directories } from './launch-directories-client.ts';
+import { with_profile_availability } from './profile-availability-client.ts';
 import {
     REMOTE_PARAM,
     clear_remote_config,
@@ -136,7 +137,7 @@ const same_origin = remote !== null && remote.bridge_origin === window.location.
 // Every other client on this page (Laya's, the name card's) calls the same bridge.
 if (remote) set_bridge_origin(remote.bridge_origin);
 const http_transport = remote ? create_http_transport(remote) : null;
-const transport: RackTransport = with_launch_directories(http_transport ?? create_bus_transport(), (path) => `${bridge_origin()}${path}`);
+const transport: RackTransport = with_profile_availability(with_launch_directories(http_transport ?? create_bus_transport(), (path) => `${bridge_origin()}${path}`), (path) => `${bridge_origin()}${path}`);
 
 // This window owns the live pane, so it — not the host — knows which session
 // the terminal iframe is still loading: `agent-rack/pane-settle.ts` owns why

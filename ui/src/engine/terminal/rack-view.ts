@@ -386,6 +386,7 @@ export interface RackPayload {
      */
     /** This payload owner understands a `new` argument containing {profile, cwd}. */
     launch_cwd?: true;
+    profile_availability?: import('../../agent-rack/profile-availability-client.ts').ProfileAvailabilityView;
     launch_directories?: import('../../agent-rack/launch-directories-client.ts').LaunchDirectoriesView;
     profiles?: ProfileInfo[];
     /**

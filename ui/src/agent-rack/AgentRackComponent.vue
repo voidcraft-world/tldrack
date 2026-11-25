@@ -79,7 +79,6 @@ import type { OpenWorkAnswer } from './open-work-client.ts';
 import {
     AUTO_PROFILE_ID,
     background_jobs_label,
-    resolve_launch_profile,
     standing_reason,
     type LaunchPick,
     type ProfileInfo,
@@ -127,6 +126,7 @@ import {
 } from './family-fold.ts';
 import IslandGlyph from './IslandGlyph.vue';
 import LaunchDirectorySettings from './LaunchDirectorySettings.vue';
+import { attention_rows } from './attention-rows.ts';
 import IslandMark from './IslandMark.vue';
 import { auto_branch } from './auto-branch.ts';
 import { chat_query, focus_snippet, highlight_terms, search_rack_rows, starred_rack_rows } from './rack-search.ts';
@@ -152,6 +152,24 @@ const AgentSessionGraph = defineAsyncComponent(() => import('./AgentSessionGraph
 const session_view = ref<'list' | 'graph'>('list');
 /** The ⚙ tray (font / renderer / typeface / refresh). Closed on every mount. */
 const settings_open = ref(false);
+const launch_open = ref(false);
+const profiles_open = ref(false);
+const directories_open = ref(false);
+function toggle_launch(): void {
+    launch_open.value = !launch_open.value;
+    close_fork();
+}
+function profile_paused(profile: ProfileInfo): boolean {
+    return payload.value?.profile_availability?.state?.paused.includes(profile.id) ?? profile.paused === true;
+}
+function toggle_profile(profile: ProfileInfo): void {
+    send('profile_pause', undefined, JSON.stringify({ profile: profile.id, paused: !profile_paused(profile) }));
+}
+const available_profiles = computed(() => profiles.value.filter((profile) => !profile_paused(profile)));
+const attention_count = computed(() => rows.value.filter(asks_now).length);
+const working_count = computed(() => rows.value.filter((row) => row.kind === 'session' && !row.dim
+    && (row.state === 'busy' || row.state === 'background')).length);
+
 const session_search = ref('');
 /** The bridge's answer for what the box says now: sessions whose CHAT met the terms their titles
  *  did not. The host asks (`chat-search.ts`); while a newer question is out the last answer stands,
@@ -200,8 +218,8 @@ function open_office(): void {
 }
 
 /**
- * The COMPLETE band's fold (what the band is: `complete-sessions.ts`). Open by
- * default, so nothing is hidden that the operator did not hide; a press is
+ * The COMPLETE band's fold (what the band is: `complete-sessions.ts`). Closed by
+ * default; the operator's choice to expand it is
  * remembered per device. Local to this page, unlike DEVICES: closing it stops
  * no poll. Two rack documents on one origin share the key, so the `storage`
  * listener in `onMounted` keeps them folded alike.
@@ -209,9 +227,9 @@ function open_office(): void {
 const COMPLETE_OPEN_KEY = 'tldrack:rack-complete-open';
 function read_complete_open(): boolean {
     try {
-        return localStorage.getItem(COMPLETE_OPEN_KEY) !== '0';
+        return localStorage.getItem(COMPLETE_OPEN_KEY) === '1';
     } catch {
-        return true;
+        return false;
     }
 }
 const complete_open = ref(read_complete_open());
@@ -607,19 +625,13 @@ const profiles = computed<ProfileInfo[]>(() => payload.value?.profiles ?? []);
 const auto_pick = computed<LaunchPick | null>(() => payload.value?.launch_pick ?? null);
 
 const launch_chips = computed<LaunchChip[]>(() => {
-    if (profiles.value.length >= 2) {
-        const chips: LaunchChip[] = profiles.value.map((profile) => ({ key: profile.id, kind: 'profile', id: profile.id, label: profile.label, profile }));
-        // AUTO first: a launch that sends `"auto"`, picked by the bridge on arrival.
+    if (profiles.value.length) {
+        const chips: LaunchChip[] = available_profiles.value.map((profile) => ({ key: profile.id, kind: 'profile', id: profile.id, label: profile.label, profile }));
         if (auto_pick.value) chips.unshift({ key: AUTO_PROFILE_ID, kind: 'auto', id: AUTO_PROFILE_ID, label: 'AUTO', profile: null });
         return chips;
     }
-    const id = resolve_launch_profile(profiles.value, null);
-    const label = profiles.value.find((p) => p.id === id)?.label ?? null;
-    return [{ key: NEW_CHIP_KEY, kind: 'new', id, label, profile: null }];
+    return [{ key: NEW_CHIP_KEY, kind: 'new', id: null, label: null, profile: null }];
 });
-
-/** `LAUNCH` names a choice; beside a lone `+ NEW` it would say it twice. */
-const show_launch_label = computed<boolean>(() => profiles.value.length >= 2);
 
 /** The chip whose fork is open — one at a time — or null. */
 const fork_key = ref<string | null>(null);
@@ -628,7 +640,7 @@ const fork_key = ref<string | null>(null);
  *  AUTO is launchable while the bridge has somewhere to put it. */
 function chip_launchable(chip: LaunchChip): boolean {
     if (launch_directory.value && !payload.value?.launch_cwd) return false;
-    if (chip.kind === 'auto') return Boolean(auto_pick.value?.id);
+    if (chip.kind === 'auto') return available_profiles.value.some((profile) => profile.id === auto_pick.value?.id);
     return chip.profile === null || chip.profile.cli_found;
 }
 
@@ -639,7 +651,7 @@ const lead_available = computed<boolean>(() => payload.value?.lead !== undefined
  *  accounts, or a Claude account's own chip. Never a Codex profile or SHELL. */
 function chip_offers_lead(chip: LaunchChip): boolean {
     if (!lead_available.value) return false;
-    if (chip.kind === 'auto') return profiles.value.some((p) => p.kind === 'claude' && p.cli_found);
+    if (chip.kind === 'auto') return available_profiles.value.some((p) => p.kind === 'claude' && p.cli_found);
     const profile = chip.profile ?? profiles.value.find((p) => p.id === chip.id);
     return profile?.kind === 'claude' && profile.cli_found;
 }
@@ -1389,7 +1401,8 @@ watch(rows, (list) => {
 
 /** What the list renders: the live rows, in the held order while renaming. */
 const shown_rows = computed<RackRow[]>(() => {
-    const ordered = held_order.value ? hold_row_order(held_order.value, rows.value) : rows.value;
+    const attention = attention_rows(rows.value, asks_now);
+    const ordered = held_order.value ? hold_row_order(held_order.value, attention) : attention;
     // ★ narrows first, so FIND then searches inside the starred sessions.
     const base = starred_only.value ? starred_rack_rows(ordered) : ordered;
     if (session_search.value.trim()) return search_rack_rows(base, session_search.value, chat_matches.value);
@@ -1426,7 +1439,7 @@ function start_rename(session: string | undefined): void {
     disarm_kill();
     disarm_worktree();
     editing.value = session;
-    held_order.value = rows.value.map(rack_row_key);
+    held_order.value = attention_rows(rows.value, asks_now).map(rack_row_key);
     pressed_away = false;
     const title = rows.value.find((row) => row.session === session)?.auto_name;
     draft.value = title?.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || session;
@@ -1643,17 +1656,15 @@ onUnmounted(() => {
 
 <template>
     <div class="rack fui-panel">
-        <span class="fui-corner tl" /><span class="fui-corner tr" />
-        <span class="fui-corner bl" /><span class="fui-corner br" />
-
+        <div class="rack__body">
         <header class="rack__head">
-            <span class="fui-techtext rack__title">{{ payload?.summary || 'agents' }}</span>
+            <span class="fui-techtext rack__title">Rack <span class="rack__session-count">{{ payload?.sessions.filter(session => session.live).length ?? 0 }} sessions</span></span>
             <button type="button" class="fui-btn rack__icon"
                 :aria-pressed="settings_open" :aria-expanded="settings_open" aria-controls="rack-settings"
                 aria-label="Rack settings"
                 :title="settings_open
                     ? 'Hide rack settings'
-                    : 'Rack settings: directories, view, terminal appearance and help'"
+                    : 'Rack settings: view, terminal appearance and help'"
                 @click="settings_open = !settings_open"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiCog" /></svg></button>
             <button v-if="closed_view" type="button"
                 :class="['fui-btn', { 'rack__restore-btn': (closed_view.restorable?.count ?? 0) > 0 }]"
@@ -1662,13 +1673,16 @@ onUnmounted(() => {
                 @click="send('closed')">{{ closed_button_label }}</button>
         </header>
 
+        <section v-if="payload?.reachable" class="rack__attention" aria-label="Rack attention summary">
+            <strong><span>{{ attention_count }}</span> {{ attention_count === 1 ? 'session needs you' : 'sessions need you' }}</strong>
+            <p>{{ working_count }} working · {{ complete_sessions.length }} completed</p>
+        </section>
+
         <!-- Terminal render controls, behind the head's ⚙ (closed by default since
              2026-11-02: set once, rarely touched). ⌘/Ctrl ± stays
              the accelerator, hinted in the ⚙ and button titles. Never disabled
              by `frozen` — see the note on `patch_render`. -->
         <section v-show="settings_open" id="rack-settings" class="rack__settings">
-            <LaunchDirectorySettings :view="payload?.launch_directories" :disabled="frozen || !payload?.reachable"
-                @save="(value) => send('directories', undefined, value)" />
             <div class="rack__render">
                 <label class="fui-techtext rack__render-label" for="rack-view">VIEW</label>
                 <select id="rack-view" v-model="session_view" class="rack__render-select">
@@ -1821,15 +1835,35 @@ onUnmounted(() => {
              account is struck through. AUTO, first where the bridge can pick,
              reads where it would land (`→ A`); while its fork is open that
              chip is outlined dashed. -->
+        <section class="rack__create" aria-label="New session">
+        <button type="button" class="rack__create-toggle" :aria-expanded="launch_open" aria-controls="rack-launch-options"
+            :disabled="frozen" @click="toggle_launch"><span>+ New session</span><span aria-hidden="true">{{ launch_open ? '▾' : '▸' }}</span></button>
+        <div v-show="launch_open" id="rack-launch-options" class="rack__launch-options">
+        <div class="rack__section-head"><span>Launch directory</span><button type="button" class="fui-btn" :aria-expanded="directories_open" @click="directories_open = !directories_open">Edit directories</button></div>
+        <LaunchDirectorySettings v-if="directories_open" :view="payload?.launch_directories" :disabled="frozen || !payload?.reachable"
+            @save="(value) => send('directories', undefined, value)" />
         <div v-if="directory_state" class="rack__projects" role="group" aria-label="Directory for new agents">
             <button v-for="directory in directory_state.directories" :key="directory.path" type="button"
                 class="fui-btn rack__project" :aria-pressed="launch_directory?.path === directory.path"
                 :title="`${directory.path}${directory.path === directory_state.default_path ? ' · default' : ''}`"
-                :disabled="frozen" @click="choose_directory(directory.path)">{{ directory.label }}</button>
+                :disabled="frozen" @click="choose_directory(directory.path)"><span>{{ directory.label }}</span><small>{{ directory.path }}</small></button>
         </div>
         <p v-if="directory_state && !payload?.launch_cwd" class="rack__project-note">Reload the parent app to launch in a selected directory.</p>
+        <div class="rack__section-head"><span>Launch profile</span><button type="button" class="fui-btn" :aria-expanded="profiles_open" @click="profiles_open = !profiles_open">Manage profiles</button></div>
+        <section v-if="profiles_open" class="rack__profiles" aria-label="Launch profiles">
+            <p>Pause to hide a profile from Launch and exclude it from Auto. Existing sessions stay available.</p>
+            <div v-for="profile in profiles" :key="profile.id" class="rack__profile-setting">
+                <span>{{ profile.label }} <small>{{ profile_paused(profile) ? 'Paused' : profile.kind }}</small></span>
+                <button type="button" class="fui-btn" :disabled="frozen || !payload?.reachable || !payload?.profile_availability?.state || payload.profile_availability.saving"
+                    :aria-label="`${profile_paused(profile) ? 'Resume' : 'Pause'} ${profile.label}`" @click="toggle_profile(profile)">{{ profile_paused(profile) ? 'Resume' : 'Pause' }}</button>
+            </div>
+            <p v-if="payload?.profile_availability?.error || payload?.profile_availability?.state?.error" role="alert">{{ payload.profile_availability.error || payload.profile_availability.state?.error }}</p>
+            <p v-else-if="!payload?.profile_availability?.state">Reading profile availability…</p>
+            <p v-else-if="payload.profile_availability.saved" role="status">Saved</p>
+        </section>
+        <p v-if="profiles.length && !available_profiles.length" class="rack__project-note">All profiles are paused. Resume one in Manage profiles.</p>
         <div class="rack__launch" role="group" aria-label="Launch an agent">
-            <span v-if="show_launch_label" class="fui-techtext rack__render-label">LAUNCH</span>
+
             <span
                 v-for="chip in launch_chips"
                 :key="chip.key"
@@ -1917,6 +1951,8 @@ onUnmounted(() => {
         </div>
 
         <p v-if="!repository_launch && fork_key !== null" class="rack__project-note">{{ repository_hint }}</p>
+        </div>
+        </section>
 
         <!-- A launch that did not go as asked. Expires on its own; the rack
              keeps working around it. -->
@@ -2140,7 +2176,7 @@ onUnmounted(() => {
                             <span v-if="mission_title(row.session)" class="row__mission"
                                 :title="mission_title(row.session) ?? undefined"
                                 :aria-label="mission_title(row.session) ?? undefined">◆</span>
-                            <span class="row__text">
+                            <span v-if="detail_segments(row).length" class="row__text">
                                 <!-- The unusual model, inline ONLY while the rack is
                                      too narrow for the MODEL readout (`.row__model`). -->
                                 <span v-if="role_segment(row, 'model')" class="row__model-inline">{{ role_segment(row, 'model')!.text }}<template v-if="detail_segments(row).length">{{ ' · ' }}</template></span>
@@ -2157,6 +2193,7 @@ onUnmounted(() => {
                             </span>
                         </template>
 
+                        <small class="row__status">{{ row.dim ? 'Closed' : asks_now(row) ? 'Needs you' : row.complete ? 'Completed' : row.state === 'busy' || row.state === 'background' ? 'Working' : state_label(row.state ?? 'unknown') }}</small>
                         <span v-if="row.actions.length && editing !== row.session" class="row__actions">
                             <!-- PR / CLEAN. Deliberately NOT a `RackActionId`: that union
                                  is the per-row action set, where `kill` must stay last
@@ -2360,6 +2397,7 @@ onUnmounted(() => {
         <MissionBar v-if="missions" :missions="missions" :sessions="mission_sessions"
             :focused="mission_focused" :disabled="frozen" @act="send_mission" />
 
+        </div>
         <section v-if="device_rows" class="rack__devices">
             <button
                 type="button"
@@ -2482,10 +2520,10 @@ onUnmounted(() => {
     flex-direction: column;
     height: 100%;
     min-height: 0;
-    padding: 14px 16px;
+    padding: 14px 12px;
     gap: 10px;
     overflow: hidden;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --fui-glass-fill: var(--rack-surface);
     color: var(--rack-text);
 }
@@ -2513,9 +2551,10 @@ onUnmounted(() => {
 .rack__title {
     margin-right: auto;
     font-size: 15px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    opacity: 0.9;
+    font-weight: 600;
+    font-family: inherit;
+    text-transform: none;
+    letter-spacing: -0.02em;
 }
 
 /* The rack's button primitive, in the create accent: the colour of bringing
@@ -2538,11 +2577,11 @@ onUnmounted(() => {
 /* LAUNCH chips. `.fui-tag` shape in neutral ink — the open one takes the
    create accent's border, which is chrome (what the press will do), not a hue
    per profile. The meter sits under the label inside the chip so the column
-   never reflows as usage moves. Its own stacking context, raised, so a fork
-   draws over the rows below it. */
-.rack__settings { flex: 0 1 auto; overflow-y: auto; max-height: 65vh; display: grid; gap: 10px; padding: 8px 10px; border-bottom: 1px solid rgba(180, 190, 200, 0.3); }
-.rack__projects { display: flex; gap: 5px; overflow-x: auto; padding: 2px 0; flex-shrink: 0; }
-.rack__project { flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; min-height: 30px; }
+   never reflows as usage moves. */
+.rack__settings { flex: 0 0 auto; display: grid; gap: 10px; padding: 8px 10px; border-bottom: 1px solid rgba(180, 190, 200, 0.3); }
+.rack__projects { display: grid; gap: 6px; padding: 2px 0; flex-shrink: 0; }
+.rack__project { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; max-width: 100%; min-height: 38px; text-align: left; }
+.rack__project small { max-width: 100%; overflow-wrap: anywhere; font: 11px ui-monospace, monospace; color: var(--rack-muted); }
 .rack__project[aria-pressed="true"] { color: var(--rack-text); border-color: currentColor; background: var(--rack-raised); }
 .rack__project-note { margin: 4px 10px; font-size: 0.8rem; }
 @media (pointer: coarse) { .rack__project { min-height: 44px; } }
@@ -2555,9 +2594,8 @@ onUnmounted(() => {
     gap: 6px;
     flex: 0 0 auto;
 }
-.rack__launch-slot { position: relative; display: inline-flex; }
-/* Raise the open slot above later chips when profiles wrap, for painting and hit testing. */
-.rack__launch-slot--open { z-index: 1; }
+.rack__launch-slot { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rack__launch-slot--open { flex-basis: 100%; padding: 8px 0; }
 .rack__chip {
     flex-direction: column;
     align-items: stretch;
@@ -2595,13 +2633,10 @@ onUnmounted(() => {
 /* The lone `+ NEW` chip (fewer than two profiles) reads as the create button it is. */
 .rack__chip--new { color: #42ffa8; border-color: currentColor; letter-spacing: 0.1em; }
 
-/* The fork under a pressed chip. OVERLAID, not in flow: the chip row and the
-   list never move while the operator is choosing. */
+/* The selected profile expands in flow so its choices never cover search or sessions. */
 .rack__fork {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
     padding: 4px;
     background: var(--rack-raised);
@@ -2758,7 +2793,7 @@ onUnmounted(() => {
     flex: 1 1 auto;
     /* Without it a flex item never shrinks below its content, so a long rack
        overflowed the clipped `.rack` instead of scrolling inside the list. */
-    min-height: 0;
+    min-height: 140px;
     /* The ledger: mark · name · ctx · (profile). Session rows are subgrids, so
        the trailing `auto` columns size to the widest cell in the WHOLE list and
        every row's value sits at one x. */
@@ -2776,7 +2811,7 @@ onUnmounted(() => {
     --rack-depth-name-step: 14px;
 }
 .rack__list--profiles { grid-template-columns: auto minmax(0, 1fr) auto auto; }
-.rack__list--emoji { --rack-mark-w: 22px; }
+.rack__list--emoji { --rack-mark-w: 18px; }
 
 /* ↺ CLOSED: under the head, above LAUNCH — the undo sits next to where you look
    first. Capped so a long list scrolls instead of pushing the rack off. */
@@ -2837,8 +2872,8 @@ onUnmounted(() => {
     padding: 0 6px 3px;
     background: transparent;
     border: 0;
-    border-bottom: 1px solid rgba(147, 255, 212, 0.22);
-    color: var(--color-accent-green, #93ffd4);
+    border-bottom: 1px solid var(--rack-raised);
+    color: var(--rack-muted);
     font: inherit;
     font-size: 11.5px;
     letter-spacing: 0.08em;
@@ -2965,10 +3000,10 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 6px;
+    padding: 9px 6px;
     border-left: 2px solid transparent;
     font-size: 14px;
-    line-height: 1.35;
+    line-height: 1.4;
     /* Resolved HERE, where `--rack-depth` is set inline; on the list it would read 0. */
     --rack-depth-indent: calc(var(--rack-depth, 0) * (var(--rack-depth-mark-step) + var(--rack-depth-name-step)));
 }
@@ -2986,18 +3021,15 @@ onUnmounted(() => {
 /* Note lines are context, not targets — indented and never clickable. */
 .row--note { padding-left: calc(var(--rack-mark-w) + 17px + var(--rack-depth-indent)); font-size: 12.5px; opacity: 0.5; cursor: default; }
 .row--overflow, .row--empty { opacity: 0.5; font-style: italic; cursor: default; }
-/* Cohort header: a divider that names the project and rolls up its states.
-   Not a target — it has no session and no actions. Uppercase + letter-spacing
-   is the techtext treatment, so it reads as chrome and not as a row. */
+/* Attention bands are quiet labels; state marks and the summary carry urgency. */
 .row--cohort {
     cursor: default;
-    margin-top: 6px;
-    padding-bottom: 3px;
-    border-bottom: 1px solid rgba(147, 255, 212, 0.22);
-    color: var(--color-accent-green, #93ffd4);
-    font-size: 11.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    margin-top: 9px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--rack-raised);
+    color: var(--rack-muted);
+    font-size: 12px;
+    letter-spacing: 0.02em;
 }
 .row--cohort:first-child { margin-top: 0; }
 /* The COMPLETE band's head: a fold button that keeps the head's look, then CLOSE ALL. */
@@ -3025,10 +3057,12 @@ onUnmounted(() => {
 .row__text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The name cell: indent, family chips, ▶, the name, its island, the detail,
    and — on hover / the focused row — the actions at its end. */
-.row__main { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.row__main { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
+.row__status { flex-basis: 100%; order: 2; font-size: 12px; color: var(--rack-muted); padding-left: var(--rack-depth-indent); }
 .row__indent { flex: 0 0 auto; width: var(--rack-depth-indent); }
 /* After the name: muted and smaller, so the name is what the eye lands on. */
-.row--session .row__text { flex: 1 1 0; font-size: 12px; opacity: 0.55; }
+.row--session .row__text { flex-basis: 100%; order: 3; font-size: 12px; color: var(--rack-muted); }
+.row--session .row__text:empty { display: none; }
 .row__ctx-col { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; min-width: 4ch; white-space: nowrap; }
 
 /* The session name, boxed: the rename door. Same frame and padding as the
@@ -3055,8 +3089,7 @@ onUnmounted(() => {
     text-align: left;
     cursor: text;
 }
-.row--session:hover .row__name:not(.row__name--static),
-.row--focused .row__name:not(.row__name--static) { border-color: rgba(244, 247, 255, 0.22); }
+.row--session:hover .row__name:not(.row__name--static) { border-color: rgba(244, 247, 255, 0.22); }
 .row__name:hover:not(:disabled),
 .row__name:focus-visible {
     border-color: var(--color-accent-green, #93ffd4);
@@ -3229,7 +3262,7 @@ span.mark__open-work { cursor: default; }
 .glyph {
     flex: 0 0 auto;
     width: var(--rack-mark-w);
-    font-size: 19px;
+    font-size: 16px;
     line-height: 1;
     text-align: center;
     font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
@@ -3321,6 +3354,33 @@ span.mark__open-work { cursor: default; }
    reverts to the blue hover the moment you move to click it. */
 .row__btn--armed:hover { background: rgba(248, 193, 70, 0.24); }
 .row__btn--danger:hover { background: rgba(255, 123, 114, 0.16); }
+.rack :deep(.fui-btn:not(.row__btn)) { border: 1px solid color-mix(in srgb, var(--rack-muted) 32%, transparent); border-radius: 5px; background: transparent; color: var(--rack-text); padding: 5px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.rack :deep(.fui-btn:not(.row__btn):hover:not(:disabled)) { background: var(--rack-raised); }
+.rack :deep(.fui-btn:disabled) { opacity: 0.4; cursor: not-allowed; }
+.rack .rack__project { padding: 9px 10px; }
+.rack .rack__project[aria-pressed="true"] { background: var(--rack-raised); border-color: var(--rack-muted); }
+.rack__search input { border-radius: 5px; min-height: 36px; }
+/* Settings and launch choices may grow; the device readout owns a separate visible region. */
+.rack__body { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.rack__head, .rack__search, .rack__attention, .rack__create { flex-shrink: 0; }
+.rack__session-count { font-size: 12px; font-weight: 400; color: var(--rack-muted); margin-left: 8px; }
+.rack__attention { padding: 8px 2px 12px; }
+.rack__attention strong { font-size: 22px; font-weight: 500; letter-spacing: -0.03em; }
+.rack__attention strong span { color: var(--fui-warn, #f8c146); }
+.rack__attention p { margin: 6px 0 0; color: var(--rack-muted); font-size: 12px; }
+.rack__create-toggle { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--rack-muted) 40%, transparent); border-radius: 6px; background: var(--rack-raised); color: var(--rack-text); font: inherit; cursor: pointer; }
+.rack__launch-options { padding: 12px 2px 4px; }
+.rack__section-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 10px 0; font-size: 12px; color: var(--rack-muted); }
+.rack__profiles { padding: 8px; background: var(--rack-raised); border-radius: 6px; }
+.rack__profiles p { font-size: 12px; margin: 5px 0 10px; }
+.rack__profile-setting { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
+.rack__profile-setting small { margin-left: 6px; color: var(--rack-muted); }
+.rack__devices { border-top: 1px solid var(--rack-raised); padding-top: 8px; max-height: 35%; min-height: 36px; }
+.row__name { font-weight: 550; }
+.row__who, .row__ctx-col { font-size: 11px; }
+.row__who { color: var(--rack-muted); }
+.rack :is(button, input):focus-visible { outline: 2px solid var(--color-accent-green, #93ffd4); outline-offset: 2px; }
+@media (pointer: coarse) { .rack__create-toggle, .rack__profile-setting button { min-height: 44px; } }
 </style>
 
 <style scoped>

@@ -870,8 +870,11 @@ def test_summary_carries_exactly_the_contract_keys(tmp_path):
     usage = {"claude-a": {"five_hour": {"used_percentage": 3.0}, "age_seconds": 1.0}}
     rows = registry.summary(7682, {"claude": ["Stop"]}, usage)
     assert [set(row) for row in rows] == [
-        {"id", "label", "kind", "default", "hooks_ok", "hooks_missing", "cli_found", "model_label", "usage", "standing"}
+        {"id", "label", "kind", "default", "hooks_ok", "hooks_missing", "cli_found", "model_label", "usage", "standing", "paused"}
     ] * 2
+    assert [row["paused"] for row in rows] == [False, False]
+    registry.availability.save({"profile": "claude-a", "paused": True})
+    assert registry.summary(7682, {"claude": ["Stop"]}, usage)[0]["paused"] is True
     assert [row["standing"] for row in rows] == [None, None]
     out = {"claude-a": {"state": "out", "error": "billing_error", "message": None, "since": 1.0}}
     assert registry.summary(7682, {"claude": ["Stop"]}, usage, out)[0]["standing"] == out["claude-a"]

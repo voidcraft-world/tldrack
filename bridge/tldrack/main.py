@@ -1775,8 +1775,11 @@ def build_status_handler(
         `model` / `subagent_model`: owned by profiles.py § LAUNCH MODELS — see the note there.
         `permission_mode`: owned by profiles.py (`PERMISSION_ARGS`) — see the note there."""
         profile = profiles.get(profile_id) if profiles is not None else None
-        if profile is None:
+        if profile is None or profiles is None:
             return 400, {"ok": False, "error": f"unknown profile '{profile_id}'"}
+        refused = profiles.launch_refusal(profile_id)
+        if refused:
+            return 400, {"ok": False, "error": refused}
         if prompt is not None:
             prompt_error = spawn_prompt_error(prompt, profile.kind)
             if prompt_error:
@@ -1838,6 +1841,8 @@ def build_status_handler(
                 timeout=SPAWN_TIMEOUT_SECONDS,
                 check=False,
             )
+        except ValueError as err:
+            return 400, {"ok": False, "error": str(err)}
         except subprocess.TimeoutExpired:
             return 500, {"ok": False, "error": "tmux new-session timed out"}
         except OSError as err:
@@ -1935,6 +1940,7 @@ def build_status_handler(
         FRAME_POLICY = framing.frame_ancestors(ALLOWED_ORIGINS)
 
         GET_ROUTES = {
+            "/profile-availability": "_handle_get_profile_availability",
             "/launch-directories": "_handle_get_launch_directories",
             "/ws": "_handle_ws_proxy",
             # /events, /capture and /wait each cost real resources per call (an
@@ -1967,6 +1973,7 @@ def build_status_handler(
             "/decision-secret": "_handle_decision_secret",
         }
         POST_ROUTES = {
+            "/profile-availability": "_handle_save_profile_availability",
             "/launch-directories": "_handle_save_launch_directories",
             "/images": "_handle_image",
             "/shutdown": "_handle_shutdown",
@@ -2259,6 +2266,32 @@ def build_status_handler(
                 permission_mode=payload.get("permission_mode"),
             )
             self._send_json(status, body)
+
+        def _handle_get_profile_availability(self) -> None:
+            if profiles is None:
+                self._send_json(503, {"error": "Launch profiles are unavailable"})
+                return
+            self._send_json(200, profiles.availability.view())
+
+        def _handle_save_profile_availability(self) -> None:
+            if not self._origin_allowed():
+                return
+            body = self._read_json_object()
+            if body is None:
+                return
+            if profiles is None:
+                self._send_json(503, {"error": "Launch profiles are unavailable"})
+                return
+            try:
+                state = profiles.availability.save(body)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            except OSError:
+                self._send_json(500, {"error": "Could not save profile availability to disk"})
+                return
+            notify_snapshot()
+            self._send_json(200, state)
 
         def _handle_get_launch_directories(self) -> None:
             try:
