@@ -8,11 +8,12 @@
  * one gets the same ref, and the last one to unmount stops the watcher. A host that mounts and
  * unmounts the rack inside one long-lived page therefore leaves no listener behind.
  *
- * The ref follows a change made in ANOTHER tab (the settings page): that is the only writer the
- * rack has. A page that writes the switches itself sets its own state as it saves.
+ * The ref follows changes from another tab (the settings page). The canvas's office toggle
+ * updates this shared ref before saving, so every consumer on this page follows immediately;
+ * if storage is unavailable, that choice still lasts for this visit.
  */
 import { onBeforeUnmount, shallowRef, type ShallowRef } from 'vue';
-import { DEFAULT_RACK_PREFS, load_rack_prefs, watch_rack_prefs, type RackPrefs } from '../config/rack-prefs.ts';
+import { DEFAULT_RACK_PREFS, load_rack_prefs, save_rack_prefs, watch_rack_prefs, type RackPrefs } from '../config/rack-prefs.ts';
 
 const prefs = shallowRef<RackPrefs>({ ...DEFAULT_RACK_PREFS });
 let users = 0;
@@ -33,4 +34,10 @@ export function useRackPrefs(): Readonly<ShallowRef<RackPrefs>> {
         stop_watch = null;
     });
     return prefs;
+}
+
+/** The canvas toggle writes only office visibility, preserving quality and motion preferences. */
+export function set_office_enabled(enabled: boolean): void {
+    prefs.value = { ...prefs.value, office: enabled };
+    save_rack_prefs(prefs.value);
 }

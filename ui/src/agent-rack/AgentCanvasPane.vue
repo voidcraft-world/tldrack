@@ -21,7 +21,7 @@ import { parse_canvas_artifacts, type CanvasArtifacts } from './canvas-artifacts
 import type { OfficeAction, OfficeRack } from '../engine/terminal/agent-office-link.ts';
 import type { RackSession } from '../engine/terminal/multi-terminal-layout.ts';
 import { is_service_session } from '../engine/terminal/service-sessions.ts';
-import { useRackPrefs } from '../composables/useRackPrefs.ts';
+import { set_office_enabled, useRackPrefs } from '../composables/useRackPrefs.ts';
 import {
     LEAD_DECISIONS_SLOT_ID,
     NEXT_STEP_SLOT_ID,
@@ -35,7 +35,7 @@ const AgentOfficeView = defineAsyncComponent(() => import('../agent-office/Agent
 /**
  * The office is this pane's one expensive section: its chunk carries three.js, and once mounted it
  * draws a WebGL frame on every animation frame for as long as it is on screen. `prefs.office` off
- * (the settings page, per browser) therefore removes the SECTION, not just its pixels: the async
+ * (the canvas toggle or settings page, per browser) therefore removes the SECTION, not just its pixels: the async
  * component above is never rendered, so the chunk is never requested, and no grip or empty band is
  * left because the section owns both. Flipping the switch in another tab mounts or unmounts it
  * here with no reload (`composables/useRackPrefs.ts`). The pop-out office window is unaffected:
@@ -43,6 +43,9 @@ const AgentOfficeView = defineAsyncComponent(() => import('../agent-office/Agent
  */
 const prefs = useRackPrefs();
 const office_on = computed(() => prefs.value.office);
+function toggle_office(): void {
+    set_office_enabled(!office_on.value);
+}
 
 const props = defineProps<{
     src: string | null;
@@ -210,10 +213,14 @@ function nudge(delta: number): void {
         ></div>
         <header class="canvas__head">
             <span class="fui-techtext canvas__title">▤ CANVAS</span>
-            <button v-if="map_available" class="fui-btn canvas__map-toggle" type="button"
+            <button v-if="map_available" class="fui-btn canvas__view-toggle" type="button"
                 :aria-pressed="map_open"
                 :title="office_on ? 'Show or hide the compact activity map below the 3D office' : 'Show or hide the compact activity map'"
                 @click="toggle_map">MAP</button>
+            <button class="fui-btn canvas__view-toggle" type="button"
+                :aria-pressed="office_on"
+                :title="office_on ? 'Hide the 3D office' : 'Show the 3D office'"
+                @click="toggle_office">3D view</button>
             <span
                 v-if="question"
                 class="fui-tag fui-tag--warn canvas__ask"
@@ -338,10 +345,10 @@ function nudge(delta: number): void {
     flex: 0 0 auto;
     min-width: 0;
 }
-.canvas__map-toggle { flex: 0 0 auto; min-height: 28px; }
-.canvas__map-toggle[aria-pressed="true"] { color: var(--color-accent-green, #93ffd4); }
+.canvas__view-toggle { flex: 0 0 auto; min-height: 28px; }
+.canvas__view-toggle[aria-pressed="true"] { color: var(--color-accent-green, #93ffd4); }
 @media (pointer: coarse) {
-    .canvas__map-toggle { min-height: 44px; }
+    .canvas__view-toggle { min-height: 44px; }
 }
 /* The cards and views share a strip; the framed reader keeps its document scroll and dialogs. */
 .canvas__content { flex: 1 1 auto; min-height: 0; min-width: 0; overflow: auto; scrollbar-width: none; container-type: inline-size; }
