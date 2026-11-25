@@ -205,17 +205,25 @@ export function same_origin_config(
 }
 
 /**
- * The bridge a page OTHER than the rack talks to (Laya review): `?bridge=<origin>` when it is
- * given and allowed, else the origin that served the page. `null` for a page with no usable
- * origin (`file:`), and the caller then keeps the default (`config/bridge-origin.ts`).
+ * The bridge a page OTHER than the rack talks to (Laya review, settings): `?bridge=<origin>`
+ * when it is given and allowed, else the bridge this device's rack is pointed at (`remembered`),
+ * else the origin that served the page. `null` for a page with no usable origin (`file:`), and
+ * the caller then keeps the default (`config/bridge-origin.ts`).
  *
  * `?bridge=` exists for a dev server, which serves the page but is not a bridge. It goes
  * through the same check as `?remote=`, so it can name loopback or a pinned host and nothing
  * else.
+ *
+ * `remembered` is why the rack's own links need no address: the rack opens these pages by bare
+ * name (ALL SETTINGS, the update line's OPEN, LABEL), and a rack that is not served by its
+ * bridge (a dev server, a hosted page aimed at another machine) has already stored where that
+ * bridge is. Without it such a page asks the origin that served it, which answers nothing. The
+ * caller passes what `load_remote_config` read, so it has been through the allowlist again.
  */
 export function page_bridge_origin(
     location: { protocol: string; origin: string; search: string },
     allowed_hosts: readonly string[],
+    remembered: RemoteConfig | null = null,
 ): string | null {
     let named: string | null = null;
     try {
@@ -224,6 +232,7 @@ export function page_bridge_origin(
         named = null;
     }
     if (named !== null) return normalize_remote_origin(named, allowed_hosts);
+    if (remembered !== null) return remembered.bridge_origin;
     return location.protocol === 'http:' || location.protocol === 'https:' ? location.origin : null;
 }
 
@@ -332,6 +341,15 @@ export function load_remote_config(allowed_hosts: readonly string[]): RemoteConf
     } catch {
         return null;
     }
+}
+
+/** The one call a page other than the rack makes before it mounts: `page_bridge_origin`, with
+ *  the bridge this device's rack remembers. */
+export function resolve_page_bridge(
+    location: { protocol: string; origin: string; search: string },
+    allowed_hosts: readonly string[],
+): string | null {
+    return page_bridge_origin(location, allowed_hosts, load_remote_config(allowed_hosts));
 }
 
 export function save_remote_config(config: RemoteConfig): void {

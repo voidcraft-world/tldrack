@@ -3,5 +3,5 @@
  * page names an icon once and the bundler keeps only these paths. Each is a 24x24 `d` string
  * for an inline `<svg viewBox="0 0 24 24"><path :d="…" /></svg>`.
  */
-export { mdiCheck, mdiClose, mdiCog, mdiOfficeBuildingOutline, mdiPause, mdiStar, mdiStarOutline, mdiThumbsUpDown,
+export { mdiCheck, mdiClose, mdiCog, mdiOfficeBuildingOutline, mdiPause, mdiPencilOutline, mdiStar, mdiStarOutline, mdiThumbsUpDown,
     mdiUnfoldLessHorizontal, mdiUnfoldMoreHorizontal } from '@mdi/js';

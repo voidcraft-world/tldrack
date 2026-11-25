@@ -46,7 +46,7 @@ function save(): void {
 <template>
     <section class="directories" aria-label="Launch directories">
         <strong class="fui-techtext">DIRECTORIES</strong>
-        <p>Choose a default for new agents. Project buttons above Launch override it for this visit.</p>
+        <p>Each directory is a button on the launch row. The default is where a launch that names no directory starts.</p>
         <form v-if="view?.state" @submit.prevent="save">
             <fieldset :disabled="blocked">
                 <div v-for="(row, index) in rows" :key="index" class="directories__row">

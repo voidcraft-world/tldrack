@@ -112,7 +112,7 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:render_options': [TerminalRenderOptions] }>();
 
 const payload = ref<RackPayload | null>(null);
-import { mdiCheck, mdiClose, mdiCog, mdiOfficeBuildingOutline, mdiPause, mdiStar, mdiStarOutline, mdiThumbsUpDown, mdiUnfoldLessHorizontal, mdiUnfoldMoreHorizontal } from '../config/icons.ts';
+import { mdiCheck, mdiClose, mdiCog, mdiOfficeBuildingOutline, mdiPause, mdiPencilOutline, mdiStar, mdiStarOutline, mdiThumbsUpDown, mdiUnfoldLessHorizontal, mdiUnfoldMoreHorizontal } from '../config/icons.ts';
 import { open_laya_review } from '../laya-review/open.ts';
 import { create_office_relay } from '../engine/terminal/agent-office-link.ts';
 import TaskGroupBar from './TaskGroupBar.vue';
@@ -156,22 +156,38 @@ const AgentSessionGraph = defineAsyncComponent(() => import('./AgentSessionGraph
 const session_view = ref<'list' | 'graph'>('list');
 /** The ⚙ tray (font / renderer / typeface / refresh). Closed on every mount. */
 const settings_open = ref(false);
+/** The profile chips under the launch row: open on the directory that was pressed. */
 const launch_open = ref(false);
+/** The two launch editors. They live in the ⚙ tray; ✎ on the launch row opens them there. */
 const profiles_open = ref(false);
 const directories_open = ref(false);
+const launch_setup = ref<HTMLElement | null>(null);
 const DENSITY_KEY = 'tldrack:rack-density';
+const STATS_KEY = 'tldrack:rack-session-stats';
 const SERVICES_OPEN_KEY = 'tldrack:rack-services-open';
 const DIRECTORY_FOLDS_KEY = 'tldrack:rack-directory-folds';
 function read_sidebar_choice(key: string): string | null {
     try { return localStorage.getItem(key); } catch { return null; }
 }
 const density = ref(read_sidebar_choice(DENSITY_KEY) === 'comfortable' ? 'comfortable' : 'compact');
+/** SESSION STATS, in the ⚙ tray: the counts of what the list already shows (sessions in the head,
+ *  working and completed under it, the number on each band and directory). Off by default: on a
+ *  rack of a handful every one of them restates rows that are in plain sight, and each is a number
+ *  to read. A rack of dozens, most of them folded away, is what they are for. "N sessions need you"
+ *  is not one of them: that line is the rack asking, and it is drawn only when N is not zero. */
+const session_stats = ref<'on' | 'off'>(read_sidebar_choice(STATS_KEY) === 'on' ? 'on' : 'off');
 const services_open = ref(read_sidebar_choice(SERVICES_OPEN_KEY) !== '0');
 const directory_folds = ref(read_fold_choices(read_sidebar_choice(DIRECTORY_FOLDS_KEY)));
 function save_sidebar_choice(key: string, value: string): void {
     try { localStorage.setItem(key, value); } catch { /* The choice still lasts this page. */ }
 }
 watch(density, (value) => save_sidebar_choice(DENSITY_KEY, value));
+watch(session_stats, (value) => save_sidebar_choice(STATS_KEY, value));
+/** A band's head: its name, and its count only with SESSION STATS on (`attention_rows` writes
+ *  both into `text`, and the name alone into `cohort`). */
+function band_label(row: RackRow): string {
+    return session_stats.value === 'on' ? row.text : row.cohort ?? row.text;
+}
 watch(services_open, (value) => save_sidebar_choice(SERVICES_OPEN_KEY, value ? '1' : '0'));
 // Search and stars reveal folded bands, just as they reveal folded families.
 const filter_active = computed(() => !!session_search.value.trim() || starred_only.value);
@@ -185,9 +201,16 @@ function toggle_directory(row: RackRow): void {
     save_sidebar_choice(DIRECTORY_FOLDS_KEY, write_fold_choices(directory_folds.value));
 }
 
+/** The lone `+ New session` toggle of a bridge that names no launch directories. */
 function toggle_launch(): void {
     launch_open.value = !launch_open.value;
     close_fork();
+}
+function toggle_launch_setup(): void {
+    const open = !(settings_open.value && directories_open.value);
+    settings_open.value = open;
+    directories_open.value = open;
+    if (open) void nextTick(() => launch_setup.value?.scrollIntoView({ block: 'nearest' }));
 }
 function profile_paused(profile: ProfileInfo): boolean {
     return payload.value?.profile_availability?.state?.paused.includes(profile.id) ?? profile.paused === true;
@@ -197,8 +220,19 @@ function toggle_profile(profile: ProfileInfo): void {
 }
 const available_profiles = computed(() => profiles.value.filter((profile) => !profile_paused(profile)));
 const attention_count = computed(() => rows.value.filter(asks_now).length);
+/** The head's count: live sessions an agent can work in. A row the SERVICES band holds (a dev
+ *  server, a job: `shows_service_mark`) is machinery, and counting it puts a number in the head
+ *  that the summary under it (working, completed) can never add up to. */
+const session_count = computed(() => rows.value.filter((row) => row.kind === 'session' && !row.dim
+    && !shows_service_mark(row.session, row.state)).length);
 const working_count = computed(() => rows.value.filter((row) => row.kind === 'session' && !row.dim
     && (row.state === 'busy' || row.state === 'background')).length);
+/** The summary says only what is not zero: a count of nothing is a line to read that tells
+ *  nothing, and the headline's absence is itself the answer to "does anything need me". The
+ *  line under it, or `''` when there is nothing working and nothing completed. */
+const summary_counts = computed(() => (session_stats.value === 'on'
+    ? [`${working_count.value} working`, `${complete_sessions.value.length} completed`].filter((part) => !part.startsWith('0 ')).join(' · ')
+    : ''));
 
 const session_search = ref('');
 /** The bridge's answer for what the box says now: sessions whose CHAT met the terms their titles
@@ -661,9 +695,23 @@ watch(directory_state, (state) => {
 });
 const repository_launch = computed(() => !launch_directory.value || launch_directory.value.path === directory_state.value?.bridge_path);
 const repository_hint = computed(() => `Worktrees and LEAD use ${directory_state.value?.bridge_path ?? 'the bridge repository'}. Select that project to use them.`);
-function choose_directory(path: string): void {
-    chosen_directory.value = path;
+function directory_open(path: string): boolean {
+    return launch_open.value && launch_directory.value?.path === path;
+}
+/** A directory button is the first press of a launch: it picks WHERE and opens the profile chips
+ *  under the row. A press on another directory moves the open chips to it; a second press on the
+ *  open one closes them. Focus lands on the first chip, so the keyboard takes the same presses. */
+function pick_directory(path: string, event: Event): void {
     close_fork();
+    if (directory_open(path)) {
+        launch_open.value = false;
+        return;
+    }
+    chosen_directory.value = path;
+    launch_open.value = true;
+    // Read NOW: `currentTarget` is nulled once dispatch finishes.
+    const create = (event.currentTarget as HTMLElement | null)?.closest('.rack__create');
+    void nextTick(() => create?.querySelector<HTMLElement>('.rack__chip:not(:disabled)')?.focus());
 }
 
 /** One LAUNCH chip. `profile` is null on AUTO and on the lone `+ NEW` chip. */
@@ -942,8 +990,9 @@ function row_profile_label(row: RackRow): string | null {
 // away". `↺ CLOSED N` still undoes a kill. No `window.confirm`: this component
 // is also mounted in a frame, where a modal blocks the page.
 //
-// The armed label is `KILL?`. A cut-off turn (🪫 / 🔋 / 🛑) keeps its own
-// tooltip, because the kill also drops its RESTORE offer.
+// The armed label is `CLOSE?`: the operator's word for ending a session, and the one `↺ CLOSED`
+// already uses for where it goes (`kill` stays the action's name on the wire). A cut-off turn
+// (🪫 / 🔋 / 🛑) keeps its own tooltip, because the kill also drops its RESTORE offer.
 const KILL_ARM_MS = 4000;
 const complete_delete = useArmedAction(KILL_ARM_MS);
 const complete_delete_armed = complete_delete.armed;
@@ -963,7 +1012,7 @@ function delete_all_complete(): void {
     });
 }
 
-/** Session whose ✕ is armed (`KILL?`), or null. */
+/** Session whose ✕ is armed (`CLOSE?`), or null. */
 const armed_kill = ref<string | null>(null);
 let kill_arm_timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1297,22 +1346,26 @@ function on_worktree_click(session: string): void {
  * on this surface (see § rename), and a pencil beside it would be a second door
  * to the same act inside one row. `rename` in `row.actions` only says the
  * name box may edit (`can_rename`).
+ *
+ * `▶` is not one either, for the same reason: a press anywhere on the row shows
+ * it in the terminal (the row's own `@click`, and the name: `on_name_click`), so
+ * a button for it is a second door that costs a hover and an aim. `focus` stays
+ * in `row.actions` for the surfaces with no row to press (the office's menu).
  */
-function visible_actions(row: RackRow): Exclude<RackActionId, 'rename'>[] {
-    // A `RackActionId` subtype, not `string[]`: the template narrows this value
-    // through `kill`, and a `string` would let anything through to `send()`.
-    return row.actions.filter((action): action is Exclude<RackActionId, 'rename'> => action !== 'rename');
+type StripAction = Exclude<RackActionId, 'rename' | 'focus'>;
+function visible_actions(row: RackRow): StripAction[] {
+    // A `RackActionId` subtype, not `string[]`: a `string` would let anything through to `send()`.
+    return row.actions.filter((action): action is StripAction => action !== 'rename' && action !== 'focus');
 }
 
 /** Tooltip for a row's action button. Out of the template because the ✕ has
  *  three states, which is past what a nested ternary there can carry. */
-function action_title(action: Exclude<RackActionId, 'rename'>, row: RackRow): string {
-    if (action === 'focus') return 'Show in the live terminal';
+function action_title(row: RackRow): string {
     const stopped = cut_off(row);
     if (stopped && kill_arm_reason(row) === 'cut_off') {
         return armed_kill.value === row.session
-            ? `Confirm: kills '${row.session}' with its turn unfinished`
-            : `Kill this tmux session — its turn was cut off (${stop_failure_title(stopped, now_s.value)}), so this asks twice`;
+            ? `Confirm: closes '${row.session}' with its turn unfinished`
+            : `Close this session — its turn was cut off (${stop_failure_title(stopped, now_s.value)}), so this asks twice`;
     }
     if (row.exited) {
         return armed_kill.value === row.session
@@ -1320,8 +1373,8 @@ function action_title(action: Exclude<RackActionId, 'rename'>, row: RackRow): st
             : 'Close this ended job — nothing runs in it, only its log goes — press twice';
     }
     return armed_kill.value === row.session
-        ? `Confirm: kills '${row.session}'`
-        : 'Kill this tmux session — press twice';
+        ? `Confirm: closes '${row.session}'`
+        : 'Close this session — press twice';
 }
 
 // ── label ───────────────────────────────────────────────────────────────
@@ -1375,9 +1428,17 @@ function name_locked(row: RackRow): boolean {
     return !!row.session && (row.session === data?.spawning || row.session === data?.pane_loading);
 }
 
+/** The name is a rename door only on the row the terminal shows; on every other row it is part
+ *  of the row, and a press switches to it (`on_name_click`). A dim row has no terminal to show. */
+function name_renames(row: RackRow): boolean {
+    return row.focused === true || row.dim === true;
+}
+
 function name_title(row: RackRow): string {
-    return name_locked(row) ? 'Starting — rename once the terminal is up'
-        : row.auto_name ? `Auto-named by topic · ${row.session} · Click to rename` : `Rename '${row.session}'`;
+    if (row.session === payload.value?.spawning) return 'Starting — rename once the terminal is up';
+    const named = row.auto_name ? `Auto-named by topic · ${row.session} · ` : '';
+    if (!name_renames(row)) return `${named}Click to show '${row.session}' in the terminal · click again, or right-click, to rename`;
+    return name_locked(row) ? `${named}Click to rename once the terminal is up` : `${named}Click to rename '${row.session}'`;
 }
 
 /** The inline detail after a session row's name: model (where unusual), a
@@ -1496,6 +1557,38 @@ watch(
     { flush: 'sync' },
 );
 
+/**
+ * A press on a session's name. The first press on a row the terminal does not show switches to
+ * it, exactly like a press anywhere else on the row; a press on the name of the row it does
+ * show, or the second press of a double-click (`detail`), renames.
+ *
+ * A switch locks the name while the pane loads (`pane-settle.ts` owns why), which is exactly
+ * when the second press of a double-click lands, sometimes before the switch has even come back
+ * in the payload. That press is QUEUED rather than lost, and the box opens when the pane has
+ * settled. Only the lock LIFTING opens it: the row turning focused is one payload ahead of its
+ * lock. A press anywhere but a name drops the queue; under a host that never reports a loading
+ * pane it simply waits there, and the next press on the name renames.
+ */
+const rename_queued = ref<string | null>(null);
+function on_name_click(row: RackRow, event: MouseEvent): void {
+    const session = row.session;
+    if (frozen.value || !session) return;
+    if (!name_renames(row)) {
+        rename_queued.value = event.detail > 1 ? session : null;
+        if (event.detail < 2) send('select', session);
+    } else if (session === payload.value?.pane_loading) {
+        rename_queued.value = session;
+    } else {
+        start_rename(session);
+    }
+}
+watch(() => payload.value?.pane_loading, (loading, was) => {
+    const session = rename_queued.value;
+    if (session === null || was !== session || loading === session) return;
+    rename_queued.value = null;
+    if (rows.value.some((row) => row.session === session && name_renames(row))) start_rename(session);
+});
+
 function start_rename(session: string | undefined): void {
     if (frozen.value || !session) return;
     // The right-click accelerator reaches here without the button's `:disabled`.
@@ -1527,6 +1620,7 @@ function cancel_rename(): void {
  *  host that proxies input into the frame synthesizes mouse events. */
 function on_document_press(event: Event): void {
     if (editing.value !== null && event.target !== rename_input.value) pressed_away = true;
+    if (rename_queued.value !== null && !(event.target as Element | null)?.closest?.('.row__name')) rename_queued.value = null;
     // Its own slot is exempt: the chip's click toggles the fork itself.
     if (fork_key.value !== null && !(event.target as Element | null)?.closest?.('.rack__launch-slot--open')) {
         close_fork();
@@ -1727,7 +1821,7 @@ onUnmounted(() => {
     <div :class="['rack fui-panel', { 'rack--compact': density === 'compact' }]">
         <div class="rack__body">
         <header class="rack__head">
-            <span class="fui-techtext rack__title">Rack <span class="rack__session-count">{{ payload?.sessions.filter(session => session.live).length ?? 0 }} sessions</span></span>
+            <span class="fui-techtext rack__title">TLDRack <span v-if="session_stats === 'on'" class="rack__session-count">{{ session_count }} {{ session_count === 1 ? 'session' : 'sessions' }}</span></span>
             <button type="button" class="fui-btn rack__icon"
                 :aria-pressed="settings_open" :aria-expanded="settings_open" aria-controls="rack-settings"
                 :aria-label="settings_label"
@@ -1744,10 +1838,10 @@ onUnmounted(() => {
                 @click="send('closed')">{{ closed_button_label }}</button>
         </header>
 
-        <section v-if="payload?.reachable" class="rack__attention" aria-label="Rack attention summary">
-            <div class="rack__summary-copy">
-                <strong><span>{{ attention_count }}</span> {{ attention_count === 1 ? 'session needs you' : 'sessions need you' }}</strong>
-                <p>{{ working_count }} working · {{ complete_sessions.length }} completed</p>
+        <section v-if="payload?.reachable && (attention_count || summary_counts || weekly_profiles.length)" class="rack__attention" aria-label="Rack attention summary">
+            <div v-if="attention_count || summary_counts" class="rack__summary-copy">
+                <strong v-if="attention_count"><span>{{ attention_count }}</span> {{ attention_count === 1 ? 'session needs you' : 'sessions need you' }}</strong>
+                <p v-if="summary_counts">{{ summary_counts }}</p>
             </div>
             <aside v-if="weekly_profiles.length" class="rack__weekly" aria-label="Weekly allowance used by active profiles">
                 <span class="rack__weekly-label">Weekly used</span>
@@ -1774,7 +1868,30 @@ onUnmounted(() => {
                         : 'Open the Settings page at SETUP: the update card'"
                     @click="act_on_update">{{ update_note.action === 'reload' ? 'RELOAD' : 'OPEN' }}</button>
             </div>
-            <button type="button" class="fui-btn" @click="launch_open = true; directories_open = true; settings_open = false">Edit launch directories</button>
+            <div class="rack__render">
+                <span class="fui-techtext rack__render-label">LAUNCH</span>
+                <button type="button" class="fui-btn" :aria-expanded="directories_open"
+                    title="The directories on the launch row: names, paths and the default"
+                    @click="directories_open = !directories_open">EDIT DIRECTORIES</button>
+                <button v-if="profiles.length" type="button" class="fui-btn" :aria-expanded="profiles_open"
+                    title="Pause a profile to hide its chip and keep AUTO off it"
+                    @click="profiles_open = !profiles_open">MANAGE PROFILES</button>
+            </div>
+            <div v-if="directories_open || profiles_open" ref="launch_setup" class="rack__launch-setup">
+            <LaunchDirectorySettings v-if="directories_open" :view="payload?.launch_directories" :disabled="frozen || !payload?.reachable"
+                @save="(value) => send('directories', undefined, value)" />
+            <section v-if="profiles_open" class="rack__profiles" aria-label="Launch profiles">
+                <p>Pause to hide a profile from Launch and exclude it from Auto. Existing sessions stay available.</p>
+                <div v-for="profile in profiles" :key="profile.id" class="rack__profile-setting">
+                    <span>{{ profile.label }} <small>{{ profile_paused(profile) ? 'Paused' : profile.kind }}</small></span>
+                    <button type="button" class="fui-btn" :disabled="frozen || !payload?.reachable || !payload?.profile_availability?.state || payload.profile_availability.saving"
+                        :aria-label="`${profile_paused(profile) ? 'Resume' : 'Pause'} ${profile.label}`" @click="toggle_profile(profile)">{{ profile_paused(profile) ? 'Resume' : 'Pause' }}</button>
+                </div>
+                <p v-if="payload?.profile_availability?.error || payload?.profile_availability?.state?.error" role="alert">{{ payload.profile_availability.error || payload.profile_availability.state?.error }}</p>
+                <p v-else-if="!payload?.profile_availability?.state">Reading profile availability…</p>
+                <p v-else-if="payload.profile_availability.saved" role="status">Saved</p>
+            </section>
+            </div>
             <div class="rack__render">
                 <label class="fui-techtext rack__render-label" for="rack-view">VIEW</label>
                 <select id="rack-view" v-model="session_view" class="rack__render-select">
@@ -1794,6 +1911,14 @@ onUnmounted(() => {
                 <select id="rack-density" v-model="density" class="rack__render-select">
                     <option value="compact">Compact</option><option value="comfortable">Comfortable</option>
                 </select>
+                <!-- One unit, so a narrow tray wraps the label WITH its control, never away from it. -->
+                <span class="rack__render-pair">
+                    <label class="fui-techtext rack__render-label" for="rack-stats"
+                        title="The counts of what the list shows: sessions in the head, working and completed, and the number on each band and directory">SESSION STATS</label>
+                    <select id="rack-stats" v-model="session_stats" class="rack__render-select">
+                        <option value="off">Off</option><option value="on">On</option>
+                    </select>
+                </span>
             </div>
             <div v-if="render_options" class="rack__render">
                 <span class="fui-techtext rack__render-label">FONT</span>
@@ -1928,41 +2053,36 @@ onUnmounted(() => {
             </template>
         </section>
 
-        <!-- LAUNCH: the rack's one way to start an agent. A chip forks into
-             MAIN / 🏝 under it — the why, and the fallbacks, are owned by the
-             `launch` block in the script. Mono, no hue: hue means STATE on this
+        <!-- LAUNCH: the rack's one way to start an agent, in three presses:
+             directory, profile, place. The row is one button per launch directory;
+             a press picks WHERE and opens the profile chips under it (`pick_directory`).
+             The buttons share the row and wrap when the names outgrow it. ✎ opens the
+             two editors, which live in the ⚙ tray. A bridge that names no directories
+             keeps the one `+ New session` toggle.
+             A chip forks into HERE / 🏝 under it — the why, and the fallbacks, are owned
+             by the `launch` block in the script. Mono, no hue: hue means STATE on this
              page, and a profile is identity, not state. Each Claude chip reads
              its account's WEEKLY % (number) and 5-hour window (bar); a capped
              account is struck through. AUTO, first where the bridge can pick,
              reads where it would land (`→ A`); while its fork is open that
              chip is outlined dashed. -->
         <section class="rack__create" aria-label="New session">
-        <button type="button" class="rack__create-toggle" :aria-expanded="launch_open" aria-controls="rack-launch-options"
+        <div v-if="directory_state" class="rack__projects" role="group" aria-label="New session in a directory">
+            <button v-for="directory in directory_state.directories" :key="directory.path" type="button"
+                class="fui-btn rack__project" :aria-expanded="directory_open(directory.path)" aria-controls="rack-launch-options"
+                :aria-label="`New session in ${directory.label}`"
+                :title="`New session in ${directory.path}${directory.path === directory_state.default_path ? ' · default' : ''}`"
+                :disabled="frozen" @click="pick_directory(directory.path, $event)"><span aria-hidden="true">+</span><span class="rack__project-name">{{ directory.label }}</span></button>
+            <button type="button" class="fui-btn rack__icon rack__project-edit"
+                :aria-expanded="settings_open && directories_open" aria-controls="rack-settings"
+                aria-label="Edit launch directories and profiles" title="Edit launch directories and profiles · opens in ⚙ settings"
+                @click="toggle_launch_setup"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiPencilOutline" /></svg></button>
+        </div>
+        <button v-else type="button" class="rack__create-toggle" :aria-expanded="launch_open" aria-controls="rack-launch-options"
             :disabled="frozen" @click="toggle_launch"><span>+ New session</span><span aria-hidden="true">{{ launch_open ? '▾' : '▸' }}</span></button>
         <div v-show="launch_open" id="rack-launch-options" class="rack__launch-options">
-        <div class="rack__section-head"><span>Launch directory</span><button type="button" class="fui-btn" :aria-expanded="directories_open" @click="directories_open = !directories_open">Edit directories</button></div>
-        <LaunchDirectorySettings v-if="directories_open" :view="payload?.launch_directories" :disabled="frozen || !payload?.reachable"
-            @save="(value) => send('directories', undefined, value)" />
-        <div v-if="directory_state" class="rack__projects" role="group" aria-label="Directory for new agents">
-            <button v-for="directory in directory_state.directories" :key="directory.path" type="button"
-                class="fui-btn rack__project" :aria-pressed="launch_directory?.path === directory.path"
-                :title="`${directory.path}${directory.path === directory_state.default_path ? ' · default' : ''}`"
-                :disabled="frozen" @click="choose_directory(directory.path)"><span>{{ directory.label }}</span><small>{{ directory.path }}</small></button>
-        </div>
         <p v-if="directory_state && !payload?.launch_cwd" class="rack__project-note">Reload the parent app to launch in a selected directory.</p>
-        <div class="rack__section-head"><span>Launch profile</span><button type="button" class="fui-btn" :aria-expanded="profiles_open" @click="profiles_open = !profiles_open">Manage profiles</button></div>
-        <section v-if="profiles_open" class="rack__profiles" aria-label="Launch profiles">
-            <p>Pause to hide a profile from Launch and exclude it from Auto. Existing sessions stay available.</p>
-            <div v-for="profile in profiles" :key="profile.id" class="rack__profile-setting">
-                <span>{{ profile.label }} <small>{{ profile_paused(profile) ? 'Paused' : profile.kind }}</small></span>
-                <button type="button" class="fui-btn" :disabled="frozen || !payload?.reachable || !payload?.profile_availability?.state || payload.profile_availability.saving"
-                    :aria-label="`${profile_paused(profile) ? 'Resume' : 'Pause'} ${profile.label}`" @click="toggle_profile(profile)">{{ profile_paused(profile) ? 'Resume' : 'Pause' }}</button>
-            </div>
-            <p v-if="payload?.profile_availability?.error || payload?.profile_availability?.state?.error" role="alert">{{ payload.profile_availability.error || payload.profile_availability.state?.error }}</p>
-            <p v-else-if="!payload?.profile_availability?.state">Reading profile availability…</p>
-            <p v-else-if="payload.profile_availability.saved" role="status">Saved</p>
-        </section>
-        <p v-if="profiles.length && !available_profiles.length" class="rack__project-note">All profiles are paused. Resume one in Manage profiles.</p>
+        <p v-if="profiles.length && !available_profiles.length" class="rack__project-note">All profiles are paused. Resume one in ⚙ settings, MANAGE PROFILES.</p>
         <div class="rack__launch" role="group" aria-label="Launch an agent">
 
             <span
@@ -2240,19 +2360,21 @@ onUnmounted(() => {
                             @blur="on_rename_blur"
                             @input="rename_error = null"
                         />
-                        <!-- The name is the rename door: `.stop` keeps the click
-                             from also selecting the row. -->
+                        <!-- The name switches, then renames: owned by `on_name_click` — see the
+                             note there. `.stop` keeps the press from also reaching the row. Only a
+                             session `/spawn` is still building disables it; a loading pane must
+                             still take the press it queues. -->
                         <template v-else>
                             <span v-if="row.focused" class="row__mark" aria-hidden="true">▶</span>
                             <button
                                 v-if="can_rename(row)"
                                 type="button"
                                 class="row__name"
-                                :class="{ 'row__name--locked': name_locked(row) }"
-                                :disabled="frozen || name_locked(row)"
+                                :class="{ 'row__name--door': name_renames(row), 'row__name--locked': name_locked(row) }"
+                                :disabled="frozen || row.session === payload?.spawning"
                                 :title="name_title(row)"
-                                :aria-label="name_locked(row) ? name_title(row) : `Rename session ${row.session}`"
-                                @click.stop="start_rename(row.session)"
+                                :aria-label="name_locked(row) ? name_title(row) : name_renames(row) ? `Rename session ${row.session}` : `Show session ${row.session} in the terminal`"
+                                @click.stop="on_name_click(row, $event)"
                             >{{ row.auto_name || row.session }}</button>
                             <span v-else class="row__name row__name--static">{{ row.auto_name || row.session }}</span>
                             <span v-if="row.starred" class="row__star-mark" role="img" aria-label="Starred session">
@@ -2313,7 +2435,7 @@ onUnmounted(() => {
                                 <!-- LABEL, beside the ✕: grade this session's marks and its name on the REVIEW page.
                                      Not a `RackActionId` for the PR button's reason above. -->
                                 <button
-                                    v-if="action === 'kill' && can_label(row)"
+                                    v-if="can_label(row)"
                                     type="button"
                                     class="row__btn row__btn--label rack__icon"
                                     :title="label_title(row)"
@@ -2321,19 +2443,11 @@ onUnmounted(() => {
                                     @click.stop="open_label(row)"
                                 ><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiThumbsUpDown" /></svg></button>
                                 <button
-                                    :class="['row__btn', {
-                                        'row__btn--danger': action === 'kill',
-                                        'row__btn--armed': action === 'kill' && armed_kill === row.session,
-                                    }]"
+                                    :class="['row__btn', 'row__btn--danger', { 'row__btn--armed': armed_kill === row.session }]"
                                     :disabled="frozen"
-                                    :title="action_title(action, row)"
-                                    @click.stop="action === 'kill' ? on_kill_click(row) : send('select', row.session)"
-                                >
-                                    <template v-if="action === 'kill'">
-                                        {{ armed_kill === row.session ? 'KILL?' : '✕' }}
-                                    </template>
-                                    <template v-else>▶</template>
-                                </button>
+                                    :title="action_title(row)"
+                                    @click.stop="on_kill_click(row)"
+                                >{{ armed_kill === row.session ? 'CLOSE?' : '✕' }}</button>
                             </template>
                         </span>
                     </span>
@@ -2469,7 +2583,7 @@ onUnmounted(() => {
                             : 'Show the finished sessions: Laya judged them done and none has a worktree'"
                         @click.stop="toggle_complete"
                     >
-                        <span>{{ row.text }}</span>
+                        <span>{{ band_label(row) }}</span>
                         <span aria-hidden="true">{{ complete_open ? '▾' : '▸' }}</span>
                     </button>
                     <button
@@ -2486,15 +2600,15 @@ onUnmounted(() => {
                     :title="`${directory_expanded(row) ? 'Collapse' : 'Expand'} ${row.text}`"
                     @click.stop="toggle_directory(row)">
                     <span class="row__directory-arrow" aria-hidden="true">{{ directory_expanded(row) ? '▾' : '▸' }}</span>
-                    <span class="row__directory-name">{{ row.text }}</span><span class="row__directory-count">{{ row.cohort_count }}</span>
+                    <span class="row__directory-name">{{ row.text }}</span><span v-if="session_stats === 'on'" class="row__directory-count">{{ row.cohort_count }}</span>
                 </button>
                 <button v-else-if="row.kind === 'cohort' && row.cohort === 'Services'" type="button"
                     class="row__fold" :aria-expanded="services_expanded"
                     :disabled="filter_active"
                     @click.stop="services_open = !services_open">
-                    <span>{{ row.text }}</span><span aria-hidden="true">{{ services_expanded ? '▾' : '▸' }}</span>
+                    <span>{{ band_label(row) }}</span><span aria-hidden="true">{{ services_expanded ? '▾' : '▸' }}</span>
                 </button>
-                <span v-else class="row__text">{{ row.text }}</span>
+                <span v-else class="row__text">{{ row.kind === 'cohort' ? band_label(row) : row.text }}</span>
                 <FamilyFoldLine v-if="row.kind === 'session' && row.node_id && fold_readouts.has(row.node_id)"
                     class="row__line2" :readout="fold_readouts.get(row.node_id)!" />
                 <template v-else>
@@ -2690,12 +2804,15 @@ onUnmounted(() => {
    per profile. The meter sits under the label inside the chip so the column
    never reflows as usage moves. */
 .rack__settings { flex: 0 0 auto; display: grid; gap: 10px; padding: 8px 10px; border-bottom: 1px solid rgba(180, 190, 200, 0.3); }
-.rack__projects { display: grid; gap: 6px; padding: 2px 0; flex-shrink: 0; }
-.rack__project { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; max-width: 100%; min-height: 38px; text-align: left; }
-.rack__project small { max-width: 100%; overflow-wrap: anywhere; font: 11px ui-monospace, monospace; color: var(--rack-muted); }
-.rack__project[aria-pressed="true"] { color: var(--rack-text); border-color: currentColor; background: var(--rack-raised); }
+/* The launch row. Each directory takes its name's width and the row's spare room; a name
+   wraps to a new line before it is cut, and only a name wider than the rack is cut. */
+.rack__projects { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; }
+.rack__project { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 64px; max-width: 100%; min-height: 38px; }
+.rack__project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rack__project-edit { flex: 0 0 auto; min-width: 38px; min-height: 38px; }
 .rack__project-note { margin: 4px 10px; font-size: 0.8rem; }
-@media (pointer: coarse) { .rack__project { min-height: 44px; } }
+.rack__launch-setup { display: grid; gap: 10px; min-width: 0; }
+@media (pointer: coarse) { .rack__project, .rack__project-edit { min-height: 44px; min-width: 44px; } }
 .rack__launch {
     position: relative;
     z-index: 4;
@@ -2776,9 +2893,13 @@ onUnmounted(() => {
 
 /* The PROFILE column. Unboxed mono ink, no hue (a profile is identity, not
    state), sized to the longest label the bridge lists — `ch` plus the
-   letter-spacing per character — so the column holds still as rows come and go. */
+   letter-spacing per character — so the column holds still as rows come and go.
+   Right-aligned inside that width: every label ends at the row's edge, whatever
+   its length, and the negative margin takes back the spacing after the last letter. */
 .row__profile {
     min-width: calc(var(--rack-profile-chars, 3) * (1ch + 0.08em));
+    margin-right: -0.08em;
+    text-align: right;
     font-size: 0.68rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -2788,8 +2909,8 @@ onUnmounted(() => {
 }
 .row__profile--none { opacity: 0.25; }
 
-/* The trailing cell: MODEL then PROFILE, right-aligned, so the profile labels
-   (fixed min-width) and the model's right edge each sit at one x. */
+/* The trailing cell: MODEL then PROFILE, right-aligned, so the profile labels'
+   right edge (fixed min-width) and the model's right edge each sit at one x. */
 .row__who { display: flex; justify-content: flex-end; align-items: baseline; gap: 8px; }
 /* MODEL beside the account — only when the list is wide enough to spare it.
    Narrower, the name keeps the width and only an UNUSUAL model prints, inline
@@ -2825,6 +2946,7 @@ onUnmounted(() => {
 /* Separates the two control groups when they share a row, and does nothing
    extra once flex-wrap has already broken them onto separate lines. */
 .rack__render-label--gap { margin-left: 4px; }
+.rack__render-pair { display: inline-flex; align-items: center; gap: inherit; white-space: nowrap; }
 
 .rack__render-btn {
     background: none;
@@ -3207,10 +3329,13 @@ onUnmounted(() => {
     font: inherit;
     line-height: inherit;
     text-align: left;
-    cursor: text;
+    cursor: pointer;
 }
-.row--session:hover .row__name:not(.row__name--static) { border-color: rgba(244, 247, 255, 0.22); }
-.row__name:hover:not(:disabled),
+/* The box and the text cursor say "this press edits", so only the door wears them
+   (`name_renames`): on every other row the name is one more place to press the row. */
+.row__name--door { cursor: text; }
+.row--session:hover .row__name--door { border-color: rgba(244, 247, 255, 0.22); }
+.row__name--door:hover:not(:disabled),
 .row__name:focus-visible {
     border-color: var(--color-accent-green, #93ffd4);
     background: rgba(147, 255, 212, 0.06);
@@ -3221,7 +3346,7 @@ onUnmounted(() => {
 /* Locked while the session is still starting (`name_locked`): the box stays
    drawn so nothing moves when it unlocks, but reads as not-yet. Scoped under
    `.rack` in front to outrank `.rack button:disabled`'s not-allowed cursor. */
-.rack .row__name--locked:disabled { border-style: dashed; opacity: 0.55; cursor: progress; }
+.rack .row__name--locked { border-style: dashed; opacity: 0.55; cursor: progress; }
 .row__mark { flex: 0 0 auto; color: var(--color-accent-green, #93ffd4); }
 /* The operator's star. `--rack-star` is used for nothing else on this page: every other hue here
    is the rack's reading of a session, and this one mark is the operator's own. */
@@ -3443,7 +3568,7 @@ span.mark__open-work { cursor: default; }
         opacity: 1; pointer-events: auto; background: transparent; border: 0; box-shadow: none; padding: 2px 0; }
 }
 
-/* PR / CLEAN sit in the same row strip as ▶ / ✕ but act on the BRANCH (push it,
+/* PR / CLEAN sit in the same row strip as ✕ but act on the BRANCH (push it,
    or clear it away once landed), so they get their own hue rather than the blue
    the session actions share. */
 .row__btn--pr { color: #8cd9b0; letter-spacing: 0.06em; }
@@ -3478,8 +3603,9 @@ span.mark__open-work { cursor: default; }
 .rack :deep(.fui-btn:not(.row__btn)) { border: 1px solid color-mix(in srgb, var(--rack-muted) 32%, transparent); border-radius: 5px; background: transparent; color: var(--rack-text); padding: 5px 8px; font: inherit; font-size: 12px; cursor: pointer; }
 .rack :deep(.fui-btn:not(.row__btn):hover:not(:disabled)) { background: var(--rack-raised); }
 .rack :deep(.fui-btn:disabled) { opacity: 0.4; cursor: not-allowed; }
-.rack .rack__project { padding: 9px 10px; }
-.rack .rack__project[aria-pressed="true"] { background: var(--rack-raised); border-color: var(--rack-muted); }
+.rack .rack__project { padding: 8px 10px; font-size: 14px; font-weight: 550; background: var(--rack-raised); }
+.rack .rack__project-edit { color: var(--rack-muted); }
+.rack :is(.rack__project, .rack__project-edit, .rack__settings .fui-btn)[aria-expanded="true"] { background: var(--rack-raised); border-color: var(--rack-text); color: var(--rack-text); }
 .rack__search input { border-radius: 5px; min-height: 36px; }
 /* Settings and launch choices may grow; the device readout owns a separate visible region. */
 .rack__body { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
@@ -3498,18 +3624,26 @@ span.mark__open-work { cursor: default; }
 .rack__attention strong { display: block; font-size: 20px; line-height: 1.2; font-weight: 500; letter-spacing: -0.03em; }
 .rack__attention strong span { color: var(--fui-warn, #f8c146); }
 .rack__attention p { margin: 6px 0 0; color: var(--rack-muted); font-size: 12px; }
+.rack__attention p:first-child { margin-top: 0; }
+/* With no summary beside it the allowance has the row to itself: one line of profiles, not two.
+   Each number sits against its own label there. Pushed to its cell's far edge, as in the two
+   narrow columns, it lands beside the NEXT profile's label and reads as that one's. */
+.rack__weekly:only-child { max-width: none; }
+.rack__weekly:only-child .rack__weekly-profiles { grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); }
+.rack__weekly:only-child .rack__weekly-profile b { margin-left: 0; }
 .rack__create-toggle { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--rack-muted) 40%, transparent); border-radius: 6px; background: var(--rack-raised); color: var(--rack-text); font: inherit; cursor: pointer; }
-.rack__launch-options { padding: 12px 2px 4px; }
-.rack__section-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 10px 0; font-size: 12px; color: var(--rack-muted); }
+.rack__launch-options { padding: 10px 2px 4px; }
 .rack__profiles { padding: 8px; background: var(--rack-raised); border-radius: 6px; }
 .rack__profiles p { font-size: 12px; margin: 5px 0 10px; }
 .rack__profile-setting { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
 .rack__profile-setting small { margin-left: 6px; color: var(--rack-muted); }
 .rack__devices { border-top: 1px solid var(--rack-raised); padding-top: 8px; max-height: 35%; min-height: 36px; }
-.rack .row--directory { margin-top: 0; padding: 7px 6px 4px calc(var(--rack-mark-w) + 11px); border-bottom: 0;
-    color: var(--color-accent-green, #a9e2c9); font-size: 15px; font-weight: 550; }
-.row__directory-toggle { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0;
-    padding: 4px 6px; margin-left: -6px; border: 0; border-radius: 5px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+/* A directory heading starts where its rows' marks start and ends where their last column ends,
+   a size above the session names it gathers. The toggle's own padding is taken back on both sides. */
+.rack .row--directory { margin-top: 0; padding: 9px 6px 4px; border-bottom: 0;
+    color: var(--color-accent-green, #a9e2c9); font-size: 17px; font-weight: 600; }
+.row__directory-toggle { display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0;
+    padding: 4px 6px; margin: 0 -6px; border: 0; border-radius: 5px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .row__directory-toggle:hover:not(:disabled) { background: color-mix(in srgb, currentColor 8%, transparent); box-shadow: inset 2px 0 currentColor; }
 .row__directory-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row__directory-count { margin-left: auto; font-size: 12px; opacity: 0.75; }
@@ -3544,6 +3678,6 @@ html:not(.fui-motion-off) .rack__update-dot--busy { animation: rack-update-busy 
 .rack__update-text { min-width: 0; overflow-wrap: anywhere; letter-spacing: 0.02em; }
 .rack__update .fui-btn { flex: 0 0 auto; }
 .rack__icon svg { width: 14px; height: 14px; fill: currentColor; }
-/* LABEL: a glyph sized to sit level with the ▶ / ✕ text beside it. */
+/* LABEL: a glyph sized to sit level with the ✕ text beside it. */
 .rack__icon.row__btn--label svg { width: 12px; height: 12px; }
 </style>

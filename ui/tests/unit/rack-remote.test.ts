@@ -262,3 +262,18 @@ test('page_bridge_origin: the page\'s own origin, unless an allowed ?bridge= nam
     assert.equal(page_bridge_origin(page('http://localhost:5173/review.html?bridge=https://evil.example'), []), null);
     assert.equal(page_bridge_origin({ protocol: 'file:', origin: 'null', search: '' }, []), null);
 });
+
+test('page_bridge_origin: a page opened by bare name talks to the bridge the rack remembers', () => {
+    const page = (href: string) => {
+        const url = new URL(href);
+        return { protocol: url.protocol, origin: url.origin, search: url.search };
+    };
+    const remembered = { ttyd_origin: 'http://127.0.0.1:7681', bridge_origin: 'http://127.0.0.1:7682' };
+    // The rack on a dev server opens `settings.html#setup`: no query, and the dev server is no bridge.
+    assert.equal(page_bridge_origin(page('http://localhost:5174/settings.html#setup'), [], remembered), 'http://127.0.0.1:7682');
+    // A named bridge still wins, and a refused one is still refused rather than swapped for the remembered one.
+    assert.equal(page_bridge_origin(page('http://localhost:5174/review.html?bridge=http://127.0.0.1:7791'), [], remembered), 'http://127.0.0.1:7791');
+    assert.equal(page_bridge_origin(page('http://localhost:5174/review.html?bridge=https://evil.example'), [], remembered), null);
+    // Nothing remembered: the page's own origin, as a bridge-served page has always had it.
+    assert.equal(page_bridge_origin(page('http://127.0.0.1:7682/settings.html'), [], null), 'http://127.0.0.1:7682');
+});
