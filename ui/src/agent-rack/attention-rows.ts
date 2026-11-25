@@ -31,3 +31,16 @@ export function attention_rows(rows: readonly RackRow[], asks: (row: RackRow) =>
             focused: false, actions: [], ...(index === 3 ? { complete: true } : {}) }, ...band.groups.flat()];
     }), ...other];
 }
+
+/** Fold only the service band, including its notes. Services that need attention stay visible
+ * in Needs you. Call after family folding, and bypass it while searching or filtering stars. */
+export function fold_services(rows: readonly RackRow[], open: boolean): RackRow[] {
+    let in_services = false;
+    return rows.filter((row) => {
+        if (row.kind === 'cohort') {
+            in_services = row.cohort === 'Services';
+            return true;
+        }
+        return open || !in_services || (row.kind !== 'session' && row.kind !== 'note');
+    });
+}

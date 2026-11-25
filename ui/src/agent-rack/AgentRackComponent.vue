@@ -24,6 +24,7 @@ import { defineAsyncComponent, computed, nextTick, onMounted, onUnmounted, ref, 
 import { useArmedAction } from '../composables/useArmedAction.ts';
 import {
     build_rack_rows,
+    cohort_label_for,
     hold_row_order,
     rack_row_key,
     type RackActionId,
@@ -126,7 +127,7 @@ import {
 } from './family-fold.ts';
 import IslandGlyph from './IslandGlyph.vue';
 import LaunchDirectorySettings from './LaunchDirectorySettings.vue';
-import { attention_rows } from './attention-rows.ts';
+import { attention_rows, fold_services } from './attention-rows.ts';
 import IslandMark from './IslandMark.vue';
 import { auto_branch } from './auto-branch.ts';
 import { chat_query, focus_snippet, highlight_terms, search_rack_rows, starred_rack_rows } from './rack-search.ts';
@@ -158,6 +159,21 @@ const settings_open = ref(false);
 const launch_open = ref(false);
 const profiles_open = ref(false);
 const directories_open = ref(false);
+const DENSITY_KEY = 'tldrack:rack-density';
+const SERVICES_OPEN_KEY = 'tldrack:rack-services-open';
+function read_sidebar_choice(key: string): string | null {
+    try { return localStorage.getItem(key); } catch { return null; }
+}
+const density = ref(read_sidebar_choice(DENSITY_KEY) === 'comfortable' ? 'comfortable' : 'compact');
+const services_open = ref(read_sidebar_choice(SERVICES_OPEN_KEY) !== '0');
+function save_sidebar_choice(key: string, value: string): void {
+    try { localStorage.setItem(key, value); } catch { /* The choice still lasts this page. */ }
+}
+watch(density, (value) => save_sidebar_choice(DENSITY_KEY, value));
+watch(services_open, (value) => save_sidebar_choice(SERVICES_OPEN_KEY, value ? '1' : '0'));
+// Search and stars reveal folded bands, just as they reveal folded families.
+const services_expanded = computed(() => services_open.value || !!session_search.value.trim() || starred_only.value);
+
 function toggle_launch(): void {
     launch_open.value = !launch_open.value;
     close_fork();
@@ -268,6 +284,8 @@ function toggle_complete(): void {
     }
 }
 function on_storage(event: StorageEvent): void {
+    if (event.key === DENSITY_KEY || event.key === null) density.value = read_sidebar_choice(DENSITY_KEY) === 'comfortable' ? 'comfortable' : 'compact';
+    if (event.key === SERVICES_OPEN_KEY || event.key === null) services_open.value = read_sidebar_choice(SERVICES_OPEN_KEY) !== '0';
     if (event.key === COMPLETE_OPEN_KEY) complete_open.value = read_complete_open();
     if (event.key === MEMORY_OPEN_KEY) memory_open.value = event.newValue === '1';
     if (event.key === JOBS_OPEN_KEY) jobs_open.value = event.newValue === '1';
@@ -294,6 +312,10 @@ const rows = computed<RackRow[]>(() => {
         max_sessions: data.sessions.length,
     });
 });
+
+/** Project naming: owned by `multi-terminal-layout.ts` — see `cohort_label_for`. */
+const row_directories = computed(() => new Map((payload.value?.sessions ?? []).map((session) =>
+    [session.session, { label: cohort_label_for(session), path: session.cwd ?? session.repo ?? '' }])));
 
 /**
  * The row's state mark: an emoji (`TERMINAL_STATUS_FLAGS.state_emoji`, the
@@ -1433,7 +1455,7 @@ const shown_rows = computed<RackRow[]>(() => {
     const base = starred_only.value ? starred_rack_rows(ordered) : ordered;
     if (session_search.value.trim()) return search_rack_rows(base, session_search.value, chat_matches.value);
     if (starred_only.value) return base;
-    return fold_rows(ordered, folded.value, asks_now)
+    return fold_services(fold_rows(ordered, folded.value, asks_now), services_open.value)
         .filter((row) => complete_open.value || !row.complete || row.kind === 'cohort');
 });
 // A suggested next step that reached the screen is reported `shown`, once per hash (§ suggested next step).
@@ -1681,7 +1703,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <div class="rack fui-panel">
+    <div :class="['rack fui-panel', { 'rack--compact': density === 'compact' }]">
         <div class="rack__body">
         <header class="rack__head">
             <span class="fui-techtext rack__title">Rack <span class="rack__session-count">{{ payload?.sessions.filter(session => session.live).length ?? 0 }} sessions</span></span>
@@ -1733,6 +1755,12 @@ onUnmounted(() => {
                 <button type="button" class="fui-btn"
                     title="Every setting on one page: setup, what the bridge runs, what this browser draws (opens a window)"
                     @click="open_settings()">ALL SETTINGS</button>
+            </div>
+            <div class="rack__render">
+                <label class="fui-techtext rack__render-label" for="rack-density">SESSION DENSITY</label>
+                <select id="rack-density" v-model="density" class="rack__render-select">
+                    <option value="compact">Compact</option><option value="comfortable">Comfortable</option>
+                </select>
             </div>
             <div v-if="render_options" class="rack__render">
                 <span class="fui-techtext rack__render-label">FONT</span>
@@ -2061,9 +2089,7 @@ onUnmounted(() => {
         <!-- THE LEDGER GRID. The list is the grid and every session row a
              subgrid, so the trailing CTX and PROFILE columns are shared by every
              row: a value there sits at one x however much the row carries before
-             it. The actions live INSIDE the name cell for the same reason: beside
-             the profile chip and hidden by opacity they would still take width,
-             and the chip would move with each row's button count. -->
+             it. Action placement: owned by `AgentRackComponent.vue` — see the `.row__footer` note there. -->
         <ul
             v-else
             :class="['rack__list', { 'rack__list--emoji': use_state_emoji, 'rack__list--profiles': show_who_column }]"
@@ -2074,7 +2100,7 @@ onUnmounted(() => {
             <li
                 v-for="row in shown_rows"
                 :key="rack_row_key(row)"
-                :class="['row', `row--${row.kind}`, { 'row--focused': row.focused, 'row--dim': row.dim, 'row--frozen': frozen, 'row--child': (row.depth ?? 0) > 0, 'row--family': (row.child_count ?? 0) > 0 }]"
+                :class="['row', `row--${row.kind}`, { 'row--service': shows_service_mark(row.session, row.state), 'row--focused': row.focused, 'row--dim': row.dim, 'row--frozen': frozen, 'row--child': (row.depth ?? 0) > 0, 'row--family': (row.child_count ?? 0) > 0 }]"
                 :style="family_depth_style(row)"
                 @click="row.kind === 'session' && !row.dim && row.session && editing !== row.session ? send('select', row.session) : null"
                 @contextmenu="row.kind === 'session' && !row.dim && row.session
@@ -2196,19 +2222,6 @@ onUnmounted(() => {
                                 @click.stop="start_rename(row.session)"
                             >{{ row.auto_name || row.session }}</button>
                             <span v-else class="row__name row__name--static">{{ row.auto_name || row.session }}</span>
-                            <!-- The operator's star, beside the name it marks. Solid and always
-                                 drawn once set; an outline on hover or the focused row before.
-                                 `.stop`, or the click also selects the row. -->
-                            <button
-                                v-if="shows_star(row)"
-                                type="button"
-                                :class="['row__star', 'rack__icon', { 'row__star--on': row.starred }]"
-                                :disabled="frozen"
-                                :aria-pressed="row.starred === true"
-                                :title="star_title(row.starred === true)"
-                                :aria-label="star_title(row.starred === true)"
-                                @click.stop="toggle_star(row)"
-                            ><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="row.starred ? mdiStar : mdiStarOutline" /></svg></button>
                             <!-- Beside the NAME, not out by the actions: the point is
                                  to read "this agent is not in your checkout" with the
                                  name it belongs to. Owner: `IslandMark.vue`. -->
@@ -2233,65 +2246,79 @@ onUnmounted(() => {
                             </span>
                         </template>
 
-                        <small class="row__status">{{ row.dim ? 'Closed' : asks_now(row) ? 'Needs you' : row.complete ? 'Completed' : row.state === 'busy' || row.state === 'background' ? 'Working' : state_label(row.state ?? 'unknown') }}</small>
-                        <span v-if="row.actions.length && editing !== row.session" class="row__actions">
-                            <!-- PR / CLEAN. Deliberately NOT a `RackActionId`: that union
-                                 is the per-row action set, where `kill` must stay last
-                                 (pinned by a test). Only this surface needs it.
-                                 Label, title and press: `rack-view.ts::worktree_button_view`. -->
-                            <button
-                                v-if="row.session && worktree_buttons.get(row.session)
-                                    && !create_view(row.session)"
-                                :class="['row__btn', 'row__btn--pr', {
-                                    'row__btn--armed': worktree_armed(row.session),
-                                    'row__btn--pr-open': worktree_buttons.get(row.session)!.tone === 'open',
-                                    'row__btn--danger': worktree_buttons.get(row.session)!.tone === 'error',
-                                }]"
-                                :disabled="frozen || worktree_buttons.get(row.session)!.press === 'none'"
-                                :title="worktree_buttons.get(row.session)!.title"
-                                @click.stop="on_worktree_click(row.session)"
-                            >{{ worktree_buttons.get(row.session)!.label }}</button>
-                            <template v-for="action in visible_actions(row)" :key="action">
-                                <!-- LABEL, beside the ✕: grade this session's marks and its name on the REVIEW page.
-                                     Not a `RackActionId` for the PR button's reason above. -->
+                        <span :class="['row__footer', { 'row__footer--service': shows_service_mark(row.session, row.state) }]">
+                            <small v-if="!shows_service_mark(row.session, row.state) || !detail_segments(row).length" class="row__status">{{ row.dim ? 'Closed' : asks_now(row) ? 'Needs you' : row.complete ? 'Completed' : row.state === 'busy' || row.state === 'background' ? 'Working' : state_label(row.state ?? 'unknown') }}<span
+                                v-if="row.session && !shows_service_mark(row.session, row.state) && row_directories.get(row.session)?.label"
+                                class="row__directory" :title="row_directories.get(row.session)!.path"> · {{ row_directories.get(row.session)!.label }}</span></small>
+                            <span v-if="row.actions.length && editing !== row.session" class="row__actions">
                                 <button
-                                    v-if="action === 'kill' && can_label(row)"
+                                    v-if="shows_star(row)"
                                     type="button"
-                                    class="row__btn row__btn--label rack__icon"
-                                    :title="label_title(row)"
-                                    :aria-label="label_title(row)"
-                                    @click.stop="open_label(row)"
-                                ><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiThumbsUpDown" /></svg></button>
-                                <button
-                                    :class="['row__btn', {
-                                        'row__btn--danger': action === 'kill',
-                                        'row__btn--armed': action === 'kill' && armed_kill === row.session,
-                                    }]"
+                                    :class="['row__star', 'rack__icon', { 'row__star--on': row.starred }]"
                                     :disabled="frozen"
-                                    :title="action_title(action, row)"
-                                    @click.stop="action === 'kill' ? on_kill_click(row) : send('select', row.session)"
-                                >
-                                    <template v-if="action === 'kill'">
-                                        {{ armed_kill === row.session ? 'KILL?' : '✕' }}
-                                    </template>
-                                    <template v-else>▶</template>
-                                </button>
-                            </template>
+                                    :aria-pressed="row.starred === true"
+                                    :title="star_title(row.starred === true)"
+                                    :aria-label="star_title(row.starred === true)"
+                                    @click.stop="toggle_star(row)"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="row.starred ? mdiStar : mdiStarOutline" /></svg></button>
+                                <!-- PR / CLEAN. Deliberately NOT a `RackActionId`: that union
+                                     is the per-row action set, where `kill` must stay last
+                                     (pinned by a test). Only this surface needs it.
+                                     Label, title and press: `rack-view.ts::worktree_button_view`. -->
+                                <button
+                                    v-if="row.session && worktree_buttons.get(row.session)
+                                        && !create_view(row.session)"
+                                    :class="['row__btn', 'row__btn--pr', {
+                                        'row__btn--armed': worktree_armed(row.session),
+                                        'row__btn--pr-open': worktree_buttons.get(row.session)!.tone === 'open',
+                                        'row__btn--danger': worktree_buttons.get(row.session)!.tone === 'error',
+                                    }]"
+                                    :disabled="frozen || worktree_buttons.get(row.session)!.press === 'none'"
+                                    :title="worktree_buttons.get(row.session)!.title"
+                                    @click.stop="on_worktree_click(row.session)"
+                                >{{ worktree_buttons.get(row.session)!.label }}</button>
+                                <template v-for="action in visible_actions(row)" :key="action">
+                                    <!-- LABEL, beside the ✕: grade this session's marks and its name on the REVIEW page.
+                                         Not a `RackActionId` for the PR button's reason above. -->
+                                    <button
+                                        v-if="action === 'kill' && can_label(row)"
+                                        type="button"
+                                        class="row__btn row__btn--label rack__icon"
+                                        :title="label_title(row)"
+                                        :aria-label="label_title(row)"
+                                        @click.stop="open_label(row)"
+                                    ><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="mdiThumbsUpDown" /></svg></button>
+                                    <button
+                                        :class="['row__btn', {
+                                            'row__btn--danger': action === 'kill',
+                                            'row__btn--armed': action === 'kill' && armed_kill === row.session,
+                                        }]"
+                                        :disabled="frozen"
+                                        :title="action_title(action, row)"
+                                        @click.stop="action === 'kill' ? on_kill_click(row) : send('select', row.session)"
+                                    >
+                                        <template v-if="action === 'kill'">
+                                            {{ armed_kill === row.session ? 'KILL?' : '✕' }}
+                                        </template>
+                                        <template v-else>▶</template>
+                                    </button>
+                                </template>
+                            </span>
                         </span>
                     </span>
 
                     <!-- CTX: context left, the number only — the column says what
                          it is, the title says it in words. Amber ≤25, red ≤10. -->
                     <span
-                        v-if="role_segment(row, 'context')"
+                        v-if="!shows_service_mark(row.session, row.state) && role_segment(row, 'context')"
                         :class="['row__ctx-col', `row__ctx--${role_segment(row, 'context')!.tone}`]"
                         :title="`${role_segment(row, 'context')!.text.replace(' left', '')} of the context window left`"
                     >{{ role_segment(row, 'context')!.text.replace(' left', '') }}</span>
-                    <span v-else class="row__ctx-col" />
+                    <span v-else-if="!shows_service_mark(row.session, row.state)" class="row__ctx-col" />
 
                     <!-- PROFILE: every row, so the column reads top to bottom;
                          `—` is "no account on record", never a blank. -->
-                    <span v-if="show_who_column" class="row__who">
+                    <span v-if="show_who_column && !shows_service_mark(row.session, row.state)" class="row__who">
                         <!-- MODEL: every live row, when the rack is wide enough
                              (the container query on `.row__model`). -->
                         <span v-if="row_model(row)" class="row__model" :title="`Running ${row_model(row)}`">{{ row_model(row) }}</span>
@@ -2423,6 +2450,12 @@ onUnmounted(() => {
                         @click.stop="delete_all_complete"
                     >{{ complete_delete_armed ? `CLOSE ${complete_sessions.length}?` : 'CLOSE ALL' }}</button>
                 </div>
+                <button v-else-if="row.kind === 'cohort' && row.cohort === 'Services'" type="button"
+                    class="row__fold" :aria-expanded="services_expanded"
+                    :disabled="!!session_search.trim() || starred_only"
+                    @click.stop="services_open = !services_open">
+                    <span>{{ row.text }}</span><span aria-hidden="true">{{ services_expanded ? '▾' : '▸' }}</span>
+                </button>
                 <span v-else class="row__text">{{ row.text }}</span>
                 <FamilyFoldLine v-if="row.kind === 'session' && row.node_id && fold_readouts.has(row.node_id)"
                     class="row__line2" :readout="fold_readouts.get(row.node_id)!" />
@@ -3095,13 +3128,26 @@ onUnmounted(() => {
 }
 
 .row__text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The name cell: indent, family chips, ▶, the name, its island, the detail,
-   and — on hover / the focused row — the actions at its end. */
+/* The name cell holds identity and detail above its status and controls. */
 .row__main { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
-.row__status { flex-basis: 100%; order: 2; font-size: 12px; color: var(--rack-muted); padding-left: var(--rack-depth-indent); }
+/* Reserve controls on the status line even at rest: hover and keyboard focus change
+   only opacity, never the row's geometry. Service readouts share the title line when they fit. */
+.row__footer { display: flex; flex: 1 0 100%; align-items: center; gap: 7px; min-width: 0; }
+.row__status { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--rack-muted); padding-left: var(--rack-depth-indent); }
+.row--service .row__main { grid-column: 2 / -1; }
+.row__directory { overflow-wrap: anywhere; }
+.row__footer--service { flex: 0 0 auto; margin-left: auto; }
+.row--service .row__name { overflow-wrap: anywhere; white-space: normal; }
+.rack--compact .row--session { padding-top: 3px; padding-bottom: 3px; }
+.rack--compact .row__main { row-gap: 1px; }
+.rack--compact .row--cohort { margin-top: 4px; padding-top: 4px; padding-bottom: 4px; }
+.rack--compact .rack__body { gap: 8px; }
+.rack--compact .rack__attention { padding-top: 2px; padding-bottom: 4px; }
+@media (pointer: coarse) { .rack--compact .row--session { min-height: 44px; } }
 .row__indent { flex: 0 0 auto; width: var(--rack-depth-indent); }
 /* After the name: muted and smaller, so the name is what the eye lands on. */
 .row--session .row__text { flex-basis: 100%; order: 3; font-size: 12px; color: var(--rack-muted); }
+.row--service .row__text { flex: 0 1 auto; order: 0; white-space: normal; overflow-wrap: anywhere; }
 .row--session .row__text:empty { display: none; }
 .row__ctx-col { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; min-width: 4ch; white-space: nowrap; }
 
@@ -3147,7 +3193,7 @@ onUnmounted(() => {
    is the rack's reading of a session, and this one mark is the operator's own. */
 .rack { --rack-star: #ff9ad5; }
 .row__star {
-    display: none;
+    display: inline-flex;
     flex: 0 0 auto;
     width: 24px;
     height: 24px;
@@ -3158,7 +3204,6 @@ onUnmounted(() => {
     border-radius: 2px;
     color: var(--rack-muted);
 }
-.row:hover .row__star, .row--focused .row__star, .row__star--on { display: inline-flex; }
 .row__star--on { color: var(--rack-star); }
 .row__star:hover:not(:disabled), .row__star:focus-visible { color: var(--rack-star); border-color: currentColor; outline: none; }
 @media (pointer: coarse) {
@@ -3356,11 +3401,11 @@ span.mark__open-work { cursor: default; }
     letter-spacing: 0.04em;
 }
 
-/* NOT `opacity: 0`: hidden actions that keep their width make the profile
-   label drift row to row. `display: none` takes no width, and when they
-   show they squeeze the muted detail text inside the name cell — never a column. */
-.row__actions { display: none; gap: 4px; flex: 0 0 auto; margin-left: auto; }
-.row:hover .row__actions, .row--focused .row__actions { display: flex; }
+/* Stable control space: owned by `AgentRackComponent.vue` — see the `.row__footer` note there. */
+.row__actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; margin-left: auto; }
+.row__actions > * { opacity: 0; }
+.row:hover .row__actions > *, .row:focus-within .row__actions > *, .row--focused .row__actions > *, .row__actions > .row__star--on { opacity: 1; }
+@media (hover: none) { .row__actions > * { opacity: 1; } }
 
 /* PR / CLEAN sit in the same row strip as ▶ / ✕ but act on the BRANCH (push it,
    or clear it away once landed), so they get their own hue rather than the blue
@@ -3416,7 +3461,7 @@ span.mark__open-work { cursor: default; }
 .rack__profile-setting { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
 .rack__profile-setting small { margin-left: 6px; color: var(--rack-muted); }
 .rack__devices { border-top: 1px solid var(--rack-raised); padding-top: 8px; max-height: 35%; min-height: 36px; }
-.row__name { font-weight: 550; }
+.row__name { font-size: 15px; font-weight: 550; }
 .row__who, .row__ctx-col { font-size: 11px; }
 .row__who { color: var(--rack-muted); }
 .rack :is(button, input):focus-visible { outline: 2px solid var(--color-accent-green, #93ffd4); outline-offset: 2px; }

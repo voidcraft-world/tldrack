@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { build_rack_rows, type RackSession } from '../../src/engine/terminal/multi-terminal-layout.ts';
-import { attention_rows } from '../../src/agent-rack/attention-rows.ts';
+import { attention_rows, fold_services } from '../../src/agent-rack/attention-rows.ts';
 import { row_asks, fold_rows } from '../../src/agent-rack/family-fold.ts';
 import { search_rack_rows } from '../../src/agent-rack/rack-search.ts';
 
@@ -42,4 +42,21 @@ test('dead attention is not an ask and every row survives regrouping', () => {
     assert.equal(grouped.find((row) => row.kind === 'session')?.session, 'reading');
     assert.deepEqual(grouped.filter((row) => row.kind !== 'cohort').map((row) => row.text).sort(), original.filter((row) => row.kind !== 'cohort').map((row) => row.text).sort());
     assert.deepEqual(attention_rows(rows_for([]), asks), rows_for([]));
+});
+
+test('folding services keeps their count, reveals them on demand, and never hides an ask', () => {
+    const rows = attention_rows(rows_for([
+        { session: 'svc-web', live: true, state: 'unknown' },
+        { session: 'svc-failed', live: true, state: 'attention', message: 'Check server' },
+        { session: 'svc-closed', live: false, state: 'unknown' },
+        { session: 'working', live: true, state: 'busy' },
+        { session: 'finished', live: true, state: 'free', work_done: { p: 0.1 } },
+    ]), asks);
+    const folded = fold_services(rows, false);
+    assert.equal(folded.find((row) => row.cohort === 'Services')?.text, 'Services · 2');
+    assert.ok(!folded.some((row) => row.session === 'svc-web' || row.session === 'svc-closed'));
+    assert.ok(folded.some((row) => row.session === 'svc-failed'));
+    assert.ok(folded.some((row) => row.session === 'working'));
+    assert.ok(folded.some((row) => row.session === 'finished'));
+    assert.deepEqual(fold_services(rows, true), rows);
 });
