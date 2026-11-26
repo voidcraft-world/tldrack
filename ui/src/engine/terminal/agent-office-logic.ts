@@ -3,10 +3,17 @@
  *
  * WHY AN OFFICE. A map that MOVES an agent to the zone it works in answers
  * "which zone", but its busy zones crowd and their markers stack, which is
- * exactly when they need reading. Here an agent never leaves its desk: what it
- * is doing is drawn ON the desk (the screen's word, the lamp's hue, standing up
- * when it wants you). Positions therefore change only when a session appears or
- * disappears: they are STABLE, never sorted by urgency.
+ * exactly when they need reading. Here what an agent is doing is drawn ON its
+ * desk (the screen's word, the lamp's hue, standing up when it wants you).
+ *
+ * BANDS. A room is cut into up to three: NEEDS YOU, WORKING, IDLE
+ * (`OFFICE_BANDS`), side by side, each a block of desks of its own. A screen
+ * faces only its seat, so in a room where the working agents sat wherever their
+ * names sorted, "who is working here" took an orbit of the camera to answer.
+ * Now it is one glance at one corner of the room. An agent therefore MOVES when
+ * its state crosses a band, and only then: inside a band the order is by name,
+ * never by urgency, so a room with no change of state does not shuffle. An empty
+ * band takes no floor; the rest grow into it.
  *
  * ROOMS are the teams:
  *   • a spawn FAMILY (a lead and the agents it started, `session-families.ts`)
@@ -20,6 +27,7 @@
  * and the scene (`agent-office-scene.ts`) scales them. Tested by
  * `tests/unit/agent-office-logic.test.ts`.
  */
+import { session_status_emoji } from './session-status-emoji.ts';
 import { cohort_label_for, type RackSession, type SessionIsland } from './multi-terminal-layout.ts';
 import { session_families, flatten_family, type SessionNode } from './session-families.ts';
 import { is_service_session, SERVICES_COHORT_LABEL } from './service-sessions.ts';
@@ -42,6 +50,8 @@ export interface OfficeAgent {
     session: string;
     /** `auto_name` when the bridge has one, else the tmux name — what the rack prints. */
     label: string;
+    /** Rack status mark for agents; services keep their plain names. */
+    emoji: string;
     state: TerminalDisplayState;
     pose: OfficePose;
     /** The monitor's word; '' = screen off. */
@@ -68,6 +78,38 @@ export interface OfficeDesk {
 
 export type OfficeRoomKind = 'team' | 'project' | 'services';
 
+/** Which band of its room an agent sits in. */
+export type OfficeBandKey = 'waiting' | 'working' | 'idle';
+
+/** The bands, in the order a room draws them, with the words on the floor. NEEDS YOU first:
+ *  the agent that wants you is the reason to look at the room at all. */
+export const OFFICE_BANDS: readonly { key: OfficeBandKey; label: string }[] = [
+    { key: 'waiting', label: 'NEEDS YOU' },
+    { key: 'working', label: 'WORKING' },
+    { key: 'idle', label: 'IDLE' },
+];
+
+/**
+ * An agent's band. WORKING is "something of this agent's is running": a turn in flight, or a
+ * turn that ended with work still going (`background`, whose screen stays on for that reason).
+ */
+export function office_band(agent: Pick<OfficeAgent, 'pose' | 'state'>): OfficeBandKey {
+    if (agent.pose === 'waiting') return 'waiting';
+    return agent.pose === 'working' || agent.pose === 'thinking' || agent.state === 'background' ? 'working' : 'idle';
+}
+
+/** One band of a room, as placed: its floor, in office units. */
+export interface OfficeBand {
+    key: OfficeBandKey;
+    label: string;
+    count: number;
+    /** Centre and full extents. The band runs the room's whole desk depth. */
+    x: number;
+    z: number;
+    width: number;
+    depth: number;
+}
+
 export interface OfficeRoom {
     key: string;
     /** Uppercase, ready to draw. */
@@ -79,6 +121,9 @@ export interface OfficeRoom {
     width: number;
     depth: number;
     desks: OfficeDesk[];
+    /** The bands that hold someone, left to right. Empty for the services room: a cabinet
+     *  is machinery, and its state is on its own readout. */
+    bands: OfficeBand[];
 }
 
 export interface OfficeLayout {
@@ -112,6 +157,8 @@ export const OFFICE_GEOMETRY = {
     room_padding: 1.0,
     /** Extra depth along the room's front (+z) edge for its name. */
     label_strip: 1.2,
+    /** Floor between two bands of a room; the divider runs down its middle. */
+    band_gap: 0.9,
     /** Floor between neighbouring rooms. */
     room_gap: 1.4,
     /** Narrower aisle joining services to the agent rooms. */
@@ -163,6 +210,7 @@ function to_agent(entry: RackSession, lead: boolean, focused: string | null): Of
         kind: service ? 'service' : 'agent',
         session: entry.session,
         label: service ? entry.session : entry.auto_name || entry.session,
+        emoji: service ? '' : entry.status_emoji ?? session_status_emoji(entry, 0),
         state: entry.state,
         pose: service ? 'idle' : office_pose(entry.state, zone),
         screen: service ? (entry.state === 'unknown' ? 'SERVICE' : entry.state.toUpperCase()) : office_screen(entry.state, zone),
@@ -281,8 +329,8 @@ function desk_slots(count: number): { x: number; z: number; facing: 1 | -1 }[] {
     return slots;
 }
 
-/** A room's full extents for `count` desks. */
-export function room_extent(count: number): { width: number; depth: number } {
+/** The floor one block of `count` desks covers, seat to seat: no padding, no strips. */
+function desk_block_extent(count: number): { width: number; depth: number } {
     const g = OFFICE_GEOMETRY;
     const per_pod = g.pod_columns * 2;
     const columns = Math.min(g.pod_columns, Math.max(1, Math.ceil(count / 2)));
@@ -290,9 +338,29 @@ export function room_extent(count: number): { width: number; depth: number } {
     // A pod spans seat to seat across its spine (0.5 = half a chair). A lone desk
     // is centred on its own, so it spans its seat either side.
     const pod_depth = count <= 1 ? 2 * (g.seat_offset_z + 0.5) : 2 * (g.desk_offset_z + g.seat_offset_z + 0.5);
+    return { width: columns * g.desk_pitch_x, depth: (pods - 1) * g.pod_pitch_z + pod_depth };
+}
+
+/** A room's agents, split into the bands that hold someone, in `OFFICE_BANDS` order. Inside a
+ *  band the room's own order stands (a team's lead first, then by name). */
+export function band_agents(agents: readonly OfficeAgent[]): { key: OfficeBandKey; label: string; agents: OfficeAgent[] }[] {
+    return OFFICE_BANDS
+        .map((band) => ({ ...band, agents: agents.filter((agent) => office_band(agent) === band.key) }))
+        .filter((band) => band.agents.length > 0);
+}
+
+/**
+ * A room's full extents for desks in bands of these sizes (one number: one band). Bands sit
+ * side by side, so the room is as wide as their blocks plus the gaps between them, and as
+ * deep as the deepest.
+ */
+export function room_extent(counts: number | readonly number[]): { width: number; depth: number } {
+    const g = OFFICE_GEOMETRY;
+    const blocks = (typeof counts === 'number' ? [counts] : counts.filter((count) => count > 0)).map(desk_block_extent);
+    const filled = blocks.length ? blocks : [desk_block_extent(0)];
     return {
-        width: columns * g.desk_pitch_x + 2 * g.room_padding,
-        depth: (pods - 1) * g.pod_pitch_z + pod_depth + 2 * g.room_padding + g.label_strip,
+        width: filled.reduce((sum, block) => sum + block.width, 0) + (filled.length - 1) * g.band_gap + 2 * g.room_padding,
+        depth: Math.max(...filled.map((block) => block.depth)) + 2 * g.room_padding + g.label_strip,
     };
 }
 
@@ -306,16 +374,20 @@ export function room_extent(count: number): { width: number; depth: number } {
 export function build_office(sessions: readonly RackSession[], focused: string | null = null): OfficeLayout {
     const g = OFFICE_GEOMETRY;
     const drafts = office_rooms(sessions, focused);
-    const sized = drafts.map((draft) => ({
-        draft,
-        ...(draft.kind === 'services' ? server_room_extent(draft.agents.length) : room_extent(draft.agents.length)),
-    }));
+    const sized = drafts.map((draft) => {
+        const bands = draft.kind === 'services' ? [] : band_agents(draft.agents);
+        return {
+            draft,
+            bands,
+            ...(draft.kind === 'services' ? server_room_extent(draft.agents.length) : room_extent(bands.map((band) => band.agents.length))),
+        };
+    });
     const area = sized.reduce((sum, room) => sum + room.width * room.depth, 0);
     const widest = sized.reduce((max, room) => Math.max(max, room.width), 0);
     const row_budget = Math.max(widest, Math.sqrt(area) * 1.6);
 
     // Shelf pack: left to right, wrapping to a new row past the budget.
-    type Placed = { draft: RoomDraft; width: number; depth: number; left: number; top: number };
+    type Placed = (typeof sized)[number] & { left: number; top: number };
     const placed: Placed[] = [];
     let cursor_x = 0;
     let row_top = 0;
@@ -343,33 +415,51 @@ export function build_office(sessions: readonly RackSession[], focused: string |
     const total_width = placed.reduce((max, room) => Math.max(max, room.left + room.width), 0);
     const total_depth = placed.reduce((max, room) => Math.max(max, room.top + room.depth), 0);
 
-    const rooms: OfficeRoom[] = placed.map(({ draft, width, depth, left, top }) => {
+    const rooms: OfficeRoom[] = placed.map(({ draft, bands, width, depth, left, top }) => {
         const x = left + width / 2 - total_width / 2;
         const z = top + depth / 2 - total_depth / 2;
-        // Desks sit in the room minus its label strip (the +z edge).
-        const desk_area_z = z - g.label_strip / 2;
-        const slots = draft.kind === 'services' ? server_slots(draft.agents.length) : desk_slots(draft.agents.length);
-        // Centre the desk cluster in the desk area (every room has ≥ 1 desk).
-        const z0 = desk_area_z - (Math.min(...slots.map((s) => s.z)) + Math.max(...slots.map((s) => s.z))) / 2;
-        return {
-            key: draft.key,
-            label: draft.label,
-            kind: draft.kind,
-            x,
-            z,
-            width,
-            depth,
-            desks: draft.agents.map((agent, i) => ({
-                agent,
-                x: x + slots[i].x,
-                z: z0 + slots[i].z,
-                facing: slots[i].facing,
-            })),
+        const base = { key: draft.key, label: draft.label, kind: draft.kind, x, z, width, depth };
+        /** `slots` centred on (`centre_x`, `centre_z`), one desk per agent. */
+        const seat = (agents: readonly OfficeAgent[], slots: { x: number; z: number; facing: 1 | -1 }[], centre_x: number, centre_z: number): OfficeDesk[] => {
+            const z0 = centre_z - (Math.min(...slots.map((s) => s.z)) + Math.max(...slots.map((s) => s.z))) / 2;
+            return agents.map((agent, i) => ({ agent, x: centre_x + slots[i].x, z: z0 + slots[i].z, facing: slots[i].facing }));
         };
+        if (draft.kind === 'services') {
+            // Cabinets sit in the room minus its label strip (the +z edge).
+            return { ...base, desks: seat(draft.agents, server_slots(draft.agents.length), x, z - g.label_strip / 2), bands: [] };
+        }
+        // The room's name occupies the front strip; activity sections use the rest of its floor.
+        const desk_depth = depth - g.label_strip;
+        const desk_area_z = z - g.label_strip / 2;
+        const desks: OfficeDesk[] = [];
+        const placed_bands: OfficeBand[] = [];
+        let band_left = x - width / 2 + g.room_padding;
+        for (const band of bands) {
+            const block = desk_block_extent(band.agents.length);
+            const centre_x = band_left + block.width / 2;
+            desks.push(...seat(band.agents, desk_slots(band.agents.length), centre_x, desk_area_z));
+            placed_bands.push({
+                key: band.key, label: band.label, count: band.agents.length,
+                // Half a gap either side, so neighbours meet at the divider; the outer bands run to the wall.
+                x: centre_x, z: z - g.label_strip / 2, width: block.width + g.band_gap, depth: desk_depth,
+            });
+            band_left += block.width + g.band_gap;
+        }
+        if (placed_bands.length) {
+            const first = placed_bands[0];
+            const last = placed_bands[placed_bands.length - 1];
+            const reach = g.room_padding - g.band_gap / 2;
+            placed_bands[0] = { ...first, x: first.x - reach / 2, width: first.width + reach };
+            const tail = placed_bands.length === 1 ? placed_bands[0] : last;
+            placed_bands[placed_bands.length - 1] = { ...tail, x: tail.x + reach / 2, width: tail.width + reach };
+        }
+        return { ...base, desks, bands: placed_bands };
     });
 
+    // Which band a desk is in is part of where it is: a state that crosses a band re-seats the room.
     const geometry_key = rooms
-        .map((room) => `${room.key}@${room.x.toFixed(2)},${room.z.toFixed(2)}:${room.desks.map((d) => d.agent.session).join(',')}`)
+        .map((room) => `${room.key}@${room.x.toFixed(2)},${room.z.toFixed(2)}:${room.desks.map((d) => d.agent.session).join(',')}`
+            + `:${room.bands.map((band) => `${band.key}${band.count}`).join(',')}`)
         .join('|');
     return {
         rooms,
@@ -381,13 +471,18 @@ export function build_office(sessions: readonly RackSession[], focused: string |
     };
 }
 
-/** The one-line readout for the window's head: `7 agents · 2 want you`. */
+/** How many agents the whole office holds in each band. */
+export function office_band_counts(layout: OfficeLayout): Record<OfficeBandKey, number> {
+    const counts: Record<OfficeBandKey, number> = { waiting: 0, working: 0, idle: 0 };
+    for (const room of layout.rooms) for (const band of room.bands) counts[band.key] += band.count;
+    return counts;
+}
+
+/** The one-line readout for the window's head: `7 agents · 3 working · 2 want you`. */
 export function office_summary(layout: OfficeLayout): string {
-    const waiting = layout.rooms.reduce(
-        (sum, room) => sum + room.desks.filter((desk) => desk.agent.pose === 'waiting').length,
-        0,
-    );
+    const { waiting, working } = office_band_counts(layout);
     const agents = `${layout.agents} ${layout.agents === 1 ? 'agent' : 'agents'}`;
     const services = layout.services ? ` · ${layout.services} ${layout.services === 1 ? 'service' : 'services'}` : '';
-    return `${agents}${services}${waiting > 0 ? ` · ${waiting} want${waiting === 1 ? 's' : ''} you` : ''}`;
+    return `${agents}${services}${working > 0 ? ` · ${working} working` : ''}`
+        + `${waiting > 0 ? ` · ${waiting} want${waiting === 1 ? 's' : ''} you` : ''}`;
 }

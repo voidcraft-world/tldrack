@@ -12,6 +12,7 @@ import {
     type OfficeMessage,
     type OfficeSource,
 } from '../../src/engine/terminal/agent-office-link.ts';
+import { build_office } from '../../src/engine/terminal/agent-office-logic.ts';
 import type { RackSession } from '../../src/engine/terminal/multi-terminal-layout.ts';
 import type { WorktreeRow } from '../../src/engine/terminal/rack-view.ts';
 
@@ -47,6 +48,7 @@ describe('the projection a rack relays', () => {
             session: 'a',
             state: 'busy',
             live: true,
+            status_emoji: '🤔',
             auto_name: 'Fix it',
             model_label: 'opus',
             context_left: 40,
@@ -307,4 +309,32 @@ describe('the rack-side relay', () => {
         assert.equal(h.closed(), true);
         assert.equal(h.channel.onmessage, null);
     });
+});
+
+
+test('the office carries the exact rack status mark without its verdict metadata', () => {
+    const cases: [Partial<RackSession>, string][] = [
+        [{ state: 'busy' }, '🤔'], [{ state: 'attention' }, '🙋'], [{ state: 'background' }, '⏳'],
+        [{ state: 'done' }, '💬'], [{ state: 'free' }, '○'], [{ state: 'free', fresh: true }, '🆕'],
+        [{ state: 'done', work_done: { p: 0.1 } }, '✅'], [{ state: 'free', work_done: { p: 0.1 } }, '☑️'],
+        [{ state: 'done', work_done: { p: 0.1, answer: true } }, '📖'],
+        [{ state: 'done', stop_failure: { error: 'rate_limit', limit: null, resets_at: 200, message: null } }, '🪫'],
+        [{ state: 'done', stop_failure: { error: 'rate_limit', limit: null, resets_at: 50, message: null } }, '🔋'],
+        [{ state: 'free', stop_failure: { error: 'overloaded', limit: null, resets_at: null, message: null } }, '🛑'],
+    ];
+    for (const [over, emoji] of cases) {
+        const projected = office_session(row('a', over), 100);
+        assert.equal(projected.status_emoji, emoji);
+        assert.equal(projected.work_done, undefined);
+        assert.equal(projected.stop_failure, undefined);
+        const message = parse_office_message(JSON.parse(JSON.stringify({ type: 'office:rack', rack: { sessions: [projected] } })));
+        assert.ok(message?.type === 'office:rack');
+        assert.equal(build_office(message.rack.sessions).rooms[0].desks[0].agent.emoji, emoji);
+    }
+    for (const status_emoji of [undefined, null, 4, [], '<script>', '🍃', '🤔'.repeat(400)]) {
+        const message = parse_office_message({ type: 'office:rack', rack: { sessions: [{ ...row('a'), status_emoji }] } });
+        assert.ok(message?.type === 'office:rack');
+        assert.equal(message.rack.sessions[0].status_emoji, undefined);
+        assert.equal(build_office(message.rack.sessions).rooms[0].desks[0].agent.emoji, '🤔');
+    }
 });

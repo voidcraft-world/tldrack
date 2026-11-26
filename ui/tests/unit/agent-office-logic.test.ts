@@ -2,12 +2,16 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     OFFICE_GEOMETRY,
+    band_agents,
     build_office,
     has_desk,
+    office_band,
+    office_band_counts,
     office_pose,
     office_rooms,
     office_screen,
     office_summary,
+    room_extent,
     type OfficeLayout,
 } from '../../src/engine/terminal/agent-office-logic.ts';
 import type { RackSession } from '../../src/engine/terminal/multi-terminal-layout.ts';
@@ -79,7 +83,7 @@ describe('rooms', () => {
         ]);
         assert.equal(rooms[1].label, 'SERVICES');
         assert.equal(rooms[1].agents[1].label, 'svc-docs');
-        assert.ok(rooms[1].agents.every((a) => a.kind === 'service' && !a.lead));
+        assert.ok(rooms[1].agents.every((a) => a.kind === 'service' && !a.lead && a.emoji === ''));
         assert.equal(rooms[0].agents[0].kind, 'agent');
     });
 
@@ -183,14 +187,20 @@ describe('layout', () => {
         }
     });
 
-    test('a state change moves nothing — positions change only with the rack', () => {
+    test('a state that stays in its band moves nothing; one that crosses a band re-seats the room', () => {
+        const place = (layout: OfficeLayout) => desks(layout).map(({ desk }) => [desk.agent.session, desk.x, desk.z, desk.facing]);
         const before = build_office(rack(6));
-        const after = build_office(rack(6, (i) => ({ state: i % 2 ? 'attention' : 'free' })));
-        assert.equal(after.geometry_key, before.geometry_key);
-        assert.deepEqual(
-            desks(after).map(({ desk }) => [desk.agent.session, desk.x, desk.z, desk.facing]),
-            desks(before).map(({ desk }) => [desk.agent.session, desk.x, desk.z, desk.facing]),
-        );
+        // busy with a tool, busy thinking, and a finished turn with work still running: all WORKING.
+        const same_band = build_office(rack(6, (i) => (i % 2
+            ? { state: 'background' }
+            : { activity: { zone: 'thinking', tool: null, detail: null } })));
+        assert.equal(same_band.geometry_key, before.geometry_key);
+        assert.deepEqual(place(same_band), place(before));
+        // free ↔ done: both IDLE.
+        const idle = build_office(rack(6, () => ({ state: 'free' })));
+        assert.equal(build_office(rack(6, (i) => ({ state: i % 2 ? 'done' : 'free' }))).geometry_key, idle.geometry_key);
+        const crossed = build_office(rack(6, (i) => ({ state: i % 2 ? 'attention' : 'free' })));
+        assert.notEqual(crossed.geometry_key, before.geometry_key);
         assert.notEqual(build_office(rack(7)).geometry_key, before.geometry_key);
     });
 
@@ -232,7 +242,9 @@ describe('layout', () => {
     test('service status, model telemetry, focus and input order do not move furniture', () => {
         const sessions = [agent('a'), agent('svc-vite', { model_label: null }), agent('svc-docs')];
         const before = build_office(sessions);
-        const after = build_office([...sessions].reverse().map((row) => ({ ...row, state: 'attention', model_label: 'opus' })), 'svc-vite');
+        // A service's state is on its cabinet: it has no band to cross.
+        const after = build_office([...sessions].reverse().map((row) => ({
+            ...row, state: row.session === 'a' ? row.state : 'attention', model_label: 'opus' })), 'svc-vite');
         assert.equal(after.geometry_key, before.geometry_key);
         const selected = desks(after).find(({ desk }) => desk.agent.focused)?.desk.agent;
         assert.equal(selected?.session, 'svc-vite');
@@ -269,8 +281,85 @@ describe('layout', () => {
 
 test('summary counts the agents that want you', () => {
     const layout = build_office([agent('a', { state: 'attention' }), agent('b'), agent('c', { state: 'attention' })]);
-    assert.equal(office_summary(layout), '3 agents · 2 want you');
+    assert.equal(office_summary(layout), '3 agents · 1 working · 2 want you');
     assert.equal(office_summary(build_office([agent('a', { state: 'attention' })])), '1 agent · 1 wants you');
+    assert.equal(office_summary(build_office([agent('a', { state: 'free' })])), '1 agent');
+});
+
+describe('bands', () => {
+    const mixed = (): RackSession[] => [
+        agent('a-idle', { state: 'free' }),
+        agent('b-works'),
+        agent('c-asks', { state: 'attention' }),
+        agent('d-works', { state: 'background' }),
+        agent('e-idle', { state: 'done' }),
+        agent('f-idle', { state: 'unknown' }),
+    ];
+
+    test('an agent sits in the band its state names', () => {
+        assert.equal(office_band({ pose: 'waiting', state: 'attention' }), 'waiting');
+        assert.equal(office_band({ pose: 'working', state: 'busy' }), 'working');
+        assert.equal(office_band({ pose: 'thinking', state: 'busy' }), 'working');
+        assert.equal(office_band({ pose: 'idle', state: 'background' }), 'working', 'its work is still running');
+        for (const state of ['free', 'done', 'unknown'] as const) assert.equal(office_band({ pose: 'idle', state }), 'idle');
+    });
+
+    test('a room is cut into NEEDS YOU, WORKING, IDLE, left to right, each holding exactly its own', () => {
+        const [room] = build_office(mixed()).rooms;
+        assert.deepEqual(room.bands.map((band) => [band.label, band.count]), [['NEEDS YOU', 1], ['WORKING', 2], ['IDLE', 3]]);
+        for (let i = 1; i < room.bands.length; i++) assert.ok(room.bands[i].x > room.bands[i - 1].x);
+        for (const desk of room.desks) {
+            const band = room.bands.find((candidate) => candidate.key === office_band(desk.agent))!;
+            assert.ok(Math.abs(desk.x - band.x) + OFFICE_GEOMETRY.desk_width / 2 <= band.width / 2 + 1e-9,
+                `${desk.agent.session} sits outside ${band.label}`);
+        }
+        // Edge to edge: the bands tile the room's width with no floor left over and none shared.
+        const left = room.x - room.width / 2;
+        assert.ok(Math.abs(room.bands[0].x - room.bands[0].width / 2 - left) < 1e-9);
+        for (let i = 1; i < room.bands.length; i++) {
+            const a = room.bands[i - 1];
+            const b = room.bands[i];
+            assert.ok(Math.abs((a.x + a.width / 2) - (b.x - b.width / 2)) < 1e-9, `${a.label} and ${b.label} meet at the divider`);
+        }
+        const last = room.bands[room.bands.length - 1];
+        assert.ok(Math.abs(last.x + last.width / 2 - (left + room.width)) < 1e-9);
+    });
+
+    test('an empty band takes no floor, and inside a band the order is by name', () => {
+        const [room] = build_office(mixed().filter((row) => row.state !== 'attention')).rooms;
+        assert.deepEqual(room.bands.map((band) => band.key), ['working', 'idle']);
+        assert.deepEqual(band_agents(room.desks.map((desk) => desk.agent)).map((band) => band.agents.map((a) => a.session)),
+            [['b-works', 'd-works'], ['a-idle', 'e-idle', 'f-idle']]);
+        const [alone] = build_office([agent('a')]).rooms;
+        assert.equal(alone.bands.length, 1);
+        assert.ok(Math.abs(alone.bands[0].width - alone.width) < 1e-9, 'one band is the whole room');
+    });
+
+    test('a room is as wide as its bands and as deep as the deepest', () => {
+        const g = OFFICE_GEOMETRY;
+        const one = room_extent(4);
+        assert.deepEqual(room_extent([4]), one);
+        assert.deepEqual(room_extent([0, 4, 0]), one, 'empty bands add nothing');
+        const split = room_extent([2, 2]);
+        assert.ok(Math.abs(split.width - (2 * g.desk_pitch_x + g.band_gap + 2 * g.room_padding)) < 1e-9);
+        assert.equal(room_extent([2, 10]).depth, room_extent(10).depth);
+    });
+
+    test('a team keeps its lead first in whichever band the lead is in', () => {
+        const layout = build_office([
+            agent('zz-lead', { state: 'free', lineage: { id: LEAD_ID } }),
+            agent('aa-child', { state: 'free', lineage: { id: CHILD_A, parent_id: LEAD_ID } }),
+            agent('bb-child', { lineage: { id: CHILD_B, parent_id: LEAD_ID } }),
+        ]);
+        const team = layout.rooms.find((room) => room.kind === 'team')!;
+        assert.deepEqual(team.bands.map((band) => band.key), ['working', 'idle']);
+        assert.deepEqual(team.desks.map((desk) => desk.agent.session), ['bb-child', 'zz-lead', 'aa-child']);
+    });
+
+    test('the whole office counts its bands, services left out', () => {
+        const layout = build_office([...mixed(), agent('svc-vite', { state: 'attention' })]);
+        assert.deepEqual(office_band_counts(layout), { waiting: 1, working: 2, idle: 3 });
+    });
 });
 
 
@@ -285,4 +374,27 @@ test('facing desks have a visible gap, including in full and stacked pods', () =
             assert.ok(Math.abs(a.z - b.z) - g.desk_depth >= 0.39);
         }
     }
+});
+
+
+test('activity sections stay inside each project room and update independently', () => {
+    const states = ['busy', 'background', 'attention', 'free', 'done', 'unknown'] as const;
+    const sessions = ['app', 'docs'].flatMap(repo => Array.from({ length: 18 }, (_, i) =>
+        agent(`${repo}-${i}`, { repo, state: states[i % states.length] })));
+    const layout = build_office(sessions);
+    assert.equal(layout.rooms.length, 2);
+    for (const room of layout.rooms) {
+        assert.deepEqual(room.bands.map(band => [band.key, band.count]), [['waiting', 3], ['working', 6], ['idle', 9]]);
+        for (const desk of room.desks) {
+            assert.ok(desk.agent.session.startsWith(room.label.toLowerCase()));
+            const band = room.bands.find(band => band.key === office_band(desk.agent))!;
+            assert.ok(Math.abs(desk.x - band.x) + OFFICE_GEOMETRY.desk_width / 2 <= band.width / 2 + 1e-9);
+            assert.ok(Math.abs(desk.z - band.z) + OFFICE_GEOMETRY.seat_offset_z < band.depth / 2);
+        }
+    }
+    const after = build_office(sessions.map(row => row.repo === 'app' ? { ...row, state: 'done' as const } : row));
+    assert.deepEqual(after.rooms.find(room => room.label === 'APP')!.bands.map(band => [band.key, band.count]), [['idle', 18]]);
+    assert.deepEqual(after.rooms.find(room => room.label === 'DOCS')!.bands.map(band => [band.key, band.count]),
+        layout.rooms.find(room => room.label === 'DOCS')!.bands.map(band => [band.key, band.count]));
+    assert.deepEqual(build_office(sessions.toReversed()).rooms, layout.rooms);
 });

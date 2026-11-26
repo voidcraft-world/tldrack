@@ -78,6 +78,8 @@ export interface RackSession {
     lineage?: SessionLineage;
     session: string;
     auto_name?: string;
+    /** The office relay's resolved rack status mark; owned by session-status-emoji.ts. */
+    status_emoji?: string;
     /** Carried from the snapshot's `created_at` (`SessionStatus.created_at`). */
     created_at?: number;
     state: RackState;

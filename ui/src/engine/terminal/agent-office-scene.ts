@@ -10,7 +10,7 @@
  *
  * HUE MEANS STATE. A hue is spent only where it says something: the robots,
  * desks and floors are neutral graphite; the state hue is on the head lamp, the
- * screen and the nameplate's dot; the session's identity hue is on the
+ * screen, the nameplate's dot and activity sections within each room; the session's identity hue is on the
  * nameplate's name only; chrome (room outlines, labels, the selection outline) is the
  * one mint.
  *
@@ -19,7 +19,7 @@
  * with one hand up, waving: a standing robot is easy to miss across a full floor,
  * a hopping one is not. A WORKING agent types: its arms step between two held
  * angles. A worktree island rides its pool (`office-island.ts`). Nothing else
- * moves; a desk only changes place when a session comes or goes. The hop, the
+ * moves; desk placement is owned by `agent-office-logic.ts` — see the note there. The hop, the
  * wave and the water hold still under reduced motion (`should_animate`); the
  * raised hand and the pool stay, because they are the state, not the motion.
  */
@@ -48,6 +48,7 @@ import {
     type Object3D,
     type Raycaster,
 } from 'three';
+import { SERVICE_SESSION_EMOJI } from './service-sessions.ts';
 import { office_outline } from './office-outline.ts';
 import { place_office_labels, type LabelAnchor, type LabelRect, type LabelPlacement } from '../../agent-office/office-labels.ts';
 import { display_state_color, state_pulse_period_ms } from '../../config/terminal-status-flags.ts';
@@ -56,7 +57,7 @@ import { session_label_color } from './agent-zone-logic.ts';
 import { resource_readout, type OfficeResources } from './office-resources.ts';
 import { OfficeIsland, OFFICE_ISLAND_LIFT, OFFICE_WATER_LEVEL, float_phase, island_float } from './office-island.ts';
 import { island_status } from './island-status.ts';
-import { OFFICE_GEOMETRY, type OfficeDesk, type OfficeLayout, type OfficeRoom } from './agent-office-logic.ts';
+import { OFFICE_GEOMETRY, type OfficeBandKey, type OfficeDesk, type OfficeLayout, type OfficeRoom } from './agent-office-logic.ts';
 
 /** The office's motion, in one place. */
 export const OFFICE_MOTION = {
@@ -255,7 +256,7 @@ type OfficeParts = ReturnType<typeof office_parts>;
 
 /** One session's furniture: a robot at a desk, or a server cabinet facing +z. */
 class OfficeRig {
-    /** The desk's place on the floor. It never moves between layouts. */
+    /** The desk's place in its room's activity section. */
     readonly root = new Group();
     /** Everything that stands on the floor, or on the island when there is one: the
      *  island lifts it and the swell moves it, and the pool stays on `root`. */
@@ -485,11 +486,11 @@ class OfficeRig {
         // any side, unlike the screen, which faces only its seat.
         const doing = this.waiting ? 'WANTS YOU' : agent.screen;
         const island = agent.island ? island_status(agent.island) : null;
-        const label_key = `${agent.label}|${doing}|${this.state_hex}|${agent.lead}|${agent.focused}|${island?.label ?? ''}`;
+        const label_key = `${agent.emoji}|${agent.label}|${doing}|${this.state_hex}|${agent.lead}|${agent.focused}|${island?.label ?? ''}`;
         if (this.floating_names && label_key !== this.label_key) {
             this.label_key = label_key;
             this.set_nameplate([
-                { text: `${agent.focused ? '▸ ' : agent.lead ? '★ ' : ''}${agent.label}`, color: session_label_color(agent.session) },
+                { text: `${agent.focused ? '▸ ' : agent.lead ? '★ ' : ''}${agent.emoji ? `${agent.emoji} ` : ''}${agent.label}`, color: session_label_color(agent.session) },
                 ...(doing ? [{ text: `● ${doing}`, color: hex_css(this.state_hex) }] : []),
                 ...(island ? [{ text: island.label, color: island.color }] : []),
             ], agent.focused);
@@ -665,12 +666,35 @@ function floor_label(width: number, height: number, material: MeshBasicMaterial)
     return mesh;
 }
 
-/** A room's floor, outline and name. */
+/** A band's hue: its state's own (`display_state_color`). IDLE has none to spend: it is the
+ *  absence the other two are read against, so it stays the dim grey of a dark screen. */
+export function band_hue(key: OfficeBandKey): number | null {
+    if (key === 'waiting') return display_state_color('attention');
+    return key === 'working' ? display_state_color('busy') : null;
+}
+/** How much of its hue a band's floor takes: enough to find the band from across the floor,
+ *  little enough that the desks on it stay graphite and the lamps stay the brightest hue. */
+const BAND_FLOOR_TINT = 0.16;
+
+/** `amount` of the way from one hex colour to another, channel by channel AS WRITTEN (sRGB).
+ *  `Color.lerp` mixes in linear light, where a tenth of a saturated hue reads as a third. */
+function mix_hex(from: number, to: number, amount: number): number {
+    const channel = (shift: number): number => {
+        const a = (from >> shift) & 0xff;
+        const b = (to >> shift) & 0xff;
+        return Math.round(a + (b - a) * amount) << shift;
+    };
+    return channel(16) | channel(8) | channel(0);
+}
+
+/** A room's floor, outline, bands and name. */
 function build_room(room: OfficeRoom, chrome: LineBasicMaterial): { group: Group; dispose: () => void } {
     const group = new Group();
     group.position.set(room.x, 0, room.z);
+    const owned: { dispose: () => void }[] = [];
+    const floor_hex = room.kind === 'team' ? PALETTE.floor_team : PALETTE.floor;
     const floor_geometry = new PlaneGeometry(room.width, room.depth);
-    const floor_material = new MeshBasicMaterial({ color: room.kind === 'team' ? PALETTE.floor_team : PALETTE.floor });
+    const floor_material = new MeshBasicMaterial({ color: floor_hex });
     const floor = new Mesh(floor_geometry, floor_material);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0.002;
@@ -679,16 +703,52 @@ function build_room(room: OfficeRoom, chrome: LineBasicMaterial): { group: Group
     outline.position.y = 0.006;
     group.add(outline);
 
+    // Activity sections use tint and dividers; their geometry is owned by agent-office-logic.ts.
+    room.bands.forEach((band, i) => {
+        const hue = band_hue(band.key);
+        const local_x = band.x - room.x;
+        const local_z = band.z - room.z;
+        if (hue !== null) {
+            const tint_geometry = new PlaneGeometry(band.width, band.depth);
+            const tint_material = new MeshBasicMaterial({ color: mix_hex(floor_hex, hue, BAND_FLOOR_TINT) });
+            const tint = new Mesh(tint_geometry, tint_material);
+            tint.name = `band:${band.key}`;
+            tint.rotation.x = -Math.PI / 2;
+            tint.position.set(local_x, 0.003, local_z);
+            group.add(tint);
+            owned.push(tint_geometry, tint_material);
+        }
+        if (i > 0) {
+            const edge = local_x - band.width / 2;
+            const divider_geometry = new BufferGeometry().setAttribute('position', new Float32BufferAttribute(
+                [edge, 0.006, local_z - band.depth / 2, edge, 0.006, local_z + band.depth / 2], 3));
+            const divider = new Line(divider_geometry, chrome);
+            divider.name = 'band-divider';
+            group.add(divider);
+            owned.push(divider_geometry);
+        }
+    });
+
     // The name, painted on the floor along the room's front (+z) edge.
     const head = room.kind === 'team' ? `TEAM ${room.label}` : room.label;
-    const count = `${room.desks.length}`;
-    const { texture, aspect } = text_texture([{ text: `${head}  ·  ${count}`, color: hex_css(PALETTE.chrome) }], { px: 56 });
+    const { texture, aspect } = text_texture([{ text: head, color: hex_css(PALETTE.chrome) }], { px: 56 });
     const label_h = OFFICE_GEOMETRY.label_strip * 0.5;
-    const label_w = Math.min(label_h * aspect, room.width - 0.4);
+    const service_icon_size = room.kind === 'services' ? OFFICE_GEOMETRY.label_strip * 0.55 : 0;
+    const label_w = Math.min(label_h * aspect, room.width - 0.4 - (service_icon_size ? service_icon_size + 0.2 : 0));
     const label_material = new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false });
     const label = floor_label(label_w, label_w / aspect, label_material);
     label.position.set(-room.width / 2 + 0.25 + label_w / 2, 0.01, room.depth / 2 - OFFICE_GEOMETRY.label_strip / 2);
     group.add(label);
+    if (service_icon_size) {
+        const icon = text_texture([{ text: SERVICE_SESSION_EMOJI, color: hex_css(PALETTE.chrome) }]);
+        const icon_material = new MeshBasicMaterial({ map: icon.texture, transparent: true, depthWrite: false });
+        const mark = floor_label(service_icon_size, service_icon_size / icon.aspect, icon_material);
+        mark.name = 'services-floor-icon';
+        mark.position.set(room.width / 2 - 0.25 - service_icon_size / 2, 0.011,
+            room.depth / 2 - OFFICE_GEOMETRY.label_strip / 2);
+        group.add(mark);
+        owned.push(mark.geometry, icon.texture, icon_material);
+    }
 
     return {
         group,
@@ -699,6 +759,7 @@ function build_room(room: OfficeRoom, chrome: LineBasicMaterial): { group: Group
             label.geometry.dispose();
             texture.dispose();
             label_material.dispose();
+            for (const part of owned) part.dispose();
         },
     };
 }

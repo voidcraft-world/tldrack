@@ -49,7 +49,11 @@ test('selection glows through occluders, screens grow, and floor textures are ca
         const beacons = objects(scene, object => object.geometry?.type === 'TorusGeometry');
         assert.equal(beacons.length, 0, 'no selection halos');
         const glows = objects(scene, object => object.name === 'office-outline-glow');
-        const materials = [...new Set(glows.map(glow => glow.material as unknown as ShaderMaterial))];
+        const materials = rows.map(row => {
+            const hitbox = objects(scene, object => object.userData.session === row.session && !object.isSprite)[0];
+            const glow = hitbox.parent!.getObjectByName('office-outline-glow') as Probe;
+            return glow.material as unknown as ShaderMaterial;
+        });
         assert.equal(materials.length, 2, 'one glow material per agent');
         for (const material of materials) {
             assert.equal(material.depthTest, false, 'glow remains visible through occluders');
@@ -265,10 +269,31 @@ test('idle service cabinets stay visible and rig outline materials are released 
         const furniture = objects(scene, object => object.name === 'furniture')[0];
         assert.equal(furniture.visible, true);
         assert.equal(objects(scene, object => object.name === 'robot').length, 0);
+        const marks = objects(scene, object => object.name === 'services-floor-icon');
+        assert.equal(marks.length, 1);
+        assert.ok(marks[0].position.x > 0 && marks[0].position.z > 0, 'service mark sits at the front-right of its floor');
+        assert.ok(marks[0].position.y < 0.02, 'service mark is on the floor');
         const material = (furniture.children[0] as unknown as { material: MeshBasicMaterial }).material;
         let disposed = 0;
         material.addEventListener('dispose', () => disposed++);
         scene.update(build_office([], null));
         assert.equal(disposed, 1);
+    });
+});
+
+test('a room draws activity sections with tint and dividers, without status text on the floor', () => {
+    with_scene((scene) => {
+        const mixed = [...rows, { session: 'agent-c', live: true, state: 'free' as const, repo: 'app' }];
+        scene.update(build_office(mixed));
+        const named = (prefix: string) => objects(scene, object => object.name.startsWith(prefix)).map(object => object.name);
+        // IDLE spends no hue: it is the floor the other two are read against.
+        assert.deepEqual(named('band:').sort(), ['band:waiting', 'band:working']);
+        assert.deepEqual(named('band-name:'), []);
+        assert.equal(named('band-divider').length, 2);
+        // The agent that was working finishes: its band empties and takes no floor.
+        scene.update(build_office(mixed.map(row => (row.session === 'agent-a' ? { ...row, state: 'free' as const } : row))));
+        assert.deepEqual(named('band:').sort(), ['band:waiting']);
+        assert.deepEqual(named('band-name:'), []);
+        assert.equal(named('band-divider').length, 1);
     });
 });

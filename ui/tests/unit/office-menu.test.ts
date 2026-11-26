@@ -5,7 +5,7 @@ import { worktree_button_view, type WorktreeButtonRow } from '../../src/engine/t
 import type { OfficeAgent } from '../../src/engine/terminal/agent-office-logic.ts';
 
 function agent(over: Partial<OfficeAgent> = {}): OfficeAgent {
-    return { kind: 'agent', session: 'wt-nav', label: 'Fix the nav', state: 'busy', pose: 'working', screen: 'CODE',
+    return { kind: 'agent', session: 'wt-nav', label: 'Fix the nav', emoji: '🤔', state: 'busy', pose: 'working', screen: 'CODE',
         tool: null, detail: null, lead: false, focused: false, ...over };
 }
 function worktree(over: Partial<WorktreeButtonRow> = {}): WorktreeButtonRow {
