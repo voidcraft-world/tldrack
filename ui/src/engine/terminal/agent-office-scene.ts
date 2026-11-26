@@ -489,10 +489,10 @@ class OfficeRig {
         if (this.floating_names && label_key !== this.label_key) {
             this.label_key = label_key;
             this.set_nameplate([
-                { text: `${agent.focused ? '▸ ' : agent.lead ? '★ ' : ''}${agent.label}`, color: agent.focused ? '#d8ffe6' : session_label_color(agent.session) },
+                { text: `${agent.focused ? '▸ ' : agent.lead ? '★ ' : ''}${agent.label}`, color: session_label_color(agent.session) },
                 ...(doing ? [{ text: `● ${doing}`, color: hex_css(this.state_hex) }] : []),
                 ...(island ? [{ text: island.label, color: island.color }] : []),
-            ]);
+            ], agent.focused);
         }
         this.set_hovered(this.hovered, agent.focused);
     }
@@ -504,12 +504,15 @@ class OfficeRig {
         this.outline.glow.visible = focused || hovered;
     }
 
-    private set_nameplate(lines: LabelLine[]): void {
+    private set_nameplate(lines: LabelLine[], focused: boolean): void {
         if (this.nameplate) {
             this.deck.remove(this.nameplate);
             dispose_sprite(this.nameplate);
         }
-        const { texture, aspect } = text_texture(lines, { backing: 'rgba(8, 12, 15, 0.88)' });
+        // Invert every line together: status and worktree text must stay readable on the bright selection plate.
+        const { texture, aspect } = focused
+            ? text_texture(lines.map(line => ({ ...line, color: '#102019' })), { fill: '#f4fff8' })
+            : text_texture(lines, { backing: 'rgba(8, 12, 15, 0.88)' });
         const sprite = new Sprite(new SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
         const height = 0.26 * lines.length;
         this.label_size.set(height * aspect, height);
