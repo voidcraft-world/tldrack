@@ -119,6 +119,7 @@ Every row carries one mark. Hover it for the sentence.
 |:---:|---|---|
 | 🙋 | **Needs you.** The agent asked a question, or wants a permission or a plan approved | the agent's hooks |
 | 📖 | **Answer to read.** You asked a question and the turn looks done. Open the row to read it | Laya, and your prompt ending in `?` |
+| ☑️📖 &nbsp; ✅📖 | **Answer read.** The same answer once you opened the row: the 📖 stays beside the check | Laya, once you open it |
 | ✅ | **Work looks done**, reply not opened yet | Laya |
 | ☑️ | **Work looks done**, reply seen. The row moves to COMPLETE | Laya, once you open it |
 | 💬 | **Reply ready**, not opened yet. Laya is not sure the work is done, or no review model runs | the agent's hooks |

@@ -27,6 +27,7 @@ from tldrack.open_work import (
     GRADE_NONE,
     GRADE_OFF,
     GRADE_RECORDED,
+    LEDGER_SURFACE,
     MAX_PENDING_REACTIONS,
     OPEN_WORK_AT,
     OPEN_WORK_QUESTION,
@@ -36,7 +37,9 @@ from tldrack.open_work import (
     OpenWorkReactions,
     ask_laya,
     done_work_cut,
+    clean_operator_label,
     grade_verdict,
+    label_change,
     ledger_judged,
     ledger_tag,
     open_work_cut,
@@ -44,6 +47,7 @@ from tldrack.open_work import (
     rack_grader,
     state_sha,
     verdict_row_fields,
+    watch_operator_labels,
 )
 from tldrack.state_arbiter import HOLD_SECONDS
 from tldrack.verdicts import SessionVerdictStore
@@ -77,6 +81,8 @@ class FakeLayaPlugin:
         self.reacts: list[tuple[str, str]] = []
         self.grades: list[tuple[str, bool]] = []
         self.react_attempts = 0
+        #: The bridge's `watch_labels` subscription: one per bridge process, so a restart's replaces the last.
+        self.label_listener = None
 
     def handle_get(self, subpath, query):
         assert subpath == "/status"
@@ -110,6 +116,13 @@ class FakeLayaPlugin:
             body.get("ledger", {}).get("conversation") == conversation and state_sha(body["state"]) == state_hash
             for body in self.decides
         )
+
+    def watch_labels(self, listener):
+        self.label_listener = listener
+
+    def label(self, decision, is_open, needs=None, surface=LEDGER_SURFACE):
+        """The operator labels `decision`'s text on LAYA REVIEW: the plugin's report (`review.label_changes`)."""
+        self.label_listener([{"surface": surface, "decision_id": decision, "open": is_open, "needs": needs}])
 
     def rack_grade(self, body, headers):
         if self.LABEL_POLICY.refusal(headers) is not None or headers.get("content-type") != "application/json":
@@ -310,7 +323,7 @@ def test_the_request_fold_holds_across_tool_calls_and_resets_at_the_next_turn():
 
 
 def test_row_fields_threshold_the_probability():
-    assert verdict_row_fields(None) == {"open_work": None, "work_done": None, "open_work_p": None, "answer_to_read": None}
+    assert verdict_row_fields(None) == dict.fromkeys(("open_work", "work_done", "open_work_p", "answer_to_read", "answer_read"))
     assert verdict_row_fields({"p": OPEN_WORK_AT})["open_work"] is True
     assert verdict_row_fields({"p": OPEN_WORK_AT - 0.01})["open_work"] is False
     assert verdict_row_fields({"p": 0.12345})["open_work_p"] == 0.123
@@ -357,19 +370,21 @@ DONE = {"p": 0.05, "at": 0.7, "done_at": 0.4}
 
 
 @pytest.mark.parametrize(
-    ("verdict", "mark"),
+    ("verdict", "unread", "read"),
     [
-        ({**DONE, "asked": True}, True),  # ✅ on a question: an answer to read
-        ({**DONE, "asked": True, "read": True}, False),  # its pane was opened
-        ({**DONE, "asked": False}, False),  # ✅ on an order: nothing to read
-        (DONE, False),  # a verdict from before the stamp
-        ({"p": 0.5, "at": 0.7, "done_at": 0.4, "asked": True}, False),  # 💬: already an unread reply
-        ({"p": 0.9, "at": 0.7, "done_at": 0.4, "asked": True}, False),  # ⚠️: already asks for a look
-        ({"p": 0.05, "at": 0.7, "asked": True}, False),  # from before the done band: never ✅
+        ({**DONE, "asked": True}, True, False),  # ✅ on a question: an answer to read, 📖
+        ({**DONE, "asked": True, "read": True}, False, True),  # its pane was opened: ☑️📖, the 📖 stays
+        ({**DONE, "asked": False}, False, False),  # ✅ on an order: nothing to read
+        ({**DONE, "asked": False, "read": True}, False, False),  # and opening it makes no answer of it
+        (DONE, False, False),  # a verdict from before the stamp
+        ({"p": 0.5, "at": 0.7, "done_at": 0.4, "asked": True}, False, False),  # 💬: already an unread reply
+        ({"p": 0.9, "at": 0.7, "done_at": 0.4, "asked": True, "read": True}, False, False),  # ⚠️: asks for a look
+        ({"p": 0.05, "at": 0.7, "asked": True}, False, False),  # from before the done band: never ✅
     ],
 )
-def test_the_mark_rides_only_a_done_verdict_on_a_question_not_yet_read(verdict, mark):
-    assert verdict_row_fields(verdict)["answer_to_read"] is mark
+def test_the_mark_rides_only_a_done_verdict_on_a_question_and_stays_once_read(verdict, unread, read):
+    fields = verdict_row_fields(verdict)
+    assert (fields["answer_to_read"], fields["answer_read"]) == (unread, read)
 
 
 def test_with_request_stamps_a_copy_and_leaves_the_judges_verdict_alone():
@@ -1184,7 +1199,7 @@ def test_a_question_answered_done_carries_the_mark_until_its_pane_is_opened(brid
 
     assert bridge.post("/open-work/read", payload={"session": "vc-1"})["body"] == {"ok": True, "session": "vc-1", "cleared": True}
     row = bridge.store.get("vc-1")
-    assert (row["work_done"], row["answer_to_read"]) == (True, False), "the ✅ stays; only the mark goes"
+    assert (row["work_done"], row["answer_to_read"], row["answer_read"]) == (True, False, True), "☑️📖: read, still an answer"
     assert bridge.post("/open-work/read", payload={"session": "vc-1"})["body"]["cleared"] is False
     assert bridge.post("/open-work/read", payload={"session": "bad name!"})["status"] == 400
     assert bridge.laya.grades == [], "opening a pane grades nothing"
@@ -1238,7 +1253,7 @@ def test_a_restart_keeps_an_unread_answer_unread_and_a_read_one_read(bridge, mon
     assert sent["body"]["cleared"] is True
     store, _ = restart(bridge, monkeypatch)
     row = store.get("vc-1")
-    assert (row["work_done"], row["answer_to_read"]) == (True, False)
+    assert (row["work_done"], row["answer_to_read"], row["answer_read"]) == (True, False, True)
 
 
 # ── Stop hook → ledger reactions ──────────────────────────────────────────────
@@ -1700,3 +1715,168 @@ def test_post_landing_returns_the_plugins_status_and_never_raises_on_an_old_plug
 
     body = open_work.landing_body({"decision_id": LANDING_ID}, "new", None, {}, None)
     assert open_work.post_landing(plugin_caller(Old()), body) == 404
+
+
+# ── a label given elsewhere (open_work.py § The operator's label) ─────────────
+
+
+@pytest.fixture
+def live(monkeypatch):
+    """vc-1 is a live tmux session: the snapshot's attention fields ride live rows only."""
+    import tldrack.main as main_module
+
+    monkeypatch.setattr(
+        main_module, "list_tmux_sessions", lambda: {"vc-1": {"title": None, "attached": False, "cwd": None, "profile": None}}
+    )
+
+
+def snapshot_row(bridge, cls=None):
+    snapshot = object.__new__(cls or bridge.cls).snapshot_payload()
+    return next(item for item in snapshot["sessions"] if item["session"] == "vc-1")
+
+
+def marks(row):
+    """(⚠️, ✅, 📖 unread, 📖 read)."""
+    return row["open_work"], row["work_done"], row["answer_to_read"], row["answer_read"]
+
+
+@pytest.mark.parametrize(
+    ("label", "fields"),
+    [
+        ({"open": True, "needs": "you"}, (True, False, False, False)),
+        ({"open": True, "needs": "running"}, (True, False, False, False)),
+        ({"open": True, "needs": None}, (True, False, False, False)),
+        ({"open": False, "needs": None}, (False, True, False, False)),
+        ({"open": False, "needs": "read"}, (False, True, True, False)),
+    ],
+)
+def test_a_label_decides_the_band_and_layas_p_stays(label, fields):
+    for p in (0.05, 0.55, 0.95):  # ✅, 💬 and ⚠️ by Laya's own cuts
+        verdict = {"p": p, "at": OPEN_WORK_AT, "done_at": DONE_AT, "asked": True, "operator": label}
+        assert marks(verdict_row_fields(verdict)) == fields
+        assert verdict_row_fields(verdict)["open_work_p"] == p
+    read = verdict_row_fields({"p": 0.9, "at": OPEN_WORK_AT, "done_at": DONE_AT, "read": True, "operator": label})
+    assert read["answer_to_read"] is False, "a read answer is read, whoever said it needed one"
+    assert read["answer_read"] is (label == {"open": False, "needs": "read"})
+
+
+def test_a_bare_done_label_draws_the_check_even_on_a_question():
+    """DONE without `read` is the operator saying nothing is owed a read: 📖 is Laya's guess, the label is theirs."""
+    asked = {"p": 0.05, "at": OPEN_WORK_AT, "done_at": DONE_AT, "asked": True}
+    assert verdict_row_fields(asked)["answer_to_read"] is True
+    assert verdict_row_fields({**asked, "operator": {"open": False, "needs": None}})["answer_to_read"] is False
+
+
+@pytest.mark.parametrize(
+    ("value", "cleaned"),
+    [
+        ({"open": True, "needs": "you"}, {"open": True, "needs": "you"}),
+        ({"open": False}, {"open": False, "needs": None}),
+        ({"open": False, "needs": "read", "extra": 1}, {"open": False, "needs": "read"}),
+        ({"open": True, "needs": "read"}, None),  # `read` rides beside DONE only
+        ({"open": False, "needs": "you"}, None),
+        ({"open": "yes"}, None),
+        ({"open": 1}, None),
+        ({"open": True, "needs": "later"}, None),
+        ("open", None),
+        (None, None),
+    ],
+)
+def test_clean_operator_label(value, cleaned):
+    assert clean_operator_label(value) == cleaned
+
+
+def test_label_change_reads_only_this_racks_surface_and_well_formed_entries():
+    entry = {"surface": LEDGER_SURFACE, "decision_id": decision_id(1), "open": True, "needs": "you"}
+    assert label_change(entry) == (decision_id(1), {"open": True, "needs": "you"})
+    assert label_change({**entry, "open": None, "needs": None}) == (decision_id(1), None), "no label stands"
+    assert label_change({**entry, "surface": "paste"}) is None
+    assert label_change({**entry, "decision_id": "../x"}) is None
+    assert label_change({**entry, "needs": "read"}) is None
+    assert label_change([entry]) is None
+
+
+def test_watch_operator_labels_never_raises():
+    class Exploding:
+        def watch_labels(self, listener):
+            raise RuntimeError("plugin on fire")
+
+    assert watch_operator_labels(None, print) is False
+    assert watch_operator_labels(object(), print) is False, "a plugin from before the door"
+    assert watch_operator_labels(Exploding(), print) is False
+    laya = FakeLayaPlugin()
+    assert watch_operator_labels(laya, print) is True and laya.label_listener is print
+
+
+def test_a_done_turn_the_operator_labels_open_draws_the_warning_and_an_undo_brings_the_check_back(bridge, live):
+    """The report of 2026-11-26: a ✅ flipped to NEEDS YOU on LAYA REVIEW stayed ✅ on the rack."""
+    end_turn(bridge, "All done, tests pass.", "msg_1")
+    assert marks(bridge.wait_for(False)) == (False, True, False, False)
+
+    bridge.laya.label(decision_id(1), True, "you")
+    row = snapshot_row(bridge)
+    assert marks(row) == (True, False, False, False) and row["open_work_p"] == 0.05
+    assert row["open_work_labelled"] is True
+    assert row["open_work_graded"] is True, "the label is the grade: the menu offers no second ✓"
+
+    bridge.laya.label(decision_id(1), None)  # UNDO on the deck
+    row = snapshot_row(bridge)
+    assert marks(row) == (False, True, False, False)
+    assert "open_work_labelled" not in row and "open_work_graded" not in row
+    assert bridge.laya.grades == [], "the bridge records nothing back: the label is already the plugin's"
+
+
+def test_a_warning_labelled_done_draws_the_check_and_read_draws_the_book_until_the_pane_is_opened(bridge, live):
+    warn(bridge)
+    bridge.laya.label(decision_id(1), False)
+    assert marks(snapshot_row(bridge)) == (False, True, False, False)
+
+    bridge.laya.label(decision_id(1), False, "read")  # regraded on the RECENT list: READ
+    assert marks(snapshot_row(bridge)) == (False, True, True, False)
+    assert bridge.post("/open-work/read", payload={"session": "vc-1"})["body"]["cleared"] is True
+    assert marks(snapshot_row(bridge)) == (False, True, False, True), "☑️📖: the 📖 stays once read"
+
+
+def test_a_label_of_another_decision_or_surface_repaints_nothing(bridge, live):
+    end_turn(bridge, "All done, tests pass.", "msg_1")
+    bridge.wait_for(False)
+    bridge.laya.label(decision_id(9), True, "you")  # an older turn's text
+    bridge.laya.label(decision_id(1), True, "you", surface="paste")
+    bridge.laya.label_listener(["not a change", {"surface": LEDGER_SURFACE, "decision_id": decision_id(1), "open": "x"}])
+    row = snapshot_row(bridge)
+    assert marks(row) == (False, True, False, False) and "open_work_labelled" not in row
+
+
+def test_a_label_of_the_last_turn_never_repaints_the_next_one(bridge, live):
+    end_turn(bridge, "All done, tests pass.", "msg_1")
+    bridge.wait_for(False)
+    bridge.hook("UserPromptSubmit")
+    end_turn(bridge, "Phase C is not started.", "msg_2")
+    assert bridge.wait_for(True)["open_work"] is True
+    bridge.laya.label(decision_id(1), True, "you")
+    bridge.laya.label(decision_id(1), False)
+    assert marks(snapshot_row(bridge)) == (True, False, False, False), "decision 2 is Laya's until it is labelled"
+
+
+def test_a_label_survives_a_restart_and_its_undo_does_too(bridge, monkeypatch):
+    end_turn(bridge, "All done, tests pass.", "msg_1")
+    bridge.wait_for(False)
+    bridge.laya.label(decision_id(1), True, "running")
+    store, cls = restart(bridge, monkeypatch)
+    row = store.get("vc-1")
+    assert (row["open_work"], row["work_done"]) == (True, False), "a correction never comes back as what it corrected"
+    assert store.graded_open_work() == {"vc-1"} and store.labelled_open_work() == {"vc-1"}
+
+    bridge.laya.label(decision_id(1), None)  # reaches the RESTARTED bridge, the one subscribed now
+    assert store.get("vc-1")["work_done"] is True
+    store, _ = restart(bridge, monkeypatch)
+    assert store.get("vc-1")["work_done"] is True and store.labelled_open_work() == set()
+
+
+def test_a_read_label_given_after_the_pane_was_opened_draws_it_read(bridge, live):
+    """Opening the pane read the answer, 📖 or not: a READ label given later never asks for that read again."""
+    end_turn(bridge, "Phase C is not started.", "msg_1")
+    assert bridge.wait_for(True)["open_work"] is True
+    assert bridge.post("/open-work/read", payload={"session": "vc-1"})["body"]["cleared"] is False, "no 📖 to clear"
+    bridge.laya.label(decision_id(1), False, "read")
+    assert marks(snapshot_row(bridge)) == (False, True, False, True), "read already: ☑️📖, never 📖 again"

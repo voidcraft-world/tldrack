@@ -9,7 +9,7 @@ strict: exactly the documented fields, a bool is a bool, and a refused value is 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +35,45 @@ RECENT_OFFSET_MAX = 100_000
 NO_RESULT: dict[str, None] = {"answer": None, "card": None, "stats": None}
 #: A `reviewRetestResultSchema` refusal, likewise.
 NO_RETEST: dict[str, None] = {"retest": None, "stats": None}
+
+#: Told what a press did to the operator's labels (`label_changes`): the agent rack repaints the row that drew the mark.
+LabelSink = Callable[[list[dict]], None]
+
+
+def label_changes(snap: review_data.Snapshot, keys: Iterable[str], labels: Mapping[str, Mapping] | None = None) -> list[dict]:
+    """What a press left standing, for every live decision of each text it touched: `{surface, decision_id, open,
+    needs}`, `open` the operator's label after the write and None where none stands (a skip, an undo to nothing).
+
+    WHY IT EXISTS. The rack draws a turn end's ⚠️ / ✅ / 📖 from Laya's verdict, and the bridge keeps that verdict on
+    the row by its `decision_id`. A label given on this deck (or the phone's RECENT list) is the operator overruling
+    that verdict, and until 2026-11-26 the row never heard: a ✅ the operator flipped to OPEN stayed ✅ until the next
+    turn. So every write that changes a label reports it here, per decision, and the bridge repaints the row still
+    holding that decision (tldrack open_work.py § The operator's label). A text judged twice reports both ids.
+    `labels` overrides the fold's (`rack`, which writes without re-reading)."""
+    labels = snap.fold.labels if labels is None else labels
+    changes = []
+    for key in dict.fromkeys(keys):
+        label = labels.get(key)
+        for decision_id in snap.items.decisions_of.get(key, ()):
+            changes.append(
+                {
+                    "surface": snap.spec.name,
+                    "decision_id": decision_id,
+                    "open": label.get("open") if label is not None else None,
+                    "needs": label.get("needs") if label is not None else None,
+                }
+            )
+    return changes
+
+
+def _tell(sink: LabelSink | None, changes: list[dict]) -> None:
+    """Hand `changes` to the sink, after the write and outside its lock. A sink never costs the operator the label."""
+    if sink is None or not changes:
+        return
+    try:
+        sink(changes)
+    except Exception:  # noqa: BLE001 — the label is written; a repaint is a courtesy
+        pass
 
 
 def first_fine_tune(base: Path | None) -> dict:
@@ -247,7 +286,14 @@ def _wave(value: Any) -> tuple[str, ...]:
     return tuple(value)
 
 
-def answer(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = None, now: datetime | None = None) -> Response:
+def answer(
+    base: Path | None,
+    body: Any,
+    *,
+    loaded: Mapping[str, str] | None = None,
+    now: datetime | None = None,
+    on_labels: LabelSink | None = None,
+) -> Response:
     """POST /review/answer: record AGREE, FLIP or SKIP against the reference the deck showed, and optionally what the
     turn left the operator (`needs`, on its own side of the recorded open: schemas/src/laya-review.ts owns why).
 
@@ -255,7 +301,7 @@ def answer(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = N
     the lead (`open`, from AGREE or FLIP against the lead's reference) on every rider too, each as agree or flip
     against its OWN reference, under one `wave_id`. It must name exactly the riders the card has now: one answered
     elsewhere, or a turn that joined the run, is `wave_changed` with the fresh card, and nothing is recorded. The
-    press is written whole or not at all (`review_log.append_many`)."""
+    press is written whole or not at all (`review_log.append_many`). `on_labels` hears what it left (`label_changes`)."""
     try:
         body = _body(body, ("surface", "key", "answer", "reference_open"), optional=("needs", "wave"))
         surface = _surface(body["surface"], "bad_body")
@@ -350,6 +396,7 @@ def answer(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = N
             after = review_data.snapshot(base, surface, loaded=loaded)
     except Refusal as refusal:
         return refusal_response(refusal, **NO_RESULT)
+    _tell(on_labels, label_changes(after, (row["key"] for row in written)))
     return 200, ok_body(
         f"recorded ×{len(written)}" if wave else "recorded",
         answer=review_log.answer_ref(written[0]),
@@ -456,7 +503,14 @@ def retest(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = N
     )
 
 
-def rack(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = None, now: datetime | None = None) -> Response:
+def rack(
+    base: Path | None,
+    body: Any,
+    *,
+    loaded: Mapping[str, str] | None = None,
+    now: datetime | None = None,
+    on_labels: LabelSink | None = None,
+) -> Response:
     """POST /review/rack {decision_id, open}: the operator's answer to one live verdict, from the ⚠️'s own menu on the
     agent rack (`review_data.py`: THE RACK'S DOOR). In process only: `plugin.py` owns who may call it.
 
@@ -531,10 +585,18 @@ def rack(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = Non
             review_log.append_many(base, surface, [*skips, written], snap.fold)
     except Refusal as refusal:
         return refusal_response(refusal, **NO_RESULT)
+    _tell(on_labels, label_changes(snap, (verdict.key,), {verdict.key: written}))
     return 200, ok_body("recorded", answer=review_log.answer_ref(written), card=None, stats=None)
 
 
-def undo(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = None, now: datetime | None = None) -> Response:
+def undo(
+    base: Path | None,
+    body: Any,
+    *,
+    loaded: Mapping[str, str] | None = None,
+    now: datetime | None = None,
+    on_labels: LabelSink | None = None,
+) -> Response:
     """POST /review/undo: append an undo row; the item goes back in the queue. With `wave: true`, every live
     answer the same press wrote is undone with it (one UNDO for one wave card); without it, only the one named,
     so a RECENT regrade of one wave member never takes its siblings back.
@@ -544,7 +606,8 @@ def undo(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = Non
     a rider, and that rider's own card would grade one turn alone.
 
     A retest's id is undone the same way (`review_log.py`: RETEST): its text is due again, and `answer` and `card`
-    are null, because a retest is neither a live answer nor a deck card. The deck's next queue read deals it back."""
+    are null, because a retest is neither a live answer nor a deck card. The deck's next queue read deals it back;
+    a retest is no label, so `on_labels` hears only an answer's undo (`label_changes`)."""
     try:
         body = _body(body, ("surface", "answer_id"), optional=("wave",))
         surface = _surface(body["surface"], "bad_body")
@@ -586,6 +649,7 @@ def undo(base: Path | None, body: Any, *, loaded: Mapping[str, str] | None = Non
             after = review_data.snapshot(base, surface, loaded=loaded)
     except Refusal as refusal:
         return refusal_response(refusal, **NO_RESULT)
+    _tell(on_labels, label_changes(after, (gone["key"] for gone in undone)))
     return 200, ok_body(
         f"undone ×{len(undone)}" if len(undone) > 1 else "undone",
         answer=review_log.answer_ref(row),

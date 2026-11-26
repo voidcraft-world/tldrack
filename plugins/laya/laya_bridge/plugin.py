@@ -26,6 +26,11 @@ type, which is right for clearing a mark and too weak for an operator label: a p
 port could post `{"session"}` as a simple request. So the bridge hands over the headers of the HTTP request that
 CAUSED the grade, and the press passes the same checks as `/review/answer` (the caller policy, a JSON body) before a
 row is written. `handle_post` carries no headers, so it answers the route `host_too_old` like every policy route.
+
+`watch_labels(listener)` is the other in-process door, and the only one that runs the other way: the bridge subscribes
+once at mount, and every write that changes an operator label (`/review/answer`, `/review/undo`, a rack grade) hands it
+what now stands, per decision (`review.label_changes` owns the shape and why). A listener runs on the request thread
+after the write; one that raises is dropped from that call, never from the label.
 """
 
 from __future__ import annotations
@@ -247,6 +252,7 @@ class LayaPlugin:
         self._ledger = ledger or Ledger(self._params_dir, log=self._log)
         self._landing = landing or LandingLog(self._params_dir, log=self._log)
         self._drain = drain or LabDrain(self._advance_lab, self._log)
+        self._label_listeners: list[Callable[[list[dict]], None]] = []
         self._tighten()
         if lab_jobs.read_queue(self._params_dir()):
             self._drain.kick()  # a queue that outlived a bridge restart
@@ -375,7 +381,18 @@ class LayaPlugin:
         )
         if refused is not None:
             return refused
-        return review.rack(self._params_dir(), body, loaded=self._runtime.loaded())
+        return review.rack(self._params_dir(), body, loaded=self._runtime.loaded(), on_labels=self._labels_changed)
+
+    def watch_labels(self, listener: Callable[[list[dict]], None]) -> None:
+        """In process only, never a route: `listener(changes)` after every label write (the module note owns why)."""
+        self._label_listeners.append(listener)
+
+    def _labels_changed(self, changes: list[dict]) -> None:
+        for listener in list(self._label_listeners):
+            try:
+                listener([dict(change) for change in changes])
+            except Exception as error:  # noqa: BLE001 — a listener's bug must never cost the operator the label
+                self._log(f"[laya] a label listener failed ({type(error).__name__})")
 
     def judged_before(self, conversation: object, state_hash: object) -> bool | None:
         """In process only, never a route: has the ledger already judged this agent-rack turn end? (`Ledger.judged`)"""
@@ -497,10 +514,10 @@ class LayaPlugin:
         if subpath == "/review/example":
             return review.example(base, body, loaded=loaded)
         if subpath == "/review/answer":
-            return review.answer(base, body, loaded=loaded)
+            return review.answer(base, body, loaded=loaded, on_labels=self._labels_changed)
         if subpath == "/review/retest":
             return review.retest(base, body, loaded=loaded)
-        return review.undo(base, body, loaded=loaded)
+        return review.undo(base, body, loaded=loaded, on_labels=self._labels_changed)
 
     def _restart(self, body: Any) -> tuple:
         if body not in (None, {}):

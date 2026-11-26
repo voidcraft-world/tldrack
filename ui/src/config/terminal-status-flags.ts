@@ -288,10 +288,17 @@ export function work_done_shown(
 /**
  * An answer to read: Laya judged the turn DONE and a question opened it, so the agent owes nothing
  * and the operator still owes the answer a read. 📖 takes the ✅'s place, because ✅ alone says
- * "nothing to look at"; opening the pane reads it, and the row is then an ordinary ☑️. When it is
- * set and what clears it: owned by `bridge/tldrack/open_work.py` — see § An answer to read there.
+ * "nothing to look at"; opening the pane reads it, and the 📖 then stays beside the check
+ * (`ANSWER_READ_EMOJI`): the read is done, the turn was still an answer. When each is set and what
+ * clears it: owned by `bridge/tldrack/open_work.py` — see § An answer to read there.
  */
 export const ANSWER_TO_READ_EMOJI = '📖';
+
+/** An answer the operator has read: the check its state draws, with the 📖 kept beside it. */
+export const ANSWER_READ_EMOJI = {
+    done: `${WORK_DONE_EMOJI.done}${ANSWER_TO_READ_EMOJI}`,
+    free: `${WORK_DONE_EMOJI.free}${ANSWER_TO_READ_EMOJI}`,
+} as const;
 
 /** Does 📖 replace this row's ✅/☑️? Wherever that mark would draw, while its answer is unread. */
 export function answer_to_read_shown(
@@ -302,21 +309,47 @@ export function answer_to_read_shown(
     return work_done?.answer === true && work_done_shown(state, true, dead);
 }
 
+/** What a mark the operator's own label drew says in place of Laya's guess and p (`labelled`: owned by
+ *  `bridge/tldrack/open_work.py` — see § The operator's label there). */
+const LABELLED_DONE = 'you marked it done';
+
+/** Does ✅📖 / ☑️📖 replace this row's ✅/☑️? Wherever that mark would draw, once its answer was read. */
+export function answer_read_shown(
+    state: TerminalDisplayState | undefined,
+    work_done: { read?: true } | null | undefined,
+    dead: boolean,
+): state is 'done' | 'free' {
+    return work_done?.read === true && work_done_shown(state, true, dead);
+}
+
+/** The ✅📖 / ☑️📖's words: the title and the accessible name. */
+export function answer_read_title(state: 'done' | 'free', p: number | null | undefined, labelled = false): string {
+    return `${state === 'done' ? 'reply ready' : 'idle'} · answer read · ${done_words(p, labelled)}`;
+}
+
 /** The 📖's words: the title and the accessible name. */
-export function answer_to_read_title(p: number | null | undefined): string {
+export function answer_to_read_title(p: number | null | undefined, labelled = false): string {
+    if (labelled) return `answer to read · ${LABELLED_DONE}`;
     const pct = typeof p === 'number' ? ` (${Math.round(p * 100)}% open)` : '';
     return `answer to read · work looks done${pct}`;
 }
 
 /** The ✅ mark's words: the title and the accessible name. */
-export function work_done_title(state: 'done' | 'free', p: number | null | undefined): string {
+export function work_done_title(state: 'done' | 'free', p: number | null | undefined, labelled = false): string {
+    return `${state === 'done' ? 'reply ready' : 'idle'} · ${done_words(p, labelled)}`;
+}
+
+/** Who said the work is done: the operator's label, or Laya with its p. */
+function done_words(p: number | null | undefined, labelled: boolean): string {
     const pct = typeof p === 'number' ? ` (${Math.round(p * 100)}% open)` : '';
-    return `${state === 'done' ? 'reply ready' : 'idle'} · work looks done${pct}`;
+    return labelled ? LABELLED_DONE : `work looks done${pct}`;
 }
 
 /** The badge's words: the title and the accessible name. The answers it lists are the ones its menu will
- *  draw: once the turn has the operator's grade (`graded`, set by a ✓), that says so and the ✓ is gone. */
-export function open_work_badge_title(p: number | null | undefined, graded = false): string {
+ *  draw: once the turn has the operator's grade (`graded`, set by a ✓ or a label), that says so and the ✓ is
+ *  gone. A ⚠️ their label drew (`labelled`) says it is theirs, not Laya's p. */
+export function open_work_badge_title(p: number | null | undefined, graded = false, labelled = false): string {
+    if (labelled) return 'you marked work still open · graded — ⏸ not now · ✗ not open';
     const pct = typeof p === 'number' ? ` (${Math.round(p * 100)}%)` : '';
     return graded
         ? `planned work may remain${pct} · graded — ⏸ not now · ✗ not open`

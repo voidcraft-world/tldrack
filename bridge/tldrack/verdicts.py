@@ -23,7 +23,9 @@ loses its verdict: dismiss, kill, spawn, any busy, SessionStart/End
 
 WHAT IS KEPT. The verdict's own fields, a SHA-256 of the state, the transcript
 path and the conversation id. The answer-to-read stamps `asked` and `read` ride
-along (open_work.py § An answer to read): a read answer must not come back unread. Never the text: the closing message stays in the
+along (open_work.py § An answer to read): a read answer must not come back unread.
+So does the operator's label, `operator` (open_work.py § The operator's label): a
+correction must not come back as the mark it corrected. Never the text: the closing message stays in the
 transcript and in the ledger's allow-listed copy.
 
 A restart that loaded a NEW checkpoint restores the old checkpoint's verdict
@@ -41,7 +43,7 @@ import re
 from pathlib import Path
 
 from tldrack import paths
-from tldrack.open_work import DECISION_ID, MAX_MODEL_ID_CHARS, state_sha
+from tldrack.open_work import DECISION_ID, MAX_MODEL_ID_CHARS, clean_operator_label, state_sha
 from tldrack.profiles import AGENT_SESSION_ID_RE
 from tldrack.session_state_file import SessionStateFile, parse_session_map, serialize_session_map
 
@@ -76,8 +78,11 @@ def clean_verdict(verdict: object) -> dict | None:
     checkpoint, sha = verdict.get("checkpoint"), verdict.get("state_sha")
     model, version = verdict.get("model"), verdict.get("v")
     asked, read = verdict.get("asked", False), verdict.get("read", False)
+    label = verdict.get("operator")
+    operator = clean_operator_label(label) if label is not None else None
     if not (
-        isinstance(asked, bool)
+        (label is None or operator is not None)
+        and isinstance(asked, bool)
         and isinstance(read, bool)
         and _unit(p)
         and _unit(at)
@@ -100,7 +105,7 @@ def clean_verdict(verdict: object) -> dict | None:
         )
     ):
         return None
-    return {
+    cleaned = {
         "p": float(p),
         "v": version,
         "model": model,
@@ -113,6 +118,9 @@ def clean_verdict(verdict: object) -> dict | None:
         "asked": asked,
         "read": read,
     }
+    if operator is not None:
+        cleaned["operator"] = operator
+    return cleaned
 
 
 def clean_entry(entry: object) -> dict | None:
@@ -181,6 +189,23 @@ class SessionVerdictStore(SessionStateFile[dict]):
                 self._entries[session] = entry
                 self._persist_locked()
         return True
+
+    def label(self, session: str, decision_id: str, label: dict | None) -> bool:
+        """The operator labelled the kept verdict's decision (open_work.py § The operator's label): keep the
+        label with the copy, or drop it (None). Compare-and-set on the decision id; False when nothing kept
+        is that decision, or nothing changed."""
+        with self._lock:
+            entry = self._entries.get(session)
+            if entry is None or entry["verdict"].get("decision_id") != decision_id:
+                return False
+            verdict = {key: value for key, value in entry["verdict"].items() if key != "operator"}
+            if label is not None:
+                verdict["operator"] = dict(label)
+            if verdict == entry["verdict"]:
+                return False
+            entry["verdict"] = verdict
+            self._persist_locked()
+            return True
 
     def mark_read(self, session: str) -> bool:
         """The operator opened the pane of a kept answer to read: stamp the copy `read`, so a restart

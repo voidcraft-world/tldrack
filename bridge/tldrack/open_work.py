@@ -28,7 +28,10 @@ and those answers feed both cuts' sweeps.
 A turn that ANSWERS a question is done by the question above: the agent owes nothing, so the row
 draws ✅. But the operator still owes the answer a read, and ✅ alone says "nothing to look at".
 So a ✅ whose turn was opened by a question carries a second, separate signal: `answer_to_read`.
-The rack draws it as 📖 in the ✅'s place (`ui/src/config/terminal-status-flags.ts`).
+The rack draws it as 📖 in the ✅'s place (`ui/src/config/terminal-status-flags.ts`), and once the
+pane is opened as ☑️📖 (✅📖 on a row still reply-ready): `answer_read`. The read is the operator's
+act, so the 📖 that called for it stays beside the check as a record that the turn was an answer;
+until 2026-11-26 it vanished into a plain ☑️ on the click that read it.
 LAYA REVIEW's list draws the same 📖 on a ✅ the operator asked for, from the joined turn's `asked`
 (`ledger/reader.py` `turn_asked`), and keeps it after the read: that list records what a turn was.
 The mark is not a band; Laya's question, cuts and golden set do not move. The operator's grade of it
@@ -71,6 +74,23 @@ precision, the sweeps and a retrain read. What it records and why it is a flip o
 by plugins/laya/laya_bridge/review.py `rack` — see the note there. ⏸ NOT NOW grades nothing.
 The press's own HTTP headers go with it (`rack_grader`), and the plugin decides from them whether
 this caller may write a label: owned by plugins/laya/laya_bridge/plugin.py — see the note there.
+
+── The operator's label ────────────────────────────────────────────────────
+A grade given anywhere else (the LAYA REVIEW deck, its RECENT list, the phone) is the operator overruling
+Laya on that turn, so the row drawing Laya's mark for it must follow. Until 2026-11-26 it did not: a ✅ the
+operator flipped to OPEN on the deck stayed ✅ on the rack until the next turn end. The plugin reports every
+label write, per decision (plugins/laya/laya_bridge/review.py `label_changes`; the door: `watch_labels`),
+and the row still holding that `decision_id` takes the label as its verdict's `operator` (`label_change`,
+`StatusStore.label_open_work`), in the kept copy too (verdicts.py), so a restart keeps the correction.
+  · The label decides the band, Laya's p stays as the record: OPEN → ⚠️; DONE → ✅; DONE + `read` → 📖
+    until that pane is opened (§ An answer to read). A bare DONE is the operator saying nothing is owed a
+    read, so it draws ✅ even on a turn a question opened. `open_work_p` is still Laya's.
+  · A label that no longer stands (an undo, a SKIP) takes the override back: Laya's own band returns.
+  · A labelled ⚠️ is a graded one (`open_work_graded`): its menu stops offering ✓ STILL OPEN.
+  · Only the verdict ON the row moves. A label of an older turn finds no row holding its decision; nothing
+    is painted from it, and a new verdict on the same text is Laya's again.
+  · Not a reaction: the ledger's ⚠️ telemetry (`OpenWorkReactions`) records what the rack showed, and the
+    label is already recorded where the plugin keeps labels.
 
 ── The landing record ──────────────────────────────────────────────────────
 Where a verdict LANDED is known only after `/decide` answered: its class (held, new, repeat,
@@ -356,7 +376,7 @@ def is_done(p: float, done_at: float = DONE_AT) -> bool:
 #: The verdict's row keys, filled by `verdict_row_fields` and carried onto `/snapshot` rows by
 #: `snapshot.merge_snapshot`. The rack reads only the snapshot, so a key missing there is a mark
 #: the rack never draws: until 2026-11-05 none of the three reached it, and no ⚠️ or ✅ ever did.
-VERDICT_ROW_KEYS = ("open_work", "work_done", "open_work_p", "answer_to_read")
+VERDICT_ROW_KEYS = ("open_work", "work_done", "open_work_p", "answer_to_read", "answer_read")
 
 
 def asks_question(request: str | None) -> bool:
@@ -373,20 +393,80 @@ def with_request(verdict: dict, request: str | None) -> dict:
 
 def verdict_row_fields(verdict: dict | None) -> dict[str, object]:
     """The additive `/status` and `/snapshot` row fields: `open_work` (bool | None), `work_done`
-    (bool | None), `open_work_p`, and `answer_to_read` (bool | None: a ✅ on a turn that asked a
-    question, not read yet; § An answer to read). A verdict from before the done band (no
-    `done_at`) is never ✅: the rack drew 💬."""
+    (bool | None), `open_work_p`, then the two halves of an answer (§ An answer to read), each bool |
+    None: `answer_to_read`, a ✅ on a turn that answered the operator, not read yet (📖), and
+    `answer_read`, the same once read (☑️📖). A verdict from before the done band (no `done_at`) is
+    never ✅: the rack drew 💬. A verdict the operator labelled draws the label (§ The operator's
+    label): READ is an answer, a bare DONE is not."""
     if not verdict:
         return dict.fromkeys(VERDICT_ROW_KEYS)
     p = verdict["p"]
-    done_at = verdict.get("done_at")
-    done = is_done(p, done_at) if isinstance(done_at, (int, float)) else False
+    label = verdict.get("operator")
+    if isinstance(label, dict):
+        is_open_now = label["open"]
+        done = is_open_now is False
+        answer = done and label.get("needs") == "read"
+    else:
+        done_at = verdict.get("done_at")
+        is_open_now = is_open(p, verdict.get("at", OPEN_WORK_AT))
+        done = is_done(p, done_at) if isinstance(done_at, (int, float)) else False
+        answer = done and verdict.get("asked") is True
+    read = verdict.get("read") is True
     return {
-        "open_work": is_open(p, verdict.get("at", OPEN_WORK_AT)),
+        "open_work": is_open_now,
         "work_done": done,
         "open_work_p": round(p, 3),
-        "answer_to_read": done and verdict.get("asked") is True and verdict.get("read") is not True,
+        "answer_to_read": answer and not read,
+        "answer_read": answer and read,
     }
+
+
+#: The second halves a label may carry, on their own side of `open`: copies of schemas/src/laya-review.ts
+#: `REVIEW_NEEDS` / `REVIEW_NEEDS_OPEN` (a bridge module may not import a plugin's or the schemas';
+#: lab/tests/test_label_wire.py pins both to the plugin's).
+LABEL_NEEDS_OPEN = ("you", "running")
+LABEL_NEEDS_DONE = ("read",)
+
+
+def clean_operator_label(value: object) -> dict | None:
+    """`{"open": bool, "needs": str | None}` when `value` is a label the rack can draw, else None. `needs`
+    must sit on its own side of `open`, as the plugin already demanded when it wrote the label."""
+    if not isinstance(value, dict):
+        return None
+    is_open, needs = value.get("open"), value.get("needs")
+    if not isinstance(is_open, bool):
+        return None
+    if needs is not None and needs not in (LABEL_NEEDS_OPEN if is_open else LABEL_NEEDS_DONE):
+        return None
+    return {"open": is_open, "needs": needs}
+
+
+def label_change(change: object) -> tuple[str, dict | None] | None:
+    """One entry of the plugin's report (§ The operator's label) as `(decision_id, label | None)`, None
+    for anything this rack does not draw: another surface, a malformed id, a malformed label. `open`
+    None is a label that no longer stands, so `(decision_id, None)` takes the override back."""
+    if not isinstance(change, dict) or change.get("surface") != LEDGER_SURFACE:
+        return None
+    decision_id = change.get("decision_id")
+    if not isinstance(decision_id, str) or not DECISION_ID.fullmatch(decision_id):
+        return None
+    if change.get("open") is None:
+        return decision_id, None
+    label = clean_operator_label(change)
+    return (decision_id, label) if label is not None else None
+
+
+def watch_operator_labels(plugin: object, listener: Callable[[list], None]) -> bool:
+    """Subscribe `listener` to the plugin's label writes (`watch_labels`), never raising. False for no
+    plugin, or one from before the door: its labels then repaint nothing, as before."""
+    method = getattr(plugin, "watch_labels", None)
+    if not callable(method):
+        return False
+    try:
+        method(listener)
+    except Exception:  # noqa: BLE001 — a plugin bug must not take the bridge's start down
+        return False
+    return True
 
 
 def open_work_cut(thresholds: object, model: str | None) -> float:

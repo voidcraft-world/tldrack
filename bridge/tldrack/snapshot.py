@@ -504,7 +504,7 @@ def merge_snapshot(
 ) -> list[dict]:
     """Union-merge tmux sessions with StatusStore.list() rows, sorted by session name.
 
-    Every row carries all twenty keys. Store fields (state/age_seconds/message/
+    Every row carries all twenty-one keys. Store fields (state/age_seconds/message/
     activity/tasks/model/usage/state_source, and Laya's verdict, `VERDICT_ROW_KEYS`)
     come from StatusStore; title/attached/cwd come from tmux,
     client_ttys from `list_tmux_clients`. A session in only one source gets defaults

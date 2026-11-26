@@ -85,6 +85,29 @@ def test_mark_read_stamps_the_kept_copy_once_and_persists_it(tmp_path):
     assert SessionVerdictStore(path).get("vc-1")["verdict"]["read"] is True
 
 
+def test_an_operator_label_is_kept_and_a_malformed_one_refuses_the_whole_verdict():
+    """A hand-edited label must never paint a row: the verdict goes with it (open_work.py § The operator's label)."""
+    assert clean_verdict(verdict(operator={"open": True, "needs": "you"}))["operator"] == {"open": True, "needs": "you"}
+    assert "operator" not in clean_verdict(verdict()), "an unlabelled verdict reads as before"
+    assert clean_verdict(verdict(operator={"open": True, "needs": "read"})) is None
+    assert clean_verdict(verdict(operator={"open": "yes"})) is None
+    assert clean_verdict(verdict(operator="open")) is None
+
+
+def test_label_follows_the_kept_decision_only_and_persists(tmp_path):
+    path = tmp_path / "verdicts.json"
+    store = SessionVerdictStore(path)
+    store.set("vc-1", verdict(), "/x/s.jsonl", CONVERSATION)
+    decision = verdict()["decision_id"]
+    assert not store.label("vc-1", "20261104T090002-000000000099", {"open": False, "needs": None}), "another turn's"
+    assert not store.label("vc-2", decision, {"open": False, "needs": None}), "nothing kept there"
+    assert store.label("vc-1", decision, {"open": False, "needs": "read"})
+    assert not store.label("vc-1", decision, {"open": False, "needs": "read"}), "nothing changed"
+    assert SessionVerdictStore(path).get("vc-1")["verdict"]["operator"] == {"open": False, "needs": "read"}
+    assert store.label("vc-1", decision, None)
+    assert "operator" not in SessionVerdictStore(path).get("vc-1")["verdict"]
+
+
 def test_an_old_verdict_from_before_the_done_band_still_parses():
     assert clean_verdict(verdict(done_at=None))["done_at"] is None
 

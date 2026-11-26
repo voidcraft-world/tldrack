@@ -5,6 +5,7 @@ import { to_rack_session } from '../../src/engine/terminal/rack-view.ts';
 import { build_rack_rows } from '../../src/engine/terminal/multi-terminal-layout.ts';
 import { has_unread_answer } from '../../src/agent-rack/open-work-client.ts';
 import {
+    ANSWER_READ_EMOJI,
     ANSWER_TO_READ_EMOJI,
     OPEN_WORK_BADGE,
     OPEN_WORK_WAITING_BADGE,
@@ -12,6 +13,8 @@ import {
     TERMINAL_STATUS_FLAGS,
     WORK_DONE_EMOJI,
     OPEN_WORK_WAITING_TITLE,
+    answer_read_shown,
+    answer_read_title,
     answer_to_read_shown,
     answer_to_read_title,
     open_work_badge_shown,
@@ -172,10 +175,28 @@ test('📖 takes the ✅ place while its answer is unread, wherever the ✅ woul
     for (const state of ['busy', 'attention', 'background', 'unknown'] as const) {
         assert.equal(answer_to_read_shown(state, { answer: true }, false), false, state);
     }
-    const marks = [ANSWER_TO_READ_EMOJI, ...Object.values(WORK_DONE_EMOJI), OPEN_WORK_BADGE, OPEN_WORK_WAITING_BADGE, STUCK_BADGE];
+    const marks = [ANSWER_TO_READ_EMOJI, ...Object.values(ANSWER_READ_EMOJI), ...Object.values(WORK_DONE_EMOJI),
+        OPEN_WORK_BADGE, OPEN_WORK_WAITING_BADGE, STUCK_BADGE];
     assert.equal(new Set(marks).size, marks.length, 'one mark, one meaning');
     assert.equal(answer_to_read_title(0.05), 'answer to read · work looks done (5% open)');
     assert.equal(answer_to_read_title(null), 'answer to read · work looks done');
+});
+
+test('a read answer keeps its 📖 beside the check, wherever the ✅ would draw', () => {
+    assert.equal(answer_read_shown('free', { read: true }, false), true);
+    assert.equal(answer_read_shown('done', { read: true }, false), true);
+    assert.equal(answer_read_shown('free', {}, false), false, 'never an answer: the plain ☑️');
+    assert.equal(answer_read_shown('free', { read: true }, true), false, 'a gone row draws 💀');
+    for (const state of ['busy', 'attention', 'background', 'unknown'] as const) {
+        assert.equal(answer_read_shown(state, { read: true }, false), false, state);
+    }
+    assert.deepEqual(ANSWER_READ_EMOJI, { done: '✅📖', free: '☑️📖' });
+    assert.equal(parse_session_row({ session: 'a', state: 'free', answer_read: true })?.answer_read, true);
+    assert.equal(parse_session_row({ session: 'a', state: 'free', answer_read: 'yes' })?.answer_read, null);
+    assert.deepEqual(to_rack_session(snapshot_row({ session: 'R', display: 'free', open_work: false, work_done: true,
+        open_work_p: 0.05, answer_read: true })).work_done, { p: 0.05, read: true });
+    assert.equal(answer_read_title('free', 0.05), 'idle · answer read · work looks done (5% open)');
+    assert.equal(answer_read_title('done', 0.05, true), 'reply ready · answer read · you marked it done');
 });
 
 // tldrack/attention.py: ⏳ while children run, nothing once parked; stuck.py's 🧱.
@@ -212,6 +233,19 @@ test('the attention fields reach the rack row', () => {
     assert.equal(parse_session_row({ session: 'a', state: 'free', open_work: true, open_work_graded: 'yes' })?.open_work_graded, false);
     assert.deepEqual(to_rack_session(snapshot_row({ session: 'G', display: 'done', open_work: true, open_work_p: 0.8,
         open_work_graded: true })).open_work, { p: 0.8, graded: true });
+});
+
+test('a mark the operator labelled on LAYA REVIEW says it is theirs, never Laya\'s p', () => {
+    // bridge/tldrack/open_work.py § The operator's label: only a literal true counts.
+    assert.equal(parse_session_row({ session: 'a', state: 'free', open_work_labelled: true })?.open_work_labelled, true);
+    assert.equal(parse_session_row({ session: 'a', state: 'free', open_work_labelled: 1 })?.open_work_labelled, false);
+    assert.deepEqual(to_rack_session(snapshot_row({ session: 'L', display: 'done', open_work: true, open_work_p: 0.05,
+        open_work_graded: true, open_work_labelled: true })).open_work, { p: 0.05, graded: true, labelled: true });
+    assert.deepEqual(to_rack_session(snapshot_row({ session: 'D', display: 'free', open_work: false, work_done: true,
+        open_work_p: 0.95, answer_to_read: true, open_work_labelled: true })).work_done, { p: 0.95, answer: true, labelled: true });
+    assert.equal(open_work_badge_title(0.05, true, true), 'you marked work still open · graded — ⏸ not now · ✗ not open');
+    assert.equal(work_done_title('free', 0.95, true), 'idle · you marked it done');
+    assert.equal(answer_to_read_title(0.95, true), 'answer to read · you marked it done');
 });
 
 test('stuck is validated, drawn on working rows only, and says why', () => {

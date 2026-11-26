@@ -22,7 +22,7 @@
   "bridge/tldrack/ledger/side_ledgers.py": 3,
   "bridge/tldrack/ledger/store.py": 2,
   "bridge/tldrack/live_marks.py": 3,
-  "bridge/tldrack/main.py": 74,
+  "bridge/tldrack/main.py": 72,
   "bridge/tldrack/missions.py": 9,
   "bridge/tldrack/next_step.py": 3,
   "bridge/tldrack/notify.py": 4,
