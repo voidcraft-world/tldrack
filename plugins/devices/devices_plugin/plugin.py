@@ -1,4 +1,4 @@
-"""The devices plugin: CPU and memory of this machine and every compute host, for the rack's DEVICES section.
+"""The devices plugin: CPU, memory, swap and GPU of this machine and every compute host, for the rack's DEVICES section.
 
     GET /state   {"version", "sample_s", "devices": [device, …]}, this machine first, then hosts.json order
 

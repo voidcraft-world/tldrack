@@ -2,14 +2,24 @@
 
 from devices_plugin.probe import (
     END,
+    GPU_PREFIX,
+    MIB,
     VM_PREFIX,
     BlockReader,
+    Gpu,
     Ticks,
     busy_cores,
     linux_memory,
+    linux_swap,
+    linux_swap_moved,
     linux_ticks,
     mac_used_bytes,
+    parse_ioreg_gpu,
+    parse_nvidia,
+    parse_swapusage,
     parse_vm_stat,
+    parse_vm_swap_moved,
+    swap_rate,
 )
 
 VM_STAT = """Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -111,6 +121,104 @@ def test_mac_stream_reports_cpu_directly_and_reads_vm_stat():
 def test_mac_stream_clamps_ps_sum_to_cores():
     readings = feed(BlockReader(), f"cores=2\n{END}\ncpu_pct=380\n{END}")
     assert readings[-1].cpu_busy == 2.0
+
+
+def test_swap_rate_is_bytes_a_second_between_two_reads():
+    assert swap_rate(1_000, 5_000, 2.0) == 2_000
+    assert swap_rate(None, 5_000, 2.0) is None  # the first read
+    assert swap_rate(5_000, 1_000, 2.0) is None  # a counter that went back: a reboot
+    assert swap_rate(1_000, 5_000, 0) is None
+    assert swap_rate(1_000, 5_000, None) is None
+
+
+def test_linux_swap_is_total_less_free_and_its_counters_are_pages():
+    assert linux_swap(2048, 512) == (1536 * 1024, 2048 * 1024)
+    assert linux_swap(0, 0) == (0, 0)  # no swap configured
+    assert linux_swap(None, 512) == (None, None)
+    assert linux_swap(2048, None) == (None, 2048 * 1024)
+    assert linux_swap_moved(10, 30, 4096) == 40 * 4096
+    assert linux_swap_moved(10, None, 4096) is None
+    assert linux_swap_moved(10, 30, None) is None
+
+
+def test_parse_swapusage_reads_the_sysctl_line():
+    assert parse_swapusage("total = 2048.00M  used = 1024.50M  free = 1023.50M  (encrypted)") == (
+        round(1024.5 * MIB),
+        2048 * MIB,
+    )
+    assert parse_swapusage("") == (None, None)
+    assert parse_swapusage(None) == (None, None)
+
+
+def test_vm_stat_carries_the_swap_counters_too():
+    lines = [*VM_STAT, "Swapins:                                     100.", "Swapouts:                                    300."]
+    assert parse_vm_swap_moved(lines) == 400 * 16384
+    assert parse_vm_stat(lines) == parse_vm_stat(VM_STAT)  # the memory formula ignores them
+    assert parse_vm_swap_moved(VM_STAT) is None
+
+
+def test_several_nvidia_gpus_read_as_the_busiest_and_their_memory_summed():
+    assert parse_nvidia("38, 1024, 24576;91, 2048, 24576;") == Gpu(pct=91.0, mem_used=3072 * MIB, mem_total=49152 * MIB)
+    assert parse_nvidia("[N/A], [N/A], [N/A];") is None
+    assert parse_nvidia("") is None
+    assert parse_nvidia(None) is None
+
+
+def test_ioreg_gpu_lines_read_as_utilisation_and_memory_in_use():
+    assert parse_ioreg_gpu(['"Device Utilization %"=38', '"In use system memory"=9964273664']) == Gpu(
+        pct=38.0, mem_used=9964273664
+    )
+    assert parse_ioreg_gpu(['"Device Utilization %"=12', '"Device Utilization %"=70']) == Gpu(pct=70.0)
+    assert parse_ioreg_gpu(['"In use system memory"=9964273664']) is None  # memory alone is not a GPU readout
+    assert parse_ioreg_gpu([]) is None
+
+
+def test_linux_stream_carries_swap_and_an_nvidia_gpu():
+    reader = BlockReader()
+    for line in ("os=Linux x86_64", "cores=8", "page_size=4096", END):
+        reader.feed(line)
+    block = [
+        "cpu=cpu  100 0 0 900 0 0 0 0",
+        "mem_total_kb=1000",
+        "mem_avail_kb=400",
+        "swap_total_kb=2048",
+        "swap_free_kb=1024",
+        "swap_in=10",
+        "swap_out=30",
+        "gpu=38, 1024, 24576;",
+        END,
+    ]
+    reading = [reader.feed(line) for line in block][-1]
+    assert (reading.swap_used, reading.swap_total, reading.swap_moved) == (1024 * 1024, 2048 * 1024, 40 * 4096)
+    assert reading.gpu == Gpu(pct=38.0, mem_used=1024 * MIB, mem_total=24576 * MIB)
+
+
+def test_a_linux_host_without_swap_counters_or_a_gpu_reports_neither():
+    reader = BlockReader()
+    for line in ("os=Linux x86_64", "cores=8", END):
+        reader.feed(line)
+    reading = [reader.feed(line) for line in ("cpu=cpu  100 0 0 900 0 0 0 0", "mem_total_kb=1000", "mem_avail_kb=400", END)][-1]
+    assert (reading.swap_used, reading.swap_total, reading.swap_moved, reading.gpu) == (None, None, None, None)
+    assert reading.mem_used == 600 * 1024
+
+
+def test_mac_stream_carries_swap_and_the_ioreg_gpu():
+    reader = BlockReader()
+    for line in ("os=Darwin arm64", "cores=10", "mem_total=34359738368", END):
+        reader.feed(line)
+    block = [
+        "cpu_pct=220.0",
+        "swap=total = 2048.00M  used = 1024.00M  free = 1024.00M  (encrypted)",
+        *(VM_PREFIX + line for line in [*VM_STAT, "Swapins:     100.", "Swapouts:     300."]),
+        GPU_PREFIX + '"Device Utilization %"=38',
+        GPU_PREFIX + '"In use system memory"=9964273664',
+        END,
+    ]
+    reading = [reader.feed(line) for line in block][-1]
+    assert (reading.swap_used, reading.swap_total, reading.swap_moved) == (1024 * MIB, 2048 * MIB, 400 * 16384)
+    assert reading.gpu == Gpu(pct=38.0, mem_used=9964273664)
+    # The next block's GPU lines are its own: none sent means none read.
+    assert [reader.feed(line) for line in ("cpu_pct=1.0", *(VM_PREFIX + line for line in VM_STAT), END)][-1].gpu is None
 
 
 def test_a_partial_block_at_eof_is_never_read():

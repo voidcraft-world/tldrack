@@ -1,5 +1,6 @@
 /**
- * The rack's DEVICES section: each machine's CPU and memory, from `GET /plugin/devices/state`.
+ * The rack's DEVICES section: each machine's CPU and memory, with its GPU and swap beside them, from
+ * `GET /plugin/devices/state`.
  *
  * The bridge sends raw numbers (cores busy, bytes); every percentage and every string on screen
  * is made here, once, so two rack surfaces cannot format them two ways. What the numbers
@@ -24,6 +25,16 @@ export interface DeviceSample {
     cpu_busy: number | null;
     mem_used: number | null;
     mem_total: number | null;
+    /** Bytes of swap in use, and of swap there is (on macOS: allocated so far). Null where the plugin predates them. */
+    swap_used: number | null;
+    swap_total: number | null;
+    /** Bytes a second moving in and out of swap over the last sample interval; null until there are two samples. */
+    swap_rate: number | null;
+    /** The busiest GPU's utilisation, 0–100; null on a device that reports no GPU. */
+    gpu_pct: number | null;
+    /** Bytes of GPU memory in use; the total is null on shared memory (Apple silicon). */
+    gpu_mem_used: number | null;
+    gpu_mem_total: number | null;
     /** Seconds since that sample. */
     age_s: number | null;
     error: string | null;
@@ -167,6 +178,12 @@ function parse_device(raw: unknown): DeviceSample | null {
         cpu_busy: num_or_null(row.cpu_busy),
         mem_used: num_or_null(row.mem_used),
         mem_total: num_or_null(row.mem_total),
+        swap_used: num_or_null(row.swap_used),
+        swap_total: num_or_null(row.swap_total),
+        swap_rate: num_or_null(row.swap_rate),
+        gpu_pct: num_or_null(row.gpu_pct),
+        gpu_mem_used: num_or_null(row.gpu_mem_used),
+        gpu_mem_total: num_or_null(row.gpu_mem_total),
         age_s: num_or_null(row.age_s),
         error: typeof row.error === 'string' ? row.error : null,
         session_memory: parse_session_memory(row.session_memory),
@@ -203,6 +220,21 @@ export interface DeviceMeter {
     text: string;
     pct: number | null;
     warn: boolean;
+    /** The readout that shares this meter's row: GPU beside CPU, SWAP beside RAM. Absent where the device reports none. */
+    side?: DeviceSide;
+}
+
+/**
+ * A second readout on a meter's row, so a device stays two rows tall: the GPU's utilisation beside the CPU, swap
+ * beside the memory it spills from. Text only (the row's one bar belongs to its meter); amber is its alarm.
+ */
+export interface DeviceSide {
+    label: 'GPU' | 'SWAP';
+    /** `38%`, or `24.1 GB`, or `24.1 GB · 429 MB/s` while swap is moving. */
+    text: string;
+    warn: boolean;
+    /** Its clause of the row's sentence. */
+    title: string;
 }
 
 export interface DeviceRow {
@@ -399,15 +431,52 @@ function device_lease(lease: LeaseStatus): DeviceLease {
     return { summary: parts.length ? parts.join(' — ') : 'free', title, warn };
 }
 
+/**
+ * Swap moving this fast is named on the row: below it, paging is the background hum of any busy machine.
+ * In plus out, bytes a second (`plugins/devices/devices_plugin/probe.py` owns what the rate is).
+ */
+export const SWAP_SHOWN_RATE = MIB;
+/** Swap moving this fast turns amber: the machine is spending its time paging, and whatever runs on it crawls. */
+export const SWAP_WARN_RATE = 32 * MIB;
+
+/** The GPU beside the CPU: how busy the busiest one is. Its memory is in the sentence, not on the row. */
+function gpu_side(device: DeviceSample): DeviceSide | null {
+    if (device.gpu_pct === null) return null;
+    const pct = Math.min(100, Math.round(device.gpu_pct));
+    const memory = device.gpu_mem_used === null ? ''
+        : device.gpu_mem_total === null ? `, ${memory_text(device.gpu_mem_used)} of memory in use`
+        : `, ${gb(device.gpu_mem_used, false)}/${gb(device.gpu_mem_total, true)} GB of its memory in use`;
+    return { label: 'GPU', text: `${pct}%`, warn: pct >= DEVICE_WARN_PCT, title: `GPU ${pct}% busy${memory}` };
+}
+
+/** Swap beside the memory: how much is out, and how fast it is moving once that is worth saying. */
+function swap_side(device: DeviceSample): DeviceSide | null {
+    // No total is a machine with no swap configured (Linux), or none allocated yet (macOS): nothing to read.
+    if (device.swap_used === null || !device.swap_total) return null;
+    const used = memory_text(device.swap_used);
+    const rate = device.swap_rate ?? 0;
+    const moving = rate >= SWAP_SHOWN_RATE ? `${memory_text(rate)}/s` : null;
+    const warn = rate >= SWAP_WARN_RATE;
+    return {
+        label: 'SWAP',
+        text: moving ? `${used} · ${moving}` : used,
+        warn,
+        title: `${used} of ${gb(device.swap_total, true)} GB swap used`
+            + (moving ? `, ${moving} moving in and out${warn ? ': the machine is short of memory and is paging' : ''}` : ''),
+    };
+}
+
 function cpu_meter(device: DeviceSample): DeviceMeter | null {
     if (device.cores === null && device.cpu_busy === null) return null;
     const busy = device.cpu_busy === null ? '—' : device.cpu_busy.toFixed(1);
     const pct = pct_of(device.cpu_busy, device.cores);
+    const side = gpu_side(device);
     return {
         label: 'CPU',
         text: device.cores === null ? busy : `${busy}/${device.cores}`,
         pct,
         warn: pct !== null && pct >= DEVICE_WARN_PCT,
+        ...(side ? { side } : {}),
     };
 }
 
@@ -415,7 +484,14 @@ function ram_meter(device: DeviceSample): DeviceMeter | null {
     if (device.mem_total === null) return null;
     const used = device.mem_used === null ? '—' : gb(device.mem_used, false);
     const pct = pct_of(device.mem_used, device.mem_total);
-    return { label: 'RAM', text: `${used}/${gb(device.mem_total, true)} GB`, pct, warn: pct !== null && pct >= DEVICE_WARN_PCT };
+    const side = swap_side(device);
+    return {
+        label: 'RAM',
+        text: `${used}/${gb(device.mem_total, true)} GB`,
+        pct,
+        warn: pct !== null && pct >= DEVICE_WARN_PCT,
+        ...(side ? { side } : {}),
+    };
 }
 
 function sentence(label: string, device: DeviceSample, meters: DeviceMeter[], status: string | null): string {
@@ -424,6 +500,7 @@ function sentence(label: string, device: DeviceSample, meters: DeviceMeter[], st
     for (const meter of meters) {
         const pct = meter.pct === null ? '' : ` (${meter.pct}%)`;
         parts.push(meter.label === 'CPU' ? `${meter.text} cores busy${pct}` : `${meter.text} memory used${pct}`);
+        if (meter.side) parts.push(meter.side.title);
     }
     if (status) parts.push(status.toLowerCase());
     if (device.error) parts.push(device.error);

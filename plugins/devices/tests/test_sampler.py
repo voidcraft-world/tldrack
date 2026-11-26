@@ -5,7 +5,8 @@ import json
 import threading
 import time
 
-from devices_plugin.probe import END, Reading, Ticks
+from devices_plugin.mac_gpu import fold
+from devices_plugin.probe import END, Gpu, Reading, Ticks
 from devices_plugin.sampler import (
     CONNECTING,
     DOWN,
@@ -128,6 +129,59 @@ def test_local_sampler_reports_busy_cores_from_the_second_read():
     assert snap["local"] is True and snap["mem_used"] == 2 and snap["state"] == UP
     sampler.close()
     gate.set()
+
+
+def test_swap_rate_is_a_delta_over_the_samplers_own_clock_and_the_gpu_rides_each_read():
+    clock = Clock()
+    reads = iter(
+        [
+            Reading(cores=4, swap_used=10, swap_total=40, swap_moved=1_000, gpu=Gpu(pct=38.0, mem_used=7)),
+            Reading(cores=4, swap_used=12, swap_total=40, swap_moved=9_000, gpu=Gpu(pct=91.0, mem_used=8, mem_total=24)),
+        ]
+    )
+    gate = threading.Event()
+
+    def read():
+        reading = next(reads, None)
+        if reading is None:
+            gate.wait(5)
+            raise OSError("done")
+        clock.now += 2.0
+        return reading
+
+    sampler = LocalSampler("local", read, sleep_seconds=0.01, clock=clock)
+    row = sampler.snapshot()
+    assert (row["swap_used"], row["swap_rate"], row["gpu_pct"], row["gpu_mem_used"], row["gpu_mem_total"]) == (None,) * 5
+    sampler.touch()
+    first = sampler.snapshot()
+    if first["swap_used"] == 10:  # the read the GET carried: a level and a GPU, no rate yet
+        assert (first["swap_total"], first["swap_rate"], first["gpu_pct"], first["gpu_mem_total"]) == (40, None, 38.0, None)
+    assert wait_for(lambda: sampler.snapshot()["swap_rate"] == 4_000)
+    snap = sampler.snapshot()
+    assert (snap["swap_used"], snap["gpu_pct"], snap["gpu_mem_used"], snap["gpu_mem_total"]) == (12, 91.0, 8, 24)
+    sampler.close()
+    gate.set()
+
+
+def test_a_failed_read_forgets_the_swap_delta_so_a_rate_never_spans_the_gap():
+    clock = Clock()
+    sampler = LocalSampler("local", lambda: Reading(cores=1), clock=clock)
+    sampler._record(Reading(cores=1, swap_moved=1_000))
+    clock.now += 2.0
+    sampler._record(Reading(cores=1, swap_moved=5_000))
+    assert sampler.snapshot()["swap_rate"] == 2_000
+    sampler._fail("gone")
+    assert sampler.snapshot()["swap_rate"] is None
+    clock.now += 600.0
+    sampler._record(Reading(cores=1, swap_moved=9_000_000))
+    assert sampler.snapshot()["swap_rate"] is None
+
+
+def test_several_accelerators_fold_to_the_busiest_and_their_memory_summed():
+    assert fold([(12, 100), (70, 50), (None, 5)]) == Gpu(pct=70.0, mem_used=155)
+    assert fold([(250, None)]) == Gpu(pct=100.0)  # a driver's odd figure is still a percentage
+    assert fold([(None, 100)]) is None  # no utilisation is no GPU readout
+    assert fold([]) is None
 
 
 def test_local_sampler_stops_when_nobody_reads_it():
