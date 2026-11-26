@@ -234,7 +234,7 @@ function office_parts() {
 }
 
 /** A standing robot's legs, and how far it steps back behind its chair to stand. */
-const ROBOT_LEG = 0.8;
+const ROBOT_LEG = 0.56;
 const STAND_BACK = 0.45;
 /** The raised hand: the arm swung up past vertical and stretched to clear the head,
  *  leaning out from the body between two held angles (radians from hanging). */
@@ -400,6 +400,16 @@ class OfficeRig {
         this.deck.add(this.hitbox);
         this.leader.visible = false;
         this.deck.add(this.leader);
+        const outlined: Mesh[] = [];
+        this.deck.traverse((object) => {
+            if (object instanceof Mesh && object.material === solid) outlined.push(object);
+        });
+        for (const part of outlined) {
+            const glow = new Mesh(part.geometry, this.outline.glow);
+            glow.name = 'office-outline-glow';
+            glow.renderOrder = 1;
+            part.add(glow);
+        }
     }
 
     place(desk: OfficeDesk): void {
@@ -491,6 +501,7 @@ class OfficeRig {
         this.hovered = hovered;
         this.focused = focused;
         this.outline.strength.value = focused ? 1 : hovered ? 0.65 : 0;
+        this.outline.glow.visible = focused || hovered;
     }
 
     private set_nameplate(lines: LabelLine[]): void {
@@ -620,6 +631,7 @@ class OfficeRig {
         this.screen_material.map?.dispose();
         this.screen_material.dispose();
         this.outline.material.dispose();
+        this.outline.glow.dispose();
         if (this.nameplate) dispose_sprite(this.nameplate);
     }
 }

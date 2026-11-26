@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import ts from 'typescript';
-import type { Object3D, MeshBasicMaterial, WebGLProgramParametersWithUniforms, WebGLRenderer } from 'three';
+import type { Object3D, MeshBasicMaterial, ShaderMaterial } from 'three';
 // The scene has constructor parameter properties; Node's default strip-only loader does not.
 registerHooks({ load(url, context, next) {
     if (url.endsWith('/agent-office-scene.ts')) return { format: 'module', shortCircuit: true,
@@ -42,21 +42,25 @@ function with_scene(run: (scene: InstanceType<typeof AgentOfficeScene>) => void)
     const scene = new AgentOfficeScene();
     try { run(scene); } finally { scene.dispose(); globalThis.document = previous; }
 }
-test('selection outlines visible surfaces, screens grow, and floor textures are cached and released', () => {
+test('selection glows through occluders, screens grow, and floor textures are cached and released', () => {
     with_scene((scene) => {
         const layout = build_office(rows, 'agent-a');
         scene.update(layout);
         const beacons = objects(scene, object => object.geometry?.type === 'TorusGeometry');
         assert.equal(beacons.length, 0, 'no selection halos');
-        const materials = [...new Set(objects(scene, object => object.name === 'robot')
-            .map(robot => (robot.children[0] as unknown as { material: MeshBasicMaterial }).material))];
-        const shaders = materials.map(material => {
-            const shader = { uniforms: {}, vertexShader: '', fragmentShader: '' } as WebGLProgramParametersWithUniforms;
-            material.onBeforeCompile(shader, {} as WebGLRenderer);
-            assert.equal(material.depthTest, true, 'selection respects furniture occlusion');
-            return shader;
-        });
-        const strengths = () => shaders.map(shader => shader.uniforms.office_outline_strength.value);
+        const glows = objects(scene, object => object.name === 'office-outline-glow');
+        const materials = [...new Set(glows.map(glow => glow.material as unknown as ShaderMaterial))];
+        assert.equal(materials.length, 2, 'one glow material per agent');
+        for (const material of materials) {
+            assert.equal(material.depthTest, false, 'glow remains visible through occluders');
+            assert.equal(material.depthWrite, false);
+            assert.equal(material.transparent, true);
+        }
+        for (const glow of glows) {
+            assert.equal(glow.geometry, (glow.parent as Probe).geometry);
+            assert.ok(glow.renderOrder < 2, 'labels render above the glow');
+        }
+        const strengths = () => materials.map(material => material.uniforms.strength.value);
         assert.deepEqual(strengths(), [1, 0]);
         scene.set_hovered('agent-b');
         assert.deepEqual(strengths(), [1, 0.65]);
@@ -65,6 +69,7 @@ test('selection outlines visible surfaces, screens grow, and floor textures are 
         scene.update(build_office(rows, 'agent-b'));
         assert.deepEqual(strengths(), [0, 1]);
         scene.update(layout);
+        assert.deepEqual(materials.map(material => material.visible), [true, false]);
         const labels = objects(scene, object => object.isSprite);
         assert.equal(labels.length, 2);
         assert.ok(labels.every(label => label.material.sizeAttenuation && label.material.depthTest));
@@ -121,6 +126,12 @@ test('an agent that wants you hops with a hand up, and its nameplate is planned 
         const waiting = robots.find(robot => robot.position.y > 0)!;
         const seated = robots.find(robot => robot.position.y === 0)!;
         const floor = waiting.position.y;
+        const legs = waiting.children.filter(child => {
+            const geometry = (child as Probe).geometry as { parameters?: { height?: number } } | undefined;
+            return geometry?.parameters?.height === 0.56;
+        });
+        assert.equal(legs.length, 2, 'standing legs are 30% shorter');
+        for (const leg of legs) assert.ok(Math.abs(floor + leg.position.y - 0.56 / 2) < 1e-9, 'feet stay on the floor');
         const hands = named('raised-hand');
         assert.equal(hands.length, 2);
         assert.equal(hands.filter(hand => hand.visible).length, 1);
