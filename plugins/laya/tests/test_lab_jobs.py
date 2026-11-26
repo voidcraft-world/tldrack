@@ -190,7 +190,7 @@ def test_start_argv_is_the_runners_start_in_the_lab_session_with_its_stamps():
 def test_the_tooltip_is_the_lab_command_or_with_a_runner_the_recorded_run(runner):
     assert lab_jobs.cli_text("score", SURFACE) == "cd lab && uv run laya-lab review-open-work --model served"
     assert lab_jobs.cli_text("score", SURFACE, runner) == "evals start laya-score"
-    assert all(row["cli"] == f"evals start laya-{row['verb']}" for row in job_rows(None, None, runner))
+    assert all(row["cli"] == f"evals start {lab_jobs.eval_id(row['verb'], SURFACE)}" for row in job_rows(None, None, runner))
     assert all(row["cli"].startswith("cd lab && uv run laya-lab ") for row in job_rows(None))
 
 

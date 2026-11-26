@@ -56,7 +56,7 @@ INSTALL_HINT = "tldrack laya install (or POST /plugin/laya/install): uv sync --p
 #: A `/decide` state may be a long hand-off; the host's 4 KB default refused every one past it.
 MAX_BODY_BYTES = 256 * 1024
 
-POLICY_GETS = ("/card", "/ops", "/review/queue", "/review/item", "/review/recent")
+POLICY_GETS = ("/card", "/ops", "/training", "/review/queue", "/review/item", "/review/recent")
 POLICY_POSTS = (
     "/card/publish",
     "/challenger",
@@ -305,6 +305,7 @@ class LayaPlugin:
             "/install",
             "/restart",
             "/ops",
+            "/training",
             "/card",
             "/card/publish",
             "/lab",
@@ -473,6 +474,8 @@ class LayaPlugin:
                 self._drain.kick()  # no start on a read thread: the drain takes the next turn
             jobs = lab_jobs.job_rows(lab_jobs.parse_lab_panes(lab_jobs.list_panes() or ""), queue, self._runner)
             return 200, ops_state(base, self._runtime.status(), jobs, loaded=loaded, runner=self._runner)
+        if subpath == "/training":
+            return review.training(base, query)
         if subpath == "/review/queue":
             return review.queue(base, query, loaded=loaded)
         if subpath == "/review/recent":

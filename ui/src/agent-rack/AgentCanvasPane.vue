@@ -22,6 +22,7 @@ import type { OfficeAction, OfficeRack } from '../engine/terminal/agent-office-l
 import type { RackSession } from '../engine/terminal/multi-terminal-layout.ts';
 import { is_service_session } from '../engine/terminal/service-sessions.ts';
 import { set_office_enabled, useRackPrefs } from '../composables/useRackPrefs.ts';
+import { TRAINING_PAGE } from '../config/pages.ts';
 import {
     LEAD_DECISIONS_SLOT_ID,
     NEXT_STEP_SLOT_ID,
@@ -45,6 +46,11 @@ const prefs = useRackPrefs();
 const office_on = computed(() => prefs.value.office);
 function toggle_office(): void {
     set_office_enabled(!office_on.value);
+}
+/** TRAINING: Laya's retrain and results, in its own window, beside this page on whatever origin served it
+ *  (`config/pages.ts`). It finds the bridge the way every sibling page does (`rack-remote.ts` `resolve_page_bridge`). */
+function open_training(): void {
+    window.open(new URL(TRAINING_PAGE, window.location.href).href, 'tldrack-training');
 }
 
 const props = defineProps<{
@@ -213,14 +219,19 @@ function nudge(delta: number): void {
         ></div>
         <header class="canvas__head">
             <span class="fui-techtext canvas__title">▤ CANVAS</span>
-            <button v-if="map_available" class="fui-btn canvas__view-toggle" type="button"
+            <!-- Always in the row, so the buttons beside it never shift: with no live agent open it is off and says why. -->
+            <button class="fui-btn canvas__view-toggle" type="button"
+                :disabled="!map_available"
                 :aria-pressed="map_open"
-                :title="office_on ? 'Show or hide the compact activity map below the 3D office' : 'Show or hide the compact activity map'"
+                :title="!map_available ? 'The activity map is one live agent’s: open one in the list to see it' : office_on ? 'Show or hide the compact activity map below the 3D office' : 'Show or hide the compact activity map'"
                 @click="toggle_map">MAP</button>
             <button class="fui-btn canvas__view-toggle" type="button"
                 :aria-pressed="office_on"
                 :title="office_on ? 'Hide the 3D office' : 'Show the 3D office'"
                 @click="toggle_office">3D view</button>
+            <button class="fui-btn canvas__view-toggle" type="button"
+                title="Laya training: start a retrain, watch it, and read any model's results (opens a window)"
+                @click="open_training">TRAINING</button>
             <span
                 v-if="question"
                 class="fui-tag fui-tag--warn canvas__ask"
@@ -347,6 +358,8 @@ function nudge(delta: number): void {
 }
 .canvas__view-toggle { flex: 0 0 auto; min-height: 28px; }
 .canvas__view-toggle[aria-pressed="true"] { color: var(--color-accent-green, #93ffd4); }
+.canvas__view-toggle:disabled { opacity: 0.45; cursor: not-allowed; }
+.canvas__view-toggle:disabled[aria-pressed="true"] { color: inherit; }
 @media (pointer: coarse) {
     .canvas__view-toggle { min-height: 44px; }
 }

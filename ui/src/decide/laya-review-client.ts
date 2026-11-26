@@ -14,6 +14,7 @@ import {
     layaLabResultSchema,
     layaOpsStateSchema,
     layaRestartResultSchema,
+    layaTrainingStateSchema,
     reviewExampleRequestSchema,
     reviewExampleResultSchema,
     type ReviewExampleRequest,
@@ -31,6 +32,7 @@ import {
     type LayaLabVerb,
     type LayaOpsState,
     type LayaRestartResult,
+    type LayaTrainingState,
     type ReviewAnswerRequest,
     type ReviewItemResult,
     type ReviewQueue,
@@ -209,6 +211,11 @@ export function post_laya_challenger(action: 'promote' | 'reject', surface: stri
 
 export function load_laya_ops(): Promise<LayaCall<LayaOpsState>> {
     return get_route('ops', '', layaOpsStateSchema);
+}
+
+/** The TRAINING page's snapshots and the rows a gate scored them on. A bridge older than the route answers `restart`. */
+export function load_laya_training(surface: string): Promise<LayaCall<LayaTrainingState>> {
+    return get_route('training', `?surface=${encodeURIComponent(surface)}`, layaTrainingStateSchema);
 }
 
 /**

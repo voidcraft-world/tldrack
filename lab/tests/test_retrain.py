@@ -131,3 +131,78 @@ def test_retrain_cli_accepts_its_journal_and_registry_arguments():
     args = parser.parse_args(["label-open-work", "--teacher", "auto", "--weekly"])
     assert args.teacher == "auto" and args.weekly
     assert parser.parse_args(["verdict", "retrain", SUITE]).kind == "retrain"
+
+
+TRAINER_LINES = [
+    "train items 240, calibration items 26, eval items 40 from eval.jsonl, skipped {}, device mps",
+    "optimizer budget: 240 train item(s), effective batch up to 64 (micro_batch 8 x grad_accum 8), 8 optimizer updates over 2 epoch(s)",
+    "epoch 1/2 step 5 loss 0.6931",
+    "something the trainer may print one day",
+    "epoch 1/2 mean loss 0.6100",
+    "epoch 2/2 step 10 loss 0.4000",
+]
+
+
+def test_a_fit_s_progress_is_read_off_the_trainer_s_own_lines():
+    from laya_lab import train
+
+    reader = train.FitProgress()
+    moved = [found for line in TRAINER_LINES if (found := reader.read(line)) is not None]
+    assert reader.steps == 30, "240 items in micro-batches of 8"
+    assert moved == [
+        lab_files.train_progress(1, 2, 5, 30, 0.6931),
+        lab_files.train_progress(1, 2, 30, 30, 0.61),
+        lab_files.train_progress(2, 2, 10, 30, 0.4),
+    ]
+    assert train.FitProgress().read("epoch 1/2 step 5 loss 0.5") == lab_files.train_progress(1, 2, 5, None, 0.5)
+    assert train.FitProgress().read("epoch 1/2 mean loss 0.5") is None, "an epoch's end needs the epoch's size"
+
+
+def test_following_a_fit_keeps_the_pane_s_output_and_survives_a_failing_callback(capsys):
+    from laya_lab import train
+
+    seen = []
+    with train.follow_fit(seen.append):
+        print("\n".join(TRAINER_LINES[:3]))
+        print("epoch 1/2 step 10", end="")
+        print(" loss 0.5")
+    assert [block["step"] for block in seen] == [5, 10]
+    assert "epoch 1/2 step 5 loss 0.6931" in capsys.readouterr().out, "the pane still shows every line"
+
+    def broken(_progress):
+        raise OSError("the journal's disk is full")
+
+    with train.follow_fit(broken):
+        print("epoch 1/2 step 5 loss 0.5")
+        print("epoch 1/2 step 10 loss 0.4")
+    assert "progress is no longer recorded (OSError)" in capsys.readouterr().err
+    with train.follow_fit(None):
+        print("epoch 1/2 step 5 loss 0.5")
+
+
+def test_the_train_step_journals_its_progress_and_drops_it_when_the_fit_ends(lab, monkeypatch):
+    from laya_lab import train
+
+    c = cycle(lab, monkeypatch)
+    out = lab.base / "checkpoints" / "tldrack-agent-open-work-20261101-090000"
+    plan = train.Fit("agent_open_work", out, out.with_name(out.name + ".data"), 240, 40, 6, 2, "cpu")
+    during = []
+
+    def fit(_base, _plan, on_progress):
+        on_progress(lab_files.train_progress(1, 2, 5, 30, 0.69))
+        saved = lab_files.read_retrain_journal(lab.base, SUITE)
+        during.append(
+            lab_files.retrain_view(
+                {**saved, "steps": {**saved["steps"], "train": {**saved["steps"]["train"], "state": "running"}}}
+            )
+        )
+        return {"eval_items": 40, "before": {}, "after": {}}
+
+    monkeypatch.setattr(train, "prepare", lambda *_a, **_k: plan)
+    monkeypatch.setattr(train, "fit", fit)
+    monkeypatch.setattr(train, "base_revision", lambda: "rev")
+    monkeypatch.setattr(retrain.infer, "checkpoint_digest", lambda *_a: "sha256:0")
+    block = c.journal["steps"]["train"]
+    retrain.step_train(c, block)
+    assert during[0]["progress"]["done"] == round(5 / 60, 4) and during[0]["progress"]["loss"] == 0.69
+    assert "progress" not in block

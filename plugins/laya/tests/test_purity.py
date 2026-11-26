@@ -34,6 +34,7 @@ PURE = (
     "card_files",
     "install",
     "env_names",
+    "training",
 )
 SDK = ("guard", "runtime", "plugin")
 POINTER = 'Stdlib only: owned by plugins/laya/README.md — see "Pure modules".'

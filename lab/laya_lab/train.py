@@ -17,8 +17,13 @@ it at once, the old champion kept as @previous. Either way the version carries t
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import re
 import shutil
+import sys
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -105,7 +110,84 @@ def compact_report(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-REPORT_FILE = "laya-lab-report.json"
+REPORT_FILE = lab_files.TRAIN_REPORT_FILENAME
+#: The trainer prints its loss every this many micro-batches, which is how often a fit's progress moves
+#: (`follow_fit`). laya's own default is 100: about once an epoch on a thousand rows. Printing only: the fit is the same.
+PROGRESS_EVERY = 5
+#: The three lines of `laya.train.finetune`'s output a fit's progress is read from.
+_TRAIN_ITEMS = re.compile(r"^train items (\d+),")
+_MICRO_BATCH = re.compile(r"\(micro_batch (\d+) x grad_accum \d+\)")
+_STEP = re.compile(r"^epoch (\d+)/(\d+) step (\d+) loss (-?\d+(?:\.\d+)?)")
+_EPOCH_END = re.compile(r"^epoch (\d+)/(\d+) mean loss (-?\d+(?:\.\d+)?)")
+
+
+class FitProgress:
+    """A fit's progress, read off the trainer's own lines (pure: `read` takes one line). The trainer says how many
+    items it trains on and its micro-batch once, then a loss every PROGRESS_EVERY micro-batches and at each epoch's
+    end. `read` answers a `lab_files.train_progress` block when a line moved it, else None."""
+
+    def __init__(self) -> None:
+        self.items: int | None = None
+        self.micro_batch: int | None = None
+
+    @property
+    def steps(self) -> int | None:
+        """Micro-batches in one epoch, once both of the trainer's opening lines were read."""
+        if not self.items or not self.micro_batch:
+            return None
+        return -(-self.items // self.micro_batch)
+
+    def read(self, line: str) -> dict[str, Any] | None:
+        if (found := _TRAIN_ITEMS.match(line)) is not None:
+            self.items = int(found[1])
+        elif (found := _MICRO_BATCH.search(line)) is not None:
+            self.micro_batch = int(found[1])
+        elif (found := _STEP.match(line)) is not None:
+            return lab_files.train_progress(int(found[1]), int(found[2]), int(found[3]), self.steps, float(found[4]))
+        elif (found := _EPOCH_END.match(line)) is not None and self.steps is not None:
+            return lab_files.train_progress(int(found[1]), int(found[2]), self.steps, self.steps, float(found[3]))
+        return None
+
+
+class _Follow(io.TextIOBase):
+    """stdout while a fit runs: every write still reaches the pane, and each whole line is offered to `on_line`."""
+
+    def __init__(self, inner: Any, on_line: Callable[[str], None]) -> None:
+        self._inner, self._on_line, self._held = inner, on_line, ""
+
+    def write(self, text: str) -> int:
+        self._inner.write(text)
+        self._held += text
+        *lines, self._held = self._held.split("\n")
+        for line in lines:
+            self._on_line(line)
+        return len(text)
+
+    def flush(self) -> None:
+        self._inner.flush()
+
+
+@contextlib.contextmanager
+def follow_fit(on_progress: Callable[[dict[str, Any]], None] | None) -> Iterator[None]:
+    """While the block runs, `on_progress` gets each progress block the trainer's output moves to. A callback that
+    raises is dropped, never the fit: an hour of GPU does not end because a journal write failed."""
+    if on_progress is None:
+        yield
+        return
+    reader = FitProgress()
+
+    def on_line(line: str) -> None:
+        nonlocal on_progress
+        moved = reader.read(line)
+        if moved is not None and on_progress is not None:
+            try:
+                on_progress(moved)
+            except Exception as error:  # noqa: BLE001 (whatever the callback raised, the fit goes on)
+                on_progress = None
+                print(f"[laya-lab] progress is no longer recorded ({type(error).__name__})", file=sys.stderr)
+
+    with contextlib.redirect_stdout(_Follow(sys.stdout, on_line)):  # type: ignore[type-var]
+        yield
 
 
 @dataclass(frozen=True)
@@ -177,13 +259,17 @@ def prepare(
     return Fit(surface, out, work, len(train_rows), len(held_out), reserved, epochs, device)
 
 
-def fit(base: Path, plan: Fit) -> dict[str, Any]:
-    """Train and calibrate `plan` under the gpu lease; laya's train report, also written beside the weights."""
+def fit(base: Path, plan: Fit, on_progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+    """Train and calibrate `plan` under the gpu lease; laya's train report, also written beside the weights.
+    `on_progress` is told how far the fit is as it goes (`follow_fit`)."""
     from laya.train import TrainConfig, finetune  # torch: only once the run is going ahead
 
     infer.hold_device(plan.device, gb=TRAIN_GB, models=[plan.out.name])
-    config = TrainConfig(epochs=plan.epochs, eval_data=str(plan.work / "eval.jsonl"))
-    summary = finetune(str(plan.work / "train.jsonl"), str(base_checkpoint()), str(plan.out), config=config, device=plan.device)
+    config = TrainConfig(epochs=plan.epochs, eval_data=str(plan.work / "eval.jsonl"), log_every=PROGRESS_EVERY)
+    with follow_fit(on_progress):
+        summary = finetune(
+            str(plan.work / "train.jsonl"), str(base_checkpoint()), str(plan.out), config=config, device=plan.device
+        )
     report = summary.get("train_report") or {}
     atomic_write_text(plan.out / REPORT_FILE, json.dumps(report, indent=2, default=str) + "\n")
     tighten(base)  # the checkpoint folder laya wrote under the umask

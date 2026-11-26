@@ -35,6 +35,7 @@ Wire shapes: `schemas/src/decide.ts` (decide, ledger) and `schemas/src/laya-revi
 | `POST /start` · `/stop` · `/install` | policy | warm it / free its memory / install in the background: `uv sync --project runtime --locked`, then the base model (`install.py`) |
 | `POST /restart` | policy | stop and start laya-serve, so a newly registered checkpoint loads |
 | `GET /ops` | policy | AGENT RACK › LAYA in one body (`ops.py`); never 503s: missing params leave arrays empty and say why |
+| `GET /training` | policy | the TRAINING page in one body (`training.py`): every snapshot of `?surface=` on disk, the rows a promotion gate scored each one and the served model on (a label and two probabilities a row: no id, no text), and the last retrain run that found nothing owed. Never 503s |
 | `POST /lab` | policy + JSON | `{verb, surface}` → its lab job started now (`202`, `session`) or queued behind the running one (`202`, `queued: n`); `409 busy` only for that same verb running (below) |
 | `GET /card` · `POST /card/publish` | policy (+ JSON) | the verifier card's preview, and `{digest}` → the reviewed card written into this checkout's `docs/` (`written`; `url` stays, empty: nothing is published anywhere) |
 | `GET /review/queue` | policy | stats for every surface + up to `limit` (0–50) cards of one |
@@ -68,11 +69,12 @@ the notes there.
 
 ## Lab jobs
 
-Each lab verb (`challenger-sweep`, `sweep`, `sweep-reset`, `score`, `promote`, `golden`, `compare`) runs one fixed
+Each lab verb (`challenger-sweep`, `sweep`, `sweep-reset`, `score`, `promote`, `golden`, `compare`, `retrain`) runs one fixed
 `laya-lab` command in tmux session `laya-<verb>`. One lab job runs at a time; a press while one runs waits in
 `<data>/laya/lab-queue.json` and the job row reads `queued` with its place. The drain thread in `plugin.py`
 (`LabDrain`) starts the next one when the running job ends, with nobody watching, and a queue survives a bridge
-restart. `train` and `label-open-work` are never lab verbs. The argv table, the two spawners, the queue, the pane
+restart. `train` and `label-open-work` are never lab verbs; `retrain` is the gated retrain, started off schedule, and
+ends in a @challenger or in nothing. The argv table, the two spawners, the queue, the pane
 marks and that guard: owned by `laya_bridge/lab_jobs.py` — see the note there.
 
 ## Settings
@@ -98,7 +100,7 @@ folder.
 
 `rows`, `agreement`, `files`, `paths`, `wire`, `ledger`, `landing`, `envelope`, `review_surfaces`,
 `review_log`, `label_budget`, `review_data`, `review`, `lab_files`, `lab_jobs`, `ops`, `challenger`, `card_files`,
-`install` and `env_names` import ONLY the stdlib and each other:
+`install`, `env_names` and `training` import ONLY the stdlib and each other:
 laya-lab imports them from its own venv, which has no bridge SDK. So the shared rules — the state
 key, κ, the operator-log fold, the label rules, the operator-label budget, every laya-lab file format — have one owner here,
 and laya-lab never forks them. Only `guard`, `runtime` and `plugin` import `voidcraft_world_bridge`;
