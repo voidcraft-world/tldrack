@@ -272,3 +272,17 @@ test('summary counts the agents that want you', () => {
     assert.equal(office_summary(layout), '3 agents · 2 want you');
     assert.equal(office_summary(build_office([agent('a', { state: 'attention' })])), '1 agent · 1 wants you');
 });
+
+
+test('facing desks have a visible gap, including in full and stacked pods', () => {
+    const g = OFFICE_GEOMETRY;
+    for (const count of [2, 8, 16, 20]) {
+        const layout = build_office(Array.from({ length: count }, (_, i) => agent(`agent-${String(i).padStart(2, '0')}`)));
+        const all = layout.rooms.flatMap(room => room.desks);
+        for (let i = 0; i < all.length - 1; i += 2) {
+            const a = all[i], b = all[i + 1];
+            assert.equal(a.x, b.x);
+            assert.ok(Math.abs(a.z - b.z) - g.desk_depth >= 0.39);
+        }
+    }
+});

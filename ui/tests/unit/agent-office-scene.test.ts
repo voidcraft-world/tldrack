@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import ts from 'typescript';
-import type { Object3D } from 'three';
+import type { Object3D, MeshBasicMaterial, WebGLProgramParametersWithUniforms, WebGLRenderer } from 'three';
 // The scene has constructor parameter properties; Node's default strip-only loader does not.
 registerHooks({ load(url, context, next) {
     if (url.endsWith('/agent-office-scene.ts')) return { format: 'module', shortCircuit: true,
@@ -42,13 +42,29 @@ function with_scene(run: (scene: InstanceType<typeof AgentOfficeScene>) => void)
     const scene = new AgentOfficeScene();
     try { run(scene); } finally { scene.dispose(); globalThis.document = previous; }
 }
-test('selection draws through furniture, screens grow, and floor textures are cached and released', () => {
+test('selection outlines visible surfaces, screens grow, and floor textures are cached and released', () => {
     with_scene((scene) => {
         const layout = build_office(rows, 'agent-a');
         scene.update(layout);
         const beacons = objects(scene, object => object.geometry?.type === 'TorusGeometry');
-        assert.equal(beacons.filter(object => object.visible).length, 1);
-        assert.equal(beacons.find(object => object.visible)?.material.depthTest, false);
+        assert.equal(beacons.length, 0, 'no selection halos');
+        const materials = [...new Set(objects(scene, object => object.name === 'robot')
+            .map(robot => (robot.children[0] as unknown as { material: MeshBasicMaterial }).material))];
+        const shaders = materials.map(material => {
+            const shader = { uniforms: {}, vertexShader: '', fragmentShader: '' } as WebGLProgramParametersWithUniforms;
+            material.onBeforeCompile(shader, {} as WebGLRenderer);
+            assert.equal(material.depthTest, true, 'selection respects furniture occlusion');
+            return shader;
+        });
+        const strengths = () => shaders.map(shader => shader.uniforms.office_outline_strength.value);
+        assert.deepEqual(strengths(), [1, 0]);
+        scene.set_hovered('agent-b');
+        assert.deepEqual(strengths(), [1, 0.65]);
+        scene.set_hovered(null);
+        assert.deepEqual(strengths(), [1, 0]);
+        scene.update(build_office(rows, 'agent-b'));
+        assert.deepEqual(strengths(), [0, 1]);
+        scene.update(layout);
         const labels = objects(scene, object => object.isSprite);
         assert.equal(labels.length, 2);
         assert.ok(labels.every(label => label.material.sizeAttenuation && label.material.depthTest));
@@ -192,5 +208,56 @@ test('an island lifts and rocks the desk on a pool that stays put, and lets go o
         assert.equal(hulls().length, 0);
         assert.equal(deck.position.y, 0);
         assert.deepEqual([deck.rotation.x, deck.rotation.z], [0, 0]);
+    });
+});
+
+
+test('idle robots stand alone and restore furniture, picking bounds and poses when work resumes', () => {
+    with_scene((scene) => {
+        const row = { ...rows[0], state: 'free' as const };
+        const update = (state: typeof rows[number]['state'] | 'free' | 'done' | 'unknown' | 'background') =>
+            scene.update(build_office([{ ...row, state }], row.session));
+        update('free');
+        const robot = objects(scene, object => object.name === 'robot')[0];
+        const furniture = objects(scene, object => object.name === 'furniture')[0];
+        const hitbox = objects(scene, object => object.userData.session === row.session && !object.isSprite)[0];
+        const root_position = robot.parent!.parent!.position.clone();
+        for (const state of ['free', 'done', 'unknown'] as const) {
+            update(state);
+            assert.equal(furniture.visible, false);
+            assert.ok(robot.position.y > 0, 'idle robot stands on its legs');
+            assert.ok(hitbox.scale.x < 0.5, 'empty furniture cannot intercept clicks');
+            assert.equal(hitbox.position.z, robot.position.z);
+            assert.equal(robot.getObjectByName('raised-hand')!.visible, false);
+            scene.tick(200);
+            assert.deepEqual(robot.parent!.parent!.position, root_position);
+        }
+        for (const state of ['busy', 'background', 'attention'] as const) {
+            update(state);
+            assert.equal(furniture.visible, true);
+            assert.equal(hitbox.scale.x, 1);
+            assert.equal(hitbox.scale.z, 1);
+            assert.equal(robot.position.y > 0, state === 'attention');
+            assert.equal(robot.getObjectByName('raised-hand')!.visible, state === 'attention');
+            assert.deepEqual(robot.parent!.parent!.position, root_position);
+        }
+        update('free');
+        assert.equal(furniture.visible, false);
+        assert.ok(robot.position.y > 0);
+        assert.equal(robot.getObjectByName('raised-hand')!.visible, false);
+    });
+});
+
+test('idle service cabinets stay visible and rig outline materials are released with their sessions', () => {
+    with_scene((scene) => {
+        scene.update(build_office([{ session: 'svc-test', live: true, state: 'unknown' }], 'svc-test'));
+        const furniture = objects(scene, object => object.name === 'furniture')[0];
+        assert.equal(furniture.visible, true);
+        assert.equal(objects(scene, object => object.name === 'robot').length, 0);
+        const material = (furniture.children[0] as unknown as { material: MeshBasicMaterial }).material;
+        let disposed = 0;
+        material.addEventListener('dispose', () => disposed++);
+        scene.update(build_office([], null));
+        assert.equal(disposed, 1);
     });
 });

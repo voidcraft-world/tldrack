@@ -34,7 +34,7 @@ export type OfficePose =
     | 'thinking'
     /** Attention — it asked you something: STANDING beside the desk. */
     | 'waiting'
-    /** Turn over (free / done / unknown / background-idle): seated, screen dark. */
+    /** Turn over (free / done / unknown): standing without furniture. Background keeps its desk. */
     | 'idle';
 
 export interface OfficeAgent {
@@ -100,14 +100,14 @@ export const OFFICE_GEOMETRY = {
     desk_height: 0.75,
     /** Centre-to-centre along a pod's row. */
     desk_pitch_x: 2.0,
-    /** Desk centre's distance from the pod spine (desks meet back to back). */
-    desk_offset_z: 0.4,
+    /** Desk centre's distance from the pod spine: a 0.4-unit gap separates facing tops. */
+    desk_offset_z: 0.6,
     /** Where the agent sits, measured from the desk centre, away from the spine. */
     seat_offset_z: 0.8,
     /** Two facing rows of this many desks make one pod. */
     pod_columns: 4,
     /** Spine-to-spine distance between stacked pods. */
-    pod_pitch_z: 4.4,
+    pod_pitch_z: 4.8,
     /** Clear floor between a room's wall and its outermost desk/seat. */
     room_padding: 1.0,
     /** Extra depth along the room's front (+z) edge for its name. */
@@ -133,7 +133,7 @@ export function office_pose(state: TerminalDisplayState, zone: AgentZoneKey): Of
     return zone === 'thinking' ? 'thinking' : 'working';
 }
 
-/** The monitor's word per zone. `desk` never shows: a seated idle agent's screen is dark. */
+/** The monitor's word per zone. `desk` never shows: idle agents have no furniture. */
 const SCREEN_WORD: Readonly<Record<AgentZoneKey, string>> = {
     desk: '',
     thinking: '···',
