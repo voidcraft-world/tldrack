@@ -13,7 +13,8 @@ import os
 import platform
 from functools import lru_cache
 
-from devices_plugin.probe import Reading, Ticks, linux_memory, linux_ticks, mac_used_bytes
+from devices_plugin.mac_gpu import read_gpu
+from devices_plugin.probe import Reading, Ticks, linux_memory, linux_swap, linux_swap_moved, linux_ticks, mac_used_bytes
 
 # <mach/host_info.h>
 HOST_CPU_LOAD_INFO = 3
@@ -25,7 +26,7 @@ natural_t = ctypes.c_uint32
 
 
 class VmStatistics64(ctypes.Structure):
-    """`struct vm_statistics64` (<mach/vm_statistics.h>), field for field; only four are read."""
+    """`struct vm_statistics64` (<mach/vm_statistics.h>), field for field; only six are read."""
 
     _fields_ = [
         ("free_count", natural_t),
@@ -52,6 +53,18 @@ class VmStatistics64(ctypes.Structure):
         ("external_page_count", natural_t),
         ("internal_page_count", natural_t),
         ("total_uncompressed_pages_in_compressor", ctypes.c_uint64),
+    ]
+
+
+class XswUsage(ctypes.Structure):
+    """`struct xsw_usage` (<sys/sysctl.h>): what the `vm.swapusage` sysctl fills, in bytes."""
+
+    _fields_ = [
+        ("total", ctypes.c_uint64),
+        ("avail", ctypes.c_uint64),
+        ("used", ctypes.c_uint64),
+        ("pagesize", ctypes.c_uint32),
+        ("encrypted", ctypes.c_uint32),
     ]
 
 
@@ -94,14 +107,24 @@ class _Mach:
         total = sum(load)
         return Ticks(busy=total - load[CPU_STATE_IDLE], total=total)
 
-    def mem_used(self) -> int | None:
+    def memory(self) -> tuple[int | None, int | None]:
+        """`(memory used, cumulative bytes swapped in plus out)` from one `host_statistics64` call."""
         stats = VmStatistics64()
         count = natural_t(ctypes.sizeof(stats) // ctypes.sizeof(ctypes.c_int))
         if self.lib.host_statistics64(self.host, HOST_VM_INFO64, ctypes.byref(stats), ctypes.byref(count)) != KERN_SUCCESS:
-            return None
-        return mac_used_bytes(
+            return None, None
+        used = mac_used_bytes(
             stats.internal_page_count, stats.purgeable_count, stats.wire_count, stats.compressor_page_count, self.page_size
         )
+        return used, (stats.swapins + stats.swapouts) * self.page_size
+
+    def swap(self) -> tuple[int | None, int | None]:
+        """`(used, total)` bytes of swap. The total is what the kernel has allocated so far (probe.py)."""
+        usage = XswUsage()
+        size = ctypes.c_size_t(ctypes.sizeof(usage))
+        if self.lib.sysctlbyname(b"vm.swapusage", ctypes.byref(usage), ctypes.byref(size), None, 0) != 0:
+            return None, None
+        return usage.used, usage.total
 
 
 @lru_cache(maxsize=1)
@@ -115,23 +138,59 @@ def _os_label() -> str:
 
 def _read_mac() -> Reading:
     mach = _mach()
-    return Reading(os=_os_label(), cores=os.cpu_count(), ticks=mach.ticks(), mem_used=mach.mem_used(), mem_total=mach.mem_total)
+    mem_used, swap_moved = mach.memory()
+    swap_used, swap_total = mach.swap()
+    return Reading(
+        os=_os_label(),
+        cores=os.cpu_count(),
+        ticks=mach.ticks(),
+        mem_used=mem_used,
+        mem_total=mach.mem_total,
+        swap_used=swap_used,
+        swap_total=swap_total,
+        swap_moved=swap_moved,
+        gpu=read_gpu(),
+    )
+
+
+MEMINFO_KEYS = ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree")
+VMSTAT_KEYS = ("pswpin", "pswpout")
+
+
+def _proc_numbers(path: str, keys: tuple[str, ...]) -> dict[str, int]:
+    """The named counters of a `/proc` table (`key value` or `key: value kB` a line), stopping at the last one."""
+    found: dict[str, int] = {}
+    with open(path, encoding="ascii") as table:
+        for line in table:
+            words = line.split()
+            key = words[0].rstrip(":") if words else ""
+            if key in keys and len(words) > 1 and words[1].isdigit():
+                found[key] = int(words[1])
+                if len(found) == len(keys):
+                    break
+    return found
 
 
 def _read_linux() -> Reading:
     with open("/proc/stat", encoding="ascii") as stat:
         ticks = linux_ticks(stat.readline())
-    total_kb = available_kb = None
-    with open("/proc/meminfo", encoding="ascii") as meminfo:
-        for line in meminfo:
-            key, _, rest = line.partition(":")
-            if key == "MemTotal":
-                total_kb = int(rest.split()[0])
-            elif key == "MemAvailable":
-                available_kb = int(rest.split()[0])
-                break
-    mem_used, mem_total = linux_memory(total_kb, available_kb)
-    return Reading(os=_os_label(), cores=os.cpu_count(), ticks=ticks, mem_used=mem_used, mem_total=mem_total)
+    meminfo = _proc_numbers("/proc/meminfo", MEMINFO_KEYS)
+    try:
+        vmstat = _proc_numbers("/proc/vmstat", VMSTAT_KEYS)
+    except OSError:  # a container that hides it: the swap rate is unknown, the rest still reads
+        vmstat = {}
+    mem_used, mem_total = linux_memory(meminfo.get("MemTotal"), meminfo.get("MemAvailable"))
+    swap_used, swap_total = linux_swap(meminfo.get("SwapTotal"), meminfo.get("SwapFree"))
+    return Reading(
+        os=_os_label(),
+        cores=os.cpu_count(),
+        ticks=ticks,
+        mem_used=mem_used,
+        mem_total=mem_total,
+        swap_used=swap_used,
+        swap_total=swap_total,
+        swap_moved=linux_swap_moved(vmstat.get("pswpin"), vmstat.get("pswpout"), os.sysconf("SC_PAGESIZE")),
+    )
 
 
 def read_local() -> Reading:

@@ -1,8 +1,9 @@
 # devices/
 
 A tldrack plugin that feeds the rack's **DEVICES** section: CPU and memory for this machine and for
-every compute host you list, as `2.2/10 · 22%` cores busy and `21.4/32 GB · 67%` memory used.
-Optionally, which tmux session holds the memory here, who holds your resource lease, and what each
+every compute host you list, as `2.2/10 · 22%` cores busy and `21.4/32 GB · 67%` memory used. Where a
+device reports them, the GPU's utilisation sits on the CPU row and swap on the memory row, so a device
+stays two rows tall. Optionally, which tmux session holds the memory here, who holds your resource lease, and what each
 host is running.
 
 **Off by default.** On, it opens one long-lived ssh stream to each compute host while the section is
@@ -113,7 +114,9 @@ instance) and a process whose command line contains one of these strings is neve
 // values invented
 {"version": 1, "sample_s": 2, "devices": [
   {"name": "local", "local": true, "state": "up", "os": "Darwin arm64", "cores": 10,
-   "cpu_busy": 2.2, "mem_used": 22977224704, "mem_total": 34359738368, "age_s": 0.8, "error": null,
+   "cpu_busy": 2.2, "mem_used": 22977224704, "mem_total": 34359738368,
+   "swap_used": 2147483648, "swap_total": 4294967296, "swap_rate": 0,
+   "gpu_pct": 38.0, "gpu_mem_used": 9663676416, "gpu_mem_total": null, "age_s": 0.8, "error": null,
    "session_memory": {"sessions": [{"session": "fix-login", "rss": 1073741824, "procs": 9}], "more": 0,
                       "orphans": {"rss": 0, "procs": 0}}}]}
 ```
@@ -125,6 +128,10 @@ This machine comes first, then each host in `hosts.json` order.
 | `state` | `connecting` (no sample yet, or reconnecting), `up`, `down` (`error` says why) |
 | `cpu_busy` | cores busy over the last sample interval; `null` until there are two samples |
 | `mem_used` / `mem_total` | bytes. "Used" is Activity Monitor's Memory Used on macOS, `MemTotal − MemAvailable` on Linux |
+| `swap_used` / `swap_total` | bytes of swap in use and of swap there is. On macOS the total is what the kernel has allocated so far and grows on demand; `0` on Linux is no swap configured |
+| `swap_rate` | bytes a second moving in and out of swap over the last sample interval; `null` until there are two samples. The level says how much was pushed out; the rate says the machine is short of memory now |
+| `gpu_pct` | the busiest GPU's utilisation, 0–100; `null` on a device that reports no GPU (this machine on Linux, a Linux host without `nvidia-smi`) |
+| `gpu_mem_used` / `gpu_mem_total` | bytes, summed over every GPU. Apple silicon shares one memory with the CPU, so its total is `null` |
 | `age_s` | seconds since that sample |
 | `session_memory` | this machine only, `null` until the first read: `{sessions: [{session, rss, procs, cpu_pct}], age_s, more, orphans: {rss, procs}}`, bytes, largest first. CPU is the OS process average (100% = one core); absent means unavailable. `age_s` ages the session sample independently of machine samples. Summed RSS is a ranking: it will not add up to the memory meter |
 | `lease` | this machine only, and only with the `lease` setting; `null` until the first read |
@@ -140,10 +147,10 @@ Nothing while nobody is looking. Every GET touches each device's sampler, and a 
 
 | Device | How | Per 2 s sample |
 |---|---|---|
-| this machine, macOS | ctypes `host_statistics` + `host_statistics64`, in-process | no subprocess, microseconds |
-| this machine, Linux | `/proc/stat` and `/proc/meminfo`, in-process | no subprocess |
-| a Linux host | ONE long-lived `ssh <alias> sh -c '<loop>'` reading `/proc` with shell builtins | forks only `sleep` |
-| a macOS host | the same stream, `ps` + `vm_stat` | forks two tools |
+| this machine, macOS | ctypes `host_statistics` + `host_statistics64`, the `vm.swapusage` sysctl, and the GPU's I/O Registry entry, in-process | no subprocess, microseconds |
+| this machine, Linux | `/proc/stat`, `/proc/meminfo` and `/proc/vmstat`, in-process; no GPU | no subprocess |
+| a Linux host | ONE long-lived `ssh <alias> sh -c '<loop>'` reading `/proc` with shell builtins | forks `sleep`, and `nvidia-smi` where the host has one |
+| a macOS host | the same stream, `ps` + `vm_stat` + `sysctl` + `ioreg` | forks a handful of small tools |
 
 `session_memory` (and `lease`) run on this machine's sampling thread every 10 s, and only while the
 section is open: one `ps` and one `tmux` each time. The `jobs` command, when set, is a second stream per

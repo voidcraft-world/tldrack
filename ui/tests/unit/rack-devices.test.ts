@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
     DEVICE_WARN_PCT,
+    SWAP_SHOWN_RATE,
+    SWAP_WARN_RATE,
     device_rows,
     devices_signature,
     parse_devices,
@@ -27,6 +29,12 @@ function device(overrides: Partial<DeviceSample> = {}): DeviceSample {
         cpu_busy: 2.2,
         mem_used: 21.4 * GIB,
         mem_total: 32 * GIB,
+        swap_used: null,
+        swap_total: null,
+        swap_rate: null,
+        gpu_pct: null,
+        gpu_mem_used: null,
+        gpu_mem_total: null,
         age_s: 0.8,
         error: null,
         session_memory: null,
@@ -132,6 +140,51 @@ describe('device_rows', () => {
     test('a sample three intervals old is STALE', () => {
         assert.equal(device_rows(state(device({ age_s: 6 })))[0].status, null);
         assert.equal(device_rows(state(device({ age_s: 6.1 })))[0].status, 'STALE');
+    });
+});
+
+describe('the second readout on a row', () => {
+    const sides = (sample: DeviceSample) => device_rows(state(sample))[0].meters.map((meter) => meter.side);
+
+    test('a device that reports neither keeps its two plain rows', () => {
+        assert.deepEqual(sides(device()), [undefined, undefined]);
+    });
+
+    test('the GPU rides the CPU row and swap the RAM row: still two rows', () => {
+        const row = device_rows(state(device({ gpu_pct: 38.4, gpu_mem_used: 9.9 * GIB, swap_used: 2.5 * GIB, swap_total: 4 * GIB, swap_rate: 0 })))[0];
+        assert.deepEqual(row.meters.map((meter) => [meter.label, meter.side?.label, meter.side?.text, meter.side?.warn]), [
+            ['CPU', 'GPU', '38%', false],
+            ['RAM', 'SWAP', '2.5 GB', false],
+        ]);
+        assert.match(row.title, /GPU 38% busy, 9\.9 GB of memory in use/);
+        assert.match(row.title, /2\.5 GB of 4 GB swap used/);
+    });
+
+    test('a GPU with memory of its own says how full it is', () => {
+        const [gpu] = sides(device({ gpu_pct: 97, gpu_mem_used: 20 * GIB, gpu_mem_total: 24 * GIB }));
+        assert.equal(gpu?.warn, true);
+        assert.equal(gpu?.title, 'GPU 97% busy, 20.0/24 GB of its memory in use');
+    });
+
+    test('swap that is moving says how fast, and turns amber once the machine is paging', () => {
+        const swap = (swap_rate: number | null) => sides(device({ swap_used: 24.1 * GIB, swap_total: 25 * GIB, swap_rate }))[1];
+        assert.equal(swap(null)?.text, '24.1 GB');
+        assert.equal(swap(SWAP_SHOWN_RATE - 1)?.text, '24.1 GB');
+        assert.deepEqual([swap(8 * 1024 ** 2)?.text, swap(8 * 1024 ** 2)?.warn], ['24.1 GB · 8 MB/s', false]);
+        const paging = swap(SWAP_WARN_RATE + 397 * 1024 ** 2);
+        assert.deepEqual([paging?.text, paging?.warn], ['24.1 GB · 429 MB/s', true]);
+        assert.match(paging?.title ?? '', /short of memory and is paging/);
+    });
+
+    test('no swap configured, or none allocated yet, draws nothing', () => {
+        assert.equal(sides(device({ swap_used: 0, swap_total: 0 }))[1], undefined);
+        assert.equal(sides(device({ swap_used: null, swap_total: 4 * GIB }))[1], undefined);
+    });
+
+    test('a bridge one release behind sends neither: read as unknown, never as zero', () => {
+        const parsed = parse_devices({ devices: [{ name: 'local', local: true, state: 'up', cores: 10, mem_used: GIB, mem_total: 2 * GIB }] });
+        assert.deepEqual([parsed?.devices[0].gpu_pct, parsed?.devices[0].swap_used, parsed?.devices[0].swap_rate], [null, null, null]);
+        assert.deepEqual(device_rows(parsed!)[0].meters.map((meter) => meter.side), [undefined, undefined]);
     });
 });
 

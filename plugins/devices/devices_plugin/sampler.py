@@ -46,7 +46,7 @@ from typing import IO, Protocol
 
 from voidcraft_world_bridge.shape import typed
 
-from devices_plugin.probe import BlockReader, Reading, Ticks, busy_cores, remote_script
+from devices_plugin.probe import BlockReader, Reading, Ticks, busy_cores, remote_script, swap_rate
 from devices_plugin.settings import HOST_PLACEHOLDER, SECONDS_PLACEHOLDER
 
 SAMPLE_SECONDS = 2.0
@@ -103,6 +103,9 @@ class DeviceSampler:
         self._reading = Reading()
         self._cpu_busy: float | None = None
         self._ticks: Ticks | None = None
+        #: The last cumulative swap count and when it was read: what `swap_rate` is a delta against.
+        self._swap_moved: tuple[int, float] | None = None
+        self._swap_rate: int | None = None
         self._sampled_at: float | None = None
 
     # -- read side (request threads) ----------------------------------------------------------
@@ -114,7 +117,7 @@ class DeviceSampler:
                 return
             self._running = True
             self._state, self._error = CONNECTING, None
-            self._ticks = self._cpu_busy = None
+            self._forget_deltas()
             self._wake.clear()
         self._prime()
         threading.Thread(target=self._run_guarded, name=f"devices-{self.name}", daemon=True).start()
@@ -137,6 +140,12 @@ class DeviceSampler:
                 "cpu_busy": self._cpu_busy,
                 "mem_used": reading.mem_used,
                 "mem_total": reading.mem_total,
+                "swap_used": reading.swap_used,
+                "swap_total": reading.swap_total,
+                "swap_rate": self._swap_rate,
+                "gpu_pct": reading.gpu.pct if reading.gpu else None,
+                "gpu_mem_used": reading.gpu.mem_used if reading.gpu else None,
+                "gpu_mem_total": reading.gpu.mem_total if reading.gpu else None,
                 "age_s": age,
                 "error": self._error,
             }
@@ -151,21 +160,29 @@ class DeviceSampler:
         with self._lock:
             return not self._closed and self._clock() - self._touched < self._idle_stop
 
+    def _forget_deltas(self) -> None:
+        """Drop what a delta is taken against (lock held): the next sample starts one, it never spans a gap."""
+        self._ticks = self._cpu_busy = self._swap_moved = self._swap_rate = None
+
     def _record(self, reading: Reading) -> None:
         with self._lock:
+            now = self._clock()
             if reading.ticks is not None:
                 self._cpu_busy = busy_cores(self._ticks, reading.ticks, reading.cores)
                 self._ticks = reading.ticks
             else:
                 self._cpu_busy = reading.cpu_busy
+            before, at = self._swap_moved or (None, None)
+            self._swap_rate = swap_rate(before, reading.swap_moved, None if at is None else now - at)
+            self._swap_moved = None if reading.swap_moved is None else (reading.swap_moved, now)
             self._reading = reading
-            self._sampled_at = self._clock()
+            self._sampled_at = now
             self._state, self._error = UP, None
 
     def _fail(self, error: str) -> None:
         with self._lock:
             self._state, self._error = DOWN, error[:200]
-            self._ticks = self._cpu_busy = None
+            self._forget_deltas()
 
     def _pause(self, seconds: float) -> bool:
         """Sleep, waking early on close. True while the sampler is still wanted."""

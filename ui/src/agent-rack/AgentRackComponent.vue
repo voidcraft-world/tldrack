@@ -2657,6 +2657,10 @@ onUnmounted(() => {
                         <span :class="['fui-meter', 'device__meter', { 'fui-meter--warn': meter.warn }]" aria-hidden="true">
                             <i class="fui-meter__fill" :style="{ width: `${meter.pct ?? 0}%` }" />
                         </span>
+                        <!-- Always a cell, empty without a readout: the grid places a meter's cells by count. -->
+                        <span :class="['device__side', { 'device__side--warn': meter.side?.warn }]">
+                            <template v-if="meter.side"><span class="device__kind">{{ meter.side.label }}</span> {{ meter.side.text }}</template>
+                        </span>
                     </template>
                     <button
                         v-if="device.memory"
@@ -3116,19 +3120,20 @@ onUnmounted(() => {
 /* After the shared rule: an opaque head, so the rows scroll under it (`.rack__devices`). */
 .rack__devices-head { position: sticky; top: 0; z-index: 1; flex: 0 0 auto; background: var(--rack-surface); }
 .rack__devices-list { list-style: none; margin: 0; padding: 0 6px; display: flex; flex-direction: column; gap: 6px; }
-/* name | CPU/RAM | value | % | meter — one row per meter, the name spanning them. */
+/* name | CPU/RAM | value | % | meter | GPU/SWAP — one row per meter, the name spanning them. The last cell is
+   the row's second readout (`device-readout.ts` `DeviceSide`): it takes its text's width, the bar gives way. */
 .device {
     display: grid;
-    grid-template-columns: minmax(0, max-content) auto auto auto minmax(28px, 1fr);
+    grid-template-columns: minmax(0, max-content) auto auto auto minmax(28px, 1fr) auto;
     column-gap: 8px;
     row-gap: 2px;
     align-items: center;
     font-size: 12.5px;
     font-variant-numeric: tabular-nums;
 }
-.device--has-memory { grid-template-columns: minmax(0, max-content) auto auto auto minmax(28px, 1fr) 28px; }
+.device--has-memory { grid-template-columns: minmax(0, max-content) auto auto auto minmax(28px, 1fr) auto 28px; }
 .device__memory-toggle {
-    grid-column: 6;
+    grid-column: 7;
     align-self: stretch;
     min-height: 28px;
     padding: 0;
@@ -3142,7 +3147,7 @@ onUnmounted(() => {
 .device__memory-toggle:hover,
 .device__memory-toggle:focus-visible { opacity: 1; }
 @media (pointer: coarse) {
-    .device--has-memory { grid-template-columns: minmax(0, max-content) auto auto auto minmax(28px, 1fr) 44px; }
+    .device--has-memory { grid-template-columns: minmax(0, max-content) auto auto auto minmax(28px, 1fr) auto 44px; }
     .device__memory-toggle { min-height: 44px; }
 }
 .device__name { display: flex; align-items: center; gap: 6px; min-width: 0; align-self: start; padding-top: 1px; }
@@ -3160,6 +3165,9 @@ onUnmounted(() => {
 .device__pct { text-align: right; min-width: 3.2em; opacity: 0.8; }
 .device__pct--warn { color: #f8c146; opacity: 1; }
 .device__meter { height: 3px; }
+.device__side { text-align: right; white-space: nowrap; font-size: 11.5px; opacity: 0.8; }
+.device__side--warn { color: #f8c146; opacity: 1; }
+.device--wait .device__side { opacity: 0.5; }
 /* Who holds that memory: a ranking under the meters, on the row's whole width. */
 .device__memory { grid-column: 1 / -1; list-style: none; margin: 2px 0 0; padding: 0 0 0 13px; display: flex; flex-direction: column; gap: 1px; font-size: 11.5px; opacity: 0.8; }
 .device__memory li { display: flex; justify-content: space-between; gap: 8px; }
