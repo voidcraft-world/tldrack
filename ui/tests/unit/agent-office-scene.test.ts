@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import ts from 'typescript';
-import type { Object3D } from 'three';
+import type { Object3D, MeshBasicMaterial, ShaderMaterial } from 'three';
 // The scene has constructor parameter properties; Node's default strip-only loader does not.
 registerHooks({ load(url, context, next) {
     if (url.endsWith('/agent-office-scene.ts')) return { format: 'module', shortCircuit: true,
@@ -42,13 +42,38 @@ function with_scene(run: (scene: InstanceType<typeof AgentOfficeScene>) => void)
     const scene = new AgentOfficeScene();
     try { run(scene); } finally { scene.dispose(); globalThis.document = previous; }
 }
-test('selection draws through furniture, screens grow, and floor textures are cached and released', () => {
+test('selection glows through occluders, screens grow, and floor textures are cached and released', () => {
     with_scene((scene) => {
         const layout = build_office(rows, 'agent-a');
         scene.update(layout);
         const beacons = objects(scene, object => object.geometry?.type === 'TorusGeometry');
-        assert.equal(beacons.filter(object => object.visible).length, 1);
-        assert.equal(beacons.find(object => object.visible)?.material.depthTest, false);
+        assert.equal(beacons.length, 0, 'no selection halos');
+        const glows = objects(scene, object => object.name === 'office-outline-glow');
+        const materials = rows.map(row => {
+            const hitbox = objects(scene, object => object.userData.session === row.session && !object.isSprite)[0];
+            const glow = hitbox.parent!.getObjectByName('office-outline-glow') as Probe;
+            return glow.material as unknown as ShaderMaterial;
+        });
+        assert.equal(materials.length, 2, 'one glow material per agent');
+        for (const material of materials) {
+            assert.equal(material.depthTest, false, 'glow remains visible through occluders');
+            assert.equal(material.depthWrite, false);
+            assert.equal(material.transparent, true);
+        }
+        for (const glow of glows) {
+            assert.equal(glow.geometry, (glow.parent as Probe).geometry);
+            assert.ok(glow.renderOrder < 2, 'labels render above the glow');
+        }
+        const strengths = () => materials.map(material => material.uniforms.strength.value);
+        assert.deepEqual(strengths(), [1, 0]);
+        scene.set_hovered('agent-b');
+        assert.deepEqual(strengths(), [1, 0.65]);
+        scene.set_hovered(null);
+        assert.deepEqual(strengths(), [1, 0]);
+        scene.update(build_office(rows, 'agent-b'));
+        assert.deepEqual(strengths(), [0, 1]);
+        scene.update(layout);
+        assert.deepEqual(materials.map(material => material.visible), [true, false]);
         const labels = objects(scene, object => object.isSprite);
         assert.equal(labels.length, 2);
         assert.ok(labels.every(label => label.material.sizeAttenuation && label.material.depthTest));
@@ -105,6 +130,12 @@ test('an agent that wants you hops with a hand up, and its nameplate is planned 
         const waiting = robots.find(robot => robot.position.y > 0)!;
         const seated = robots.find(robot => robot.position.y === 0)!;
         const floor = waiting.position.y;
+        const legs = waiting.children.filter(child => {
+            const geometry = (child as Probe).geometry as { parameters?: { height?: number } } | undefined;
+            return geometry?.parameters?.height === 0.56;
+        });
+        assert.equal(legs.length, 2, 'standing legs are 30% shorter');
+        for (const leg of legs) assert.ok(Math.abs(floor + leg.position.y - 0.56 / 2) < 1e-9, 'feet stay on the floor');
         const hands = named('raised-hand');
         assert.equal(hands.length, 2);
         assert.equal(hands.filter(hand => hand.visible).length, 1);
@@ -192,5 +223,77 @@ test('an island lifts and rocks the desk on a pool that stays put, and lets go o
         assert.equal(hulls().length, 0);
         assert.equal(deck.position.y, 0);
         assert.deepEqual([deck.rotation.x, deck.rotation.z], [0, 0]);
+    });
+});
+
+
+test('idle robots stand alone and restore furniture, picking bounds and poses when work resumes', () => {
+    with_scene((scene) => {
+        const row = { ...rows[0], state: 'free' as const };
+        const update = (state: typeof rows[number]['state'] | 'free' | 'done' | 'unknown' | 'background') =>
+            scene.update(build_office([{ ...row, state }], row.session));
+        update('free');
+        const robot = objects(scene, object => object.name === 'robot')[0];
+        const furniture = objects(scene, object => object.name === 'furniture')[0];
+        const hitbox = objects(scene, object => object.userData.session === row.session && !object.isSprite)[0];
+        const root_position = robot.parent!.parent!.position.clone();
+        for (const state of ['free', 'done', 'unknown'] as const) {
+            update(state);
+            assert.equal(furniture.visible, false);
+            assert.ok(robot.position.y > 0, 'idle robot stands on its legs');
+            assert.ok(hitbox.scale.x < 0.5, 'empty furniture cannot intercept clicks');
+            assert.equal(hitbox.position.z, robot.position.z);
+            assert.equal(robot.getObjectByName('raised-hand')!.visible, false);
+            scene.tick(200);
+            assert.deepEqual(robot.parent!.parent!.position, root_position);
+        }
+        for (const state of ['busy', 'background', 'attention'] as const) {
+            update(state);
+            assert.equal(furniture.visible, true);
+            assert.equal(hitbox.scale.x, 1);
+            assert.equal(hitbox.scale.z, 1);
+            assert.equal(robot.position.y > 0, state === 'attention');
+            assert.equal(robot.getObjectByName('raised-hand')!.visible, state === 'attention');
+            assert.deepEqual(robot.parent!.parent!.position, root_position);
+        }
+        update('free');
+        assert.equal(furniture.visible, false);
+        assert.ok(robot.position.y > 0);
+        assert.equal(robot.getObjectByName('raised-hand')!.visible, false);
+    });
+});
+
+test('idle service cabinets stay visible and rig outline materials are released with their sessions', () => {
+    with_scene((scene) => {
+        scene.update(build_office([{ session: 'svc-test', live: true, state: 'unknown' }], 'svc-test'));
+        const furniture = objects(scene, object => object.name === 'furniture')[0];
+        assert.equal(furniture.visible, true);
+        assert.equal(objects(scene, object => object.name === 'robot').length, 0);
+        const marks = objects(scene, object => object.name === 'services-floor-icon');
+        assert.equal(marks.length, 1);
+        assert.ok(marks[0].position.x > 0 && marks[0].position.z > 0, 'service mark sits at the front-right of its floor');
+        assert.ok(marks[0].position.y < 0.02, 'service mark is on the floor');
+        const material = (furniture.children[0] as unknown as { material: MeshBasicMaterial }).material;
+        let disposed = 0;
+        material.addEventListener('dispose', () => disposed++);
+        scene.update(build_office([], null));
+        assert.equal(disposed, 1);
+    });
+});
+
+test('a room draws activity sections with tint and dividers, without status text on the floor', () => {
+    with_scene((scene) => {
+        const mixed = [...rows, { session: 'agent-c', live: true, state: 'free' as const, repo: 'app' }];
+        scene.update(build_office(mixed));
+        const named = (prefix: string) => objects(scene, object => object.name.startsWith(prefix)).map(object => object.name);
+        // IDLE spends no hue: it is the floor the other two are read against.
+        assert.deepEqual(named('band:').sort(), ['band:waiting', 'band:working']);
+        assert.deepEqual(named('band-name:'), []);
+        assert.equal(named('band-divider').length, 2);
+        // The agent that was working finishes: its band empties and takes no floor.
+        scene.update(build_office(mixed.map(row => (row.session === 'agent-a' ? { ...row, state: 'free' as const } : row))));
+        assert.deepEqual(named('band:').sort(), ['band:waiting']);
+        assert.deepEqual(named('band-name:'), []);
+        assert.equal(named('band-divider').length, 1);
     });
 });

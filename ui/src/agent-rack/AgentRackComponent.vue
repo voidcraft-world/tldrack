@@ -32,29 +32,23 @@ import {
     type RowSegment,
 } from '../engine/terminal/multi-terminal-layout.ts';
 import { session_name_error } from '../engine/terminal/session-name.ts';
-import { SERVICE_SESSION_EMOJI, shows_service_mark } from '../engine/terminal/service-sessions.ts';
+import { session_status_emoji } from '../engine/terminal/session-status-emoji.ts';
+import { shows_service_mark } from '../engine/terminal/service-sessions.ts';
 import {
-    ANSWER_TO_READ_EMOJI,
-    DEAD_SESSION_EMOJI,
-    FRESH_SESSION_EMOJI,
     OPEN_WORK_BADGE,
     OPEN_WORK_SEEN_TITLE,
     OPEN_WORK_WAITING_BADGE,
     OPEN_WORK_WAITING_TITLE,
-    STOP_FAILURE_EMOJI,
     STUCK_BADGE,
     TERMINAL_STATUS_FLAGS,
-    WORK_DONE_EMOJI,
     answer_to_read_shown,
     answer_to_read_title,
     display_state_color_css,
-    display_state_emoji,
     fresh_session_shown,
     open_work_badge_title,
     open_work_children_title,
     open_work_mark_kind,
     state_pulse_period_ms,
-    stop_failure_phase,
     stop_failure_shown,
     stop_failure_title,
     stuck_shown,
@@ -454,18 +448,9 @@ watch(next_reset, (at) => {
     }, Math.max(0, at * 1000 - Date.now()) + 250);
 }, { immediate: true });
 
-/** `build_rack_rows` dims a session row exactly when tmux no longer has it, and
- *  keeps its LAST state — which on a dead row would read as a live 🤔. */
+/** Status mark precedence: owned by session-status-emoji.ts — see the note there. */
 function dot_glyph(row: RackRow): string {
-    if (!use_state_emoji) return '';
-    if (row.dim) return DEAD_SESSION_EMOJI;
-    const stopped = cut_off(row);
-    if (stopped) return STOP_FAILURE_EMOJI[stop_failure_phase(stopped, now_s.value)];
-    if (is_fresh(row)) return FRESH_SESSION_EMOJI;
-    if (row.exited || shows_service_mark(row.session, row.state)) return SERVICE_SESSION_EMOJI;
-    if (answer_to_read_shown(row.state, row.work_done, row.dim)) return ANSWER_TO_READ_EMOJI;
-    if (work_done_shown(row.state, row.work_done ? true : null, row.dim)) return WORK_DONE_EMOJI[row.state];
-    return display_state_emoji(row.state ?? 'unknown');
+    return use_state_emoji ? session_status_emoji(row, now_s.value) : '';
 }
 
 /** What Laya's verdict draws on this row — the rule is `open_work_mark_kind`'s. */

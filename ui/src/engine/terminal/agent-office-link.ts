@@ -27,6 +27,7 @@
  * the rack it holds NOW (`office_action_allowed`): the office's picture is up to a
  * poll old, and a PR button that became CLEAN under an armed menu must not clean.
  */
+import { parse_status_emoji, session_status_emoji } from './session-status-emoji.ts';
 import { parse_office_resources, type OfficeResources } from './office-resources.ts';
 import { z } from 'zod';
 import { session_lineage_schema } from '@tldrack/schemas/session-lineage.ts';
@@ -75,11 +76,12 @@ export type OfficeMessage =
 const STATES: readonly TerminalDisplayState[] = ['busy', 'background', 'attention', 'free', 'unknown', 'done'];
 
 /** The fields the office draws, and nothing else: the projection a rack relays. */
-export function office_session(entry: RackSession): RackSession {
+export function office_session(entry: RackSession, now_s = Date.now() / 1000): RackSession {
     return {
         session: entry.session,
         state: entry.state,
         live: entry.live,
+        status_emoji: session_status_emoji({ ...entry, dim: !entry.live }, now_s),
         ...(entry.auto_name ? { auto_name: entry.auto_name } : {}),
         ...(entry.model_label ? { model_label: entry.model_label } : {}),
         ...(valid_context(entry.context_left) ? { context_left: entry.context_left } : {}),
@@ -190,6 +192,7 @@ export function parse_office_session(raw: unknown): RackSession | null {
     const activity = row.activity as Record<string, unknown> | null | undefined;
     const zone = typeof activity === 'object' && activity !== null ? optional_string(activity.zone) : undefined;
     const auto_name = optional_string(row.auto_name);
+    const status_emoji = parse_status_emoji(row.status_emoji);
     const model_label = optional_string(row.model_label);
     const repo = optional_string(row.repo);
     const cwd = optional_string(row.cwd);
@@ -198,6 +201,7 @@ export function parse_office_session(raw: unknown): RackSession | null {
         state,
         live: row.live !== false,
         ...(auto_name ? { auto_name } : {}),
+        ...(status_emoji ? { status_emoji } : {}),
         ...(model_label ? { model_label } : {}),
         ...(valid_context(row.context_left) ? { context_left: row.context_left } : {}),
         ...(repo ? { repo } : {}),
@@ -276,7 +280,7 @@ export function office_rack(payload: OfficeSource): OfficeRack {
         if (row) set_worktree(worktrees, session.session, office_worktree(row));
     }
     return {
-        sessions: payload.sessions.map(office_session),
+        sessions: payload.sessions.map(entry => office_session(entry)),
         focused: payload.focused,
         reachable: payload.reachable,
         frozen: payload.attached === false,

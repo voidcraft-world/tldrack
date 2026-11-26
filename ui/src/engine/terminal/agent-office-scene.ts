@@ -10,8 +10,8 @@
  *
  * HUE MEANS STATE. A hue is spent only where it says something: the robots,
  * desks and floors are neutral graphite; the state hue is on the head lamp, the
- * screen and the nameplate's dot; the session's identity hue is on the
- * nameplate's name only; chrome (room outlines, labels, the focus ring) is the
+ * screen, the nameplate's dot and activity sections within each room; the session's identity hue is on the
+ * nameplate's name only; chrome (room outlines, labels, the selection outline) is the
  * one mint.
  *
  * MOTION, all of it in HELD STEPS, never eased (`OFFICE_MOTION`). The lamp of an
@@ -19,7 +19,7 @@
  * with one hand up, waving: a standing robot is easy to miss across a full floor,
  * a hopping one is not. A WORKING agent types: its arms step between two held
  * angles. A worktree island rides its pool (`office-island.ts`). Nothing else
- * moves; a desk only changes place when a session comes or goes. The hop, the
+ * moves; desk placement is owned by `agent-office-logic.ts` — see the note there. The hop, the
  * wave and the water hold still under reduced motion (`should_animate`); the
  * raised hand and the pool stay, because they are the state, not the motion.
  */
@@ -41,7 +41,6 @@ import {
     SRGBColorSpace,
     Sprite,
     SpriteMaterial,
-    TorusGeometry,
     Vector3,
     Vector2,
     type PerspectiveCamera,
@@ -49,6 +48,8 @@ import {
     type Object3D,
     type Raycaster,
 } from 'three';
+import { SERVICE_SESSION_EMOJI } from './service-sessions.ts';
+import { office_outline } from './office-outline.ts';
 import { place_office_labels, type LabelAnchor, type LabelRect, type LabelPlacement } from '../../agent-office/office-labels.ts';
 import { display_state_color, state_pulse_period_ms } from '../../config/terminal-status-flags.ts';
 import { should_animate } from '../../config/fui-motion-flags.ts';
@@ -56,7 +57,7 @@ import { session_label_color } from './agent-zone-logic.ts';
 import { resource_readout, type OfficeResources } from './office-resources.ts';
 import { OfficeIsland, OFFICE_ISLAND_LIFT, OFFICE_WATER_LEVEL, float_phase, island_float } from './office-island.ts';
 import { island_status } from './island-status.ts';
-import { OFFICE_GEOMETRY, type OfficeDesk, type OfficeLayout, type OfficeRoom } from './agent-office-logic.ts';
+import { OFFICE_GEOMETRY, type OfficeBandKey, type OfficeDesk, type OfficeLayout, type OfficeRoom } from './agent-office-logic.ts';
 
 /** The office's motion, in one place. */
 export const OFFICE_MOTION = {
@@ -99,12 +100,12 @@ export function office_hop(now_ms: number, period_ms: number = HOP_PERIOD_MS): n
 
 const PALETTE = {
     ground: 0x0b0f0e,
-    floor: 0x1a1f22,
-    floor_team: 0x1d2226,
+    floor: 0x222b31,
+    floor_team: 0x28323a,
     desk: 0x8a8f94,
-    leg: 0x4a4f54,
-    chair: 0x30353a,
-    monitor: 0x23272b,
+    leg: 0x697782,
+    chair: 0x4a5965,
+    monitor: 0x46525d,
     screen_off: 0x111416,
     robot: 0xd8dde1,
     robot_dark: 0x7c8388,
@@ -234,7 +235,7 @@ function office_parts() {
 }
 
 /** A standing robot's legs, and how far it steps back behind its chair to stand. */
-const ROBOT_LEG = 0.8;
+const ROBOT_LEG = 0.56;
 const STAND_BACK = 0.45;
 /** The raised hand: the arm swung up past vertical and stretched to clear the head,
  *  leaning out from the body between two held angles (radians from hanging). */
@@ -244,7 +245,7 @@ const ARM_LENGTH = 0.3;
 const SEATED_BODY_BOTTOM = 0.5;
 
 /** One desk's floor footprint in its rig's frame — desk front edge to behind a
- *  standing robot — shared by the pick box and the focus ring so the two cannot drift. */
+ *  standing robot — used by the pick box while furniture is visible. */
 const DESK_FOOTPRINT = (() => {
     const g = OFFICE_GEOMETRY;
     const front = g.desk_depth / 2;
@@ -255,13 +256,17 @@ type OfficeParts = ReturnType<typeof office_parts>;
 
 /** One session's furniture: a robot at a desk, or a server cabinet facing +z. */
 class OfficeRig {
-    /** The desk's place on the floor. It never moves between layouts. */
+    /** The desk's place in its room's activity section. */
     readonly root = new Group();
     /** Everything that stands on the floor, or on the island when there is one: the
      *  island lifts it and the swell moves it, and the pool stays on `root`. */
     private readonly deck = new Group();
     readonly hitbox: Mesh;
     private readonly robot = new Group();
+    private readonly furniture = new Group();
+    private readonly outline = office_outline(PALETTE.chrome);
+    private focused = false;
+    private idle = false;
     /** Shoulder pivots: an arm swings from its top. */
     private readonly arms: Group[] = [];
     /** The arm an agent that wants you raises, and the lamp-hued hand at its end. */
@@ -274,9 +279,7 @@ class OfficeRig {
     private readonly legs: Mesh[] = [];
     private readonly lamp_material: MeshBasicMaterial;
     private readonly screen_material: MeshBasicMaterial;
-    private readonly focus_ring: LineLoop;
     private nameplate: Sprite | null = null;
-    private readonly beacon: Mesh;
     private readonly label_origin = new Vector3();
     private readonly label_size = new Vector2();
     private label_lines = 1;
@@ -299,7 +302,7 @@ class OfficeRig {
         session: string,
         kind: OfficeDesk['agent']['kind'],
         parts: OfficeParts,
-        shared: { solid: MeshBasicMaterial; chrome: LineBasicMaterial; hitbox: MeshBasicMaterial },
+        shared: { hitbox: MeshBasicMaterial },
         floating_names: boolean,
     ) {
         this.session = session;
@@ -308,10 +311,12 @@ class OfficeRig {
         this.phase = float_phase(session);
         this.root.add(this.deck);
         const g = OFFICE_GEOMETRY;
-        const solid = shared.solid;
+        const solid = this.outline.material;
+        this.furniture.name = 'furniture';
+        this.deck.add(this.furniture);
         this.screen_material = new MeshBasicMaterial({ color: PALETTE.screen_off });
         this.lamp_material = new MeshBasicMaterial({ color: 0xffffff });
-        const add = (geometry: BufferGeometry, x: number, y: number, z: number, parent: Object3D = this.deck): Mesh => {
+        const add = (geometry: BufferGeometry, x: number, y: number, z: number, parent: Object3D = this.furniture): Mesh => {
             const mesh = new Mesh(geometry, solid);
             mesh.position.set(x, y, z);
             parent.add(mesh);
@@ -387,30 +392,25 @@ class OfficeRig {
             screen.scale.set(1.5, 1.5, 1);
             screen.rotation.y = Math.PI; // faces −z, toward the seat
         }
-        this.deck.add(screen);
+        this.furniture.add(screen);
 
-        const footprint = kind === 'service'
-            ? { width: g.server_width + 0.2, depth: g.server_depth + 0.2, centre_z: 0 }
-            : { width: g.desk_width + 0.2, ...DESK_FOOTPRINT };
-        this.focus_ring = rect_outline(footprint.width, footprint.depth, shared.chrome);
-        this.focus_ring.position.set(0, 0.01, footprint.centre_z);
-        this.focus_ring.visible = false;
-        this.deck.add(this.focus_ring);
-        // A solid, always-visible halo locates selection even behind another desk/cabinet.
-        this.beacon = new Mesh(new TorusGeometry(kind === 'service' ? 0.65 : 0.8, 0.055, 8, 40),
-            new MeshBasicMaterial({ color: PALETTE.chrome, depthTest: false, depthWrite: false, transparent: true, opacity: 0.95 }));
-        this.beacon.rotation.x = -Math.PI / 2;
-        this.beacon.position.set(0, kind === 'service' ? g.server_height + 0.15 : 1.65, kind === 'service' ? 0 : -g.seat_offset_z);
-        this.beacon.renderOrder = 20;
-        this.beacon.visible = false;
-        this.deck.add(this.beacon);
-
+        const centre_z = kind === 'service' ? 0 : DESK_FOOTPRINT.centre_z;
         this.hitbox = new Mesh(kind === 'service' ? parts.server_hitbox : parts.hitbox, shared.hitbox);
-        this.hitbox.position.set(0, kind === 'service' ? g.server_height / 2 : 0.95, footprint.centre_z);
+        this.hitbox.position.set(0, kind === 'service' ? g.server_height / 2 : 0.95, centre_z);
         this.hitbox.userData.session = session;
         this.deck.add(this.hitbox);
         this.leader.visible = false;
         this.deck.add(this.leader);
+        const outlined: Mesh[] = [];
+        this.deck.traverse((object) => {
+            if (object instanceof Mesh && object.material === solid) outlined.push(object);
+        });
+        for (const part of outlined) {
+            const glow = new Mesh(part.geometry, this.outline.glow);
+            glow.name = 'office-outline-glow';
+            glow.renderOrder = 1;
+            part.add(glow);
+        }
     }
 
     place(desk: OfficeDesk): void {
@@ -443,11 +443,17 @@ class OfficeRig {
         this.typing = this.kind === 'agent' && (agent.pose === 'working' || agent.pose === 'thinking');
         this.lamp_material.color.setHex(this.state_hex);
 
-        const standing = agent.pose === 'waiting';
-        this.waiting = standing && this.kind === 'agent';
-        // Standing: up off the chair (legs on the floor) and back behind it.
+        this.idle = this.kind === 'agent' && agent.pose === 'idle' && agent.screen === '';
+        this.furniture.visible = !this.idle;
+        this.waiting = agent.pose === 'waiting' && this.kind === 'agent';
+        const standing = this.waiting || this.idle;
+        // Both standing poses reach the floor; only a waiting robot steps behind its chair.
         this.robot_y = standing ? ROBOT_LEG - SEATED_BODY_BOTTOM : 0;
-        this.robot.position.set(0, this.robot_y, -OFFICE_GEOMETRY.seat_offset_z + (standing ? -STAND_BACK : 0.04));
+        this.robot.position.set(0, this.robot_y, -OFFICE_GEOMETRY.seat_offset_z + (this.waiting ? -STAND_BACK : 0.04));
+        if (this.kind === 'agent') {
+            this.hitbox.scale.set(this.idle ? 0.7 / OFFICE_GEOMETRY.desk_width : 1, 1, this.idle ? 0.5 / DESK_FOOTPRINT.depth : 1);
+            this.hitbox.position.z = this.idle ? this.robot.position.z : DESK_FOOTPRINT.centre_z;
+        }
         for (const leg of this.legs) leg.visible = standing;
         for (const arm of this.arms) arm.rotation.set(0, 0, 0);
         if (this.raised) {
@@ -478,33 +484,36 @@ class OfficeRig {
 
         // The nameplate's second line is what the agent is doing — readable from
         // any side, unlike the screen, which faces only its seat.
-        const doing = standing ? 'WANTS YOU' : agent.screen;
+        const doing = this.waiting ? 'WANTS YOU' : agent.screen;
         const island = agent.island ? island_status(agent.island) : null;
-        const label_key = `${agent.label}|${doing}|${this.state_hex}|${agent.lead}|${agent.focused}|${island?.label ?? ''}`;
+        const label_key = `${agent.emoji}|${agent.label}|${doing}|${this.state_hex}|${agent.lead}|${agent.focused}|${island?.label ?? ''}`;
         if (this.floating_names && label_key !== this.label_key) {
             this.label_key = label_key;
             this.set_nameplate([
-                { text: `${agent.focused ? '▸ ' : agent.lead ? '★ ' : ''}${agent.label}`, color: agent.focused ? '#d8ffe6' : session_label_color(agent.session) },
+                { text: `${agent.focused ? '▸ ' : agent.lead ? '★ ' : ''}${agent.emoji ? `${agent.emoji} ` : ''}${agent.label}`, color: session_label_color(agent.session) },
                 ...(doing ? [{ text: `● ${doing}`, color: hex_css(this.state_hex) }] : []),
                 ...(island ? [{ text: island.label, color: island.color }] : []),
-            ]);
+            ], agent.focused);
         }
-        this.focus_ring.visible = agent.focused || this.hovered;
-        this.beacon.visible = agent.focused;
-        if (this.kind === 'agent') this.beacon.position.y = standing ? 2.25 : 1.65;
+        this.set_hovered(this.hovered, agent.focused);
     }
 
     set_hovered(hovered: boolean, focused: boolean): void {
         this.hovered = hovered;
-        this.focus_ring.visible = hovered || focused;
+        this.focused = focused;
+        this.outline.strength.value = focused ? 1 : hovered ? 0.65 : 0;
+        this.outline.glow.visible = focused || hovered;
     }
 
-    private set_nameplate(lines: LabelLine[]): void {
+    private set_nameplate(lines: LabelLine[], focused: boolean): void {
         if (this.nameplate) {
             this.deck.remove(this.nameplate);
             dispose_sprite(this.nameplate);
         }
-        const { texture, aspect } = text_texture(lines, { backing: 'rgba(11, 15, 14, 0.68)' });
+        // Invert every line together: status and worktree text must stay readable on the bright selection plate.
+        const { texture, aspect } = focused
+            ? text_texture(lines.map(line => ({ ...line, color: '#102019' })), { fill: '#f4fff8' })
+            : text_texture(lines, { backing: 'rgba(8, 12, 15, 0.88)' });
         const sprite = new Sprite(new SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
         const height = 0.26 * lines.length;
         this.label_size.set(height * aspect, height);
@@ -536,16 +545,16 @@ class OfficeRig {
         const world_scale = this.root.getWorldScale(new Vector3());
         const pixels = height * camera.projectionMatrix.elements[5] / (2 * depth);
         const w = this.label_size.x * world_scale.x * pixels, h = this.label_size.y * world_scale.y * pixels;
-        return { session: this.session, depth, focused: this.beacon.visible, lines: this.label_lines,
+        return { session: this.session, depth, focused: this.focused, lines: this.label_lines,
             left: (ndc.x + 1) * width / 2 - w / 2, top: (1 - ndc.y) * height / 2 - h / 2, width: w, height: h };
     }
 
     /** Conservative projected bounds include the desk, robot (standing, and at the top of a hop), and enlarged monitor. */
     project_model(camera: PerspectiveCamera, width: number, height: number): LabelRect | null {
         const service = this.kind === 'service';
-        const half_width = service ? OFFICE_GEOMETRY.server_width / 2 : OFFICE_GEOMETRY.desk_width / 2;
-        const back = service ? -OFFICE_GEOMETRY.server_depth / 2 : -1.5;
-        const front = service ? OFFICE_GEOMETRY.server_depth / 2 : OFFICE_GEOMETRY.desk_depth / 2;
+        const half_width = service ? OFFICE_GEOMETRY.server_width / 2 : this.idle ? 0.35 : OFFICE_GEOMETRY.desk_width / 2;
+        const back = service ? -OFFICE_GEOMETRY.server_depth / 2 : this.idle ? this.robot.position.z - 0.25 : -1.5;
+        const front = service ? OFFICE_GEOMETRY.server_depth / 2 : this.idle ? this.robot.position.z + 0.25 : OFFICE_GEOMETRY.desk_depth / 2;
         const top = service ? OFFICE_GEOMETRY.server_height : this.robot_y + 1.6 + (this.waiting ? OFFICE_MOTION.hop_height : 0);
         let left = Infinity, right = -Infinity, bottom = -Infinity, upper = Infinity;
         const corners: Vector3[] = [];
@@ -625,9 +634,8 @@ class OfficeRig {
         this.lamp_material.dispose();
         this.screen_material.map?.dispose();
         this.screen_material.dispose();
-        this.focus_ring.geometry.dispose();
-        this.beacon.geometry.dispose();
-        (this.beacon.material as Material).dispose();
+        this.outline.material.dispose();
+        this.outline.glow.dispose();
         if (this.nameplate) dispose_sprite(this.nameplate);
     }
 }
@@ -658,12 +666,35 @@ function floor_label(width: number, height: number, material: MeshBasicMaterial)
     return mesh;
 }
 
-/** A room's floor, outline and name. */
+/** A band's hue: its state's own (`display_state_color`). IDLE has none to spend: it is the
+ *  absence the other two are read against, so it stays the dim grey of a dark screen. */
+export function band_hue(key: OfficeBandKey): number | null {
+    if (key === 'waiting') return display_state_color('attention');
+    return key === 'working' ? display_state_color('busy') : null;
+}
+/** How much of its hue a band's floor takes: enough to find the band from across the floor,
+ *  little enough that the desks on it stay graphite and the lamps stay the brightest hue. */
+const BAND_FLOOR_TINT = 0.16;
+
+/** `amount` of the way from one hex colour to another, channel by channel AS WRITTEN (sRGB).
+ *  `Color.lerp` mixes in linear light, where a tenth of a saturated hue reads as a third. */
+function mix_hex(from: number, to: number, amount: number): number {
+    const channel = (shift: number): number => {
+        const a = (from >> shift) & 0xff;
+        const b = (to >> shift) & 0xff;
+        return Math.round(a + (b - a) * amount) << shift;
+    };
+    return channel(16) | channel(8) | channel(0);
+}
+
+/** A room's floor, outline, bands and name. */
 function build_room(room: OfficeRoom, chrome: LineBasicMaterial): { group: Group; dispose: () => void } {
     const group = new Group();
     group.position.set(room.x, 0, room.z);
+    const owned: { dispose: () => void }[] = [];
+    const floor_hex = room.kind === 'team' ? PALETTE.floor_team : PALETTE.floor;
     const floor_geometry = new PlaneGeometry(room.width, room.depth);
-    const floor_material = new MeshBasicMaterial({ color: room.kind === 'team' ? PALETTE.floor_team : PALETTE.floor });
+    const floor_material = new MeshBasicMaterial({ color: floor_hex });
     const floor = new Mesh(floor_geometry, floor_material);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0.002;
@@ -672,16 +703,52 @@ function build_room(room: OfficeRoom, chrome: LineBasicMaterial): { group: Group
     outline.position.y = 0.006;
     group.add(outline);
 
+    // Activity sections use tint and dividers; their geometry is owned by agent-office-logic.ts.
+    room.bands.forEach((band, i) => {
+        const hue = band_hue(band.key);
+        const local_x = band.x - room.x;
+        const local_z = band.z - room.z;
+        if (hue !== null) {
+            const tint_geometry = new PlaneGeometry(band.width, band.depth);
+            const tint_material = new MeshBasicMaterial({ color: mix_hex(floor_hex, hue, BAND_FLOOR_TINT) });
+            const tint = new Mesh(tint_geometry, tint_material);
+            tint.name = `band:${band.key}`;
+            tint.rotation.x = -Math.PI / 2;
+            tint.position.set(local_x, 0.003, local_z);
+            group.add(tint);
+            owned.push(tint_geometry, tint_material);
+        }
+        if (i > 0) {
+            const edge = local_x - band.width / 2;
+            const divider_geometry = new BufferGeometry().setAttribute('position', new Float32BufferAttribute(
+                [edge, 0.006, local_z - band.depth / 2, edge, 0.006, local_z + band.depth / 2], 3));
+            const divider = new Line(divider_geometry, chrome);
+            divider.name = 'band-divider';
+            group.add(divider);
+            owned.push(divider_geometry);
+        }
+    });
+
     // The name, painted on the floor along the room's front (+z) edge.
     const head = room.kind === 'team' ? `TEAM ${room.label}` : room.label;
-    const count = `${room.desks.length}`;
-    const { texture, aspect } = text_texture([{ text: `${head}  ·  ${count}`, color: hex_css(PALETTE.chrome) }], { px: 56 });
+    const { texture, aspect } = text_texture([{ text: head, color: hex_css(PALETTE.chrome) }], { px: 56 });
     const label_h = OFFICE_GEOMETRY.label_strip * 0.5;
-    const label_w = Math.min(label_h * aspect, room.width - 0.4);
+    const service_icon_size = room.kind === 'services' ? OFFICE_GEOMETRY.label_strip * 0.55 : 0;
+    const label_w = Math.min(label_h * aspect, room.width - 0.4 - (service_icon_size ? service_icon_size + 0.2 : 0));
     const label_material = new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false });
     const label = floor_label(label_w, label_w / aspect, label_material);
     label.position.set(-room.width / 2 + 0.25 + label_w / 2, 0.01, room.depth / 2 - OFFICE_GEOMETRY.label_strip / 2);
     group.add(label);
+    if (service_icon_size) {
+        const icon = text_texture([{ text: SERVICE_SESSION_EMOJI, color: hex_css(PALETTE.chrome) }]);
+        const icon_material = new MeshBasicMaterial({ map: icon.texture, transparent: true, depthWrite: false });
+        const mark = floor_label(service_icon_size, service_icon_size / icon.aspect, icon_material);
+        mark.name = 'services-floor-icon';
+        mark.position.set(room.width / 2 - 0.25 - service_icon_size / 2, 0.011,
+            room.depth / 2 - OFFICE_GEOMETRY.label_strip / 2);
+        group.add(mark);
+        owned.push(mark.geometry, icon.texture, icon_material);
+    }
 
     return {
         group,
@@ -692,6 +759,7 @@ function build_room(room: OfficeRoom, chrome: LineBasicMaterial): { group: Group
             label.geometry.dispose();
             texture.dispose();
             label_material.dispose();
+            for (const part of owned) part.dispose();
         },
     };
 }
@@ -728,7 +796,6 @@ export class AgentOfficeScene {
     readonly group = new Group();
     private readonly parts = office_parts();
     private readonly shared = {
-        solid: new MeshBasicMaterial({ vertexColors: true }),
         chrome: new LineBasicMaterial({ color: PALETTE.chrome, transparent: true, opacity: 0.55 }),
         hitbox: new MeshBasicMaterial({ visible: false }),
     };
