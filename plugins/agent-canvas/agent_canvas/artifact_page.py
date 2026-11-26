@@ -3,6 +3,26 @@
 Only base64 payload bytes enter the wrapper. HTML gets a network-denying CSP
 before its first byte and runs without same-origin, forms, popups or top navigation.
 The viewer itself makes no requests. Download is an explicit user gesture.
+
+Output HTML cannot download: its sandbox has no `allow-downloads`, so a page's own export button
+saves nothing. A page that made a picture hands it up instead:
+
+    parent.postMessage({type: "artifact-save", id, name, bytes: ArrayBuffer}, "*", [bytes])
+
+and the viewer answers `{type: "artifact-save-result", id, ok, name | error}`. The viewer saves it
+only when the message came from its own sandbox, the bytes are a PNG, JPEG or WebP by their first
+bytes and at most 16 MiB, and a click stands behind it. The file name is rebuilt from safe
+characters and the extension from the bytes, and the saved blob is untyped like the Download
+link's. So a page still cannot save a script, a document or a file nobody clicked for. Adding
+`allow-downloads` would allow all three.
+
+A click is the browser's own report (`navigator.userActivation`; a click inside the sandbox counts),
+and it lasts about five seconds. Chrome can take longer than that to encode one large PNG, and a
+"save every figure" button sends many files. So the viewer holds a click it has seen for one minute,
+32 saves and 64 MiB, and a page's button sends `{type: "artifact-save-click"}` in its click handler,
+before it starts encoding, for the viewer to see the click while it is live. That allowance is set
+once a minute and never topped up inside it, by a new click or by a save, so a page cannot turn one
+click into an endless run of files.
 """
 
 from __future__ import annotations
