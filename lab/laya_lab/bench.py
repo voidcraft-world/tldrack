@@ -8,7 +8,9 @@
     laya-lab bench --panel served/3q                  # also three questions and no line: the most confident answers
 
 Two sets. `golden`: the public cases checked in under `lab/golden/`, always. `heldout`: the operator's labelled turn
-ends the served fine-tune never trained on (`compare.heldout_rows`), only when the store holds some.
+ends the served fine-tune never trained on (`compare.heldout_rows`), only when the store holds some. A retrain scored
+beside it has its own split, so a row the served model held out can be one the retrain trained on: `load_sets` drops
+every row a retrain's own record covers, and every voter answers what is left.
 
 Voters, each under a public name:
 - `laya-base`: the base Laya model. `laya-fine-tune`: the registry's champion for the surface, when there is one.
@@ -150,6 +152,8 @@ class BenchVoter:
     question_version: int | None = None
     #: A challenger trained on its own rows and split (`train`), not a rebuild of the served model's.
     retrain: bool = False
+    #: A retrain's own training record (`rows.checkpoint_keys`): its rows leave the held-out set (the module note owns why).
+    trained: frozenset[str] = frozenset()
     #: An endpoint voter's router, which times its own calls (`compare.Timed`): a votes file's are the recorded ones.
     timed: Any = None
     #: A voter that answers every set at once, labels in hand, in `open`'s place (a panel: `panel.py` owns why).
@@ -302,6 +306,11 @@ def plan_challengers(
         retrain = record.get("retrain") is True or (
             isinstance(like, str) and (question.read_record(base, like) or {}).get("retrain") is True
         )
+        trained = rows.checkpoint_keys(base, name) if retrain else frozenset()
+        if trained is None:
+            raise compare.Refused(
+                f"{checkpoint}: its training record cannot be read, so the rows it trained on cannot be held out"
+            )
         public = f"{RETRAIN_PREFIX if retrain else CHALLENGER_PREFIX}{version}"
         taken = sum(1 for voter in voters if voter.name.startswith(public))
         public += f"-{taken + 1}" if taken else ""
@@ -323,6 +332,7 @@ def plan_challengers(
                 restate=lambda raw, version=version, build=build: build(raw, version),
                 question_version=version,
                 retrain=retrain,
+                trained=trained,
             )
         )
     return voters
@@ -559,14 +569,21 @@ def with_facts(base: Path, held: Sequence[tuple[str, dict[str, Any], bool]]) -> 
     return [(key, {**raw, "facts": facts[key]} if key in facts else raw, is_open) for key, raw, is_open in held]
 
 
-def load_sets(base: Path, name: str, suite: Suite, labels: str = "auto") -> tuple[dict[str, list[Row]], str | None]:
+def load_sets(
+    base: Path, name: str, suite: Suite, labels: str = "auto", trained: frozenset[str] = frozenset()
+) -> tuple[dict[str, list[Row]], str | None]:
     """`({"golden": rows[, "heldout": rows]}, why there is no held-out set)`. A store that is absent, empty or
-    unreadable has no held-out set: the reason is for the terminal, never for the file."""
+    unreadable has no held-out set: the reason is for the terminal, never for the file. `trained` is every key a
+    retrain in the plan trained on (`retrain_keys`): those rows are out (the module note owns why)."""
     sets = {"golden": golden_rows(name, suite)}
     try:
         held, meta = compare.heldout_raw(base, name, suite, labels)
     except (Exception, SystemExit) as error:  # noqa: BLE001  (an unreadable store is "no private split", never a crash)
         return sets, f"{type(error).__name__}: {error}"
+    if held and trained:
+        held = [row for row in held if not compare.was_trained(row[0], suite.build_state(row[1]), trained)]
+        if not held:
+            meta = {"skipped": "a retrain in the plan trained on every labelled turn end the served model held out"}
     if held:
         held = with_facts(base, held)
         sets["heldout"] = Rows(
@@ -574,6 +591,11 @@ def load_sets(base: Path, name: str, suite: Suite, labels: str = "auto") -> tupl
         )
         return sets, None
     return sets, meta.get("skipped") or "the store holds no labelled turn ends outside the training rows"
+
+
+def retrain_keys(plan: Plan) -> frozenset[str]:
+    """Every key a retrain in the plan trained on."""
+    return frozenset().union(*(voter.trained for voter in plan.voters))
 
 
 def class_counts(data: Sequence[Row]) -> dict[str, int]:
@@ -1165,7 +1187,7 @@ def run(
     except compare.Refused as refusal:
         print(f"[laya-lab] bench refused: {refusal}")
         return REFUSED
-    sets, no_heldout = load_sets(base, name, suite, labels)
+    sets, no_heldout = load_sets(base, name, suite, labels, retrain_keys(plan))
     day = day or date.today().isoformat()
     default_dir = paths.REPO_ROOT.joinpath(*RESULTS_DIR)
     out_dir = out_dir if out_dir is not None else default_dir
