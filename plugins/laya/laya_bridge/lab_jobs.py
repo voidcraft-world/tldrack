@@ -23,16 +23,23 @@ longer holds.
 
 A pane is a lab job by either mark: its `laya-<verb>` session stamped `@laya_verb` (a press here), or an `@eval_id`
 naming a lab eval (the same eval started by a runner from anywhere else), so the queue never starts beside one. The
-nightly pack and the gated retrain (`laya-nightly`, `laya-retrain`: `OCCUPYING_EVALS`) are no press verbs, but each
+nightly pack and the scheduled retrain (`laya-nightly`, `laya-retrain`: `OCCUPYING_EVALS`) are no press verbs, but each
 scores, sweeps and rewrites the same files (the retrain: the training rows and the registry), so while one runs it
-holds the queue too: a press waits behind it.
+holds the queue too: a press waits behind it. A scheduled retrain reads as the RETRAIN row at work.
 
 TRAIN AND LABEL ARE NOT LAB VERBS. `laya-lab train --as champion` serves the checkpoint it registers, and laya-serve
 rebuilds `LAYA_EXTRA_MODELS` from models.json at every spawn, so a press could put an unshadowed checkpoint live
-within about 15 idle minutes (its default, `--as challenger`, is shadow-only, but a press would still spend an hour of
-GPU outside the pack). Training happens only through the gated retrain; `label-open-work` spends a model
+within about 15 idle minutes. Training happens only through the gated retrain; `label-open-work` spends a model
 subscription. `is_forbidden` refuses either verb, and `--force`, in any lab argv, built in or read from a runner's
 registry, so no press can run them even if a registry file is edited to.
+
+RETRAIN IS A LAB VERB, AND THE ONLY ONE THAT TRAINS. The TRAINING page's RETRAIN press runs the gated retrain off
+schedule (`retrain <suite> --now`: laya-lab `retrain.py` owns its steps and its two gates, which a press does not
+skip). It ends in a @challenger or in nothing: it never serves what it trains, so the reason `train` is no verb does
+not reach it. It does spend about an hour of GPU and, at its label step, the week's teacher labels: that is the
+operator's press to make, and the lease still decides the hour its gpu steps start. A press resumes an open cycle
+rather than opening a second one (the retrain's own lock and journal). Under a runner its eval is `RETRAIN_NOW_EVAL`,
+apart from the scheduled `laya-retrain`, which opens a cycle only when one is owed.
 
 Every subprocess here has a timeout: these run on request threads.
 """
@@ -60,7 +67,7 @@ SURFACE_OPTION = "@laya_surface"
 #: What an eval runner stamps on every session it starts (the module note owns the second spawner).
 EVAL_ID_OPTION = "@eval_id"
 #: The lab verbs, in OPS order (`layaLabVerbSchema`).
-LAB_VERBS = ("challenger-sweep", "sweep", "sweep-reset", "score", "promote", "golden", "compare")
+LAB_VERBS = ("challenger-sweep", "sweep", "sweep-reset", "score", "promote", "golden", "compare", "retrain")
 #: A job row's states (`LAYA_LAB_JOB_STATES`).
 JOB_STATES = ("idle", "working", "queued", "failed")
 #: `LAB_ARGS[surface][verb]`: what a lab verb runs after the laya-lab binary. Every review surface needs a full row.
@@ -73,10 +80,15 @@ LAB_ARGS: dict[str, dict[str, tuple[str, ...]]] = {
         "promote": ("promote", "agent-open-work", "--flips", "--apply"),
         "golden": ("golden", "agent-open-work"),
         "compare": ("compare", "agent-open-work"),
+        "retrain": ("retrain", "agent-open-work", "--now"),
     }
 }
+#: The RETRAIN press under a runner (the module note owns why it is not the scheduled `laya-retrain`).
+RETRAIN_NOW_EVAL = "laya-retrain-now"
 #: `LAB_EVALS[surface][verb]`: the id a lab verb has in an eval runner's registry (`<runner>/registry/<id>.json`).
-LAB_EVALS: dict[str, dict[str, str]] = {"agent_open_work": {verb: f"laya-{verb}" for verb in LAB_VERBS}}
+LAB_EVALS: dict[str, dict[str, str]] = {
+    "agent_open_work": {verb: RETRAIN_NOW_EVAL if verb == "retrain" else f"laya-{verb}" for verb in LAB_VERBS}
+}
 #: eval id → (surface, verb): how a session started outside this module is recognised.
 EVAL_VERBS: dict[str, tuple[str, str]] = {eid: (surface, verb) for surface, ids in LAB_EVALS.items() for verb, eid in ids.items()}
 #: Registered evals that are no press verb but hold the lab queue while they run (the module note owns why): eval id →
@@ -473,17 +485,22 @@ def gate(
 ) -> None:
     """Everything a lab job needs before it may start, checked at the press AND again when its turn comes.
     `Refusal`: tmux_missing, lab_missing, eval_missing, too_few_labels, nothing_to_promote."""
+    missing = (
+        f"the runner's registry/{LAB_EVALS[surface][verb]}.json is missing, or is not a {DATA_CLASS} laya-lab command"
+        if surface in LAB_EVALS
+        else "no eval for this surface"
+    )
     if not tmux_available():
         raise Refusal(503, "tmux_missing", "tmux is not installed on this machine", "install tmux, then press again")
     if not lab_ok(repo):
         raise Refusal(503, "lab_missing", "laya-lab is not installed", LAB_HINT)
     if lab_args(verb, surface, runner) is None:
-        raise Refusal(503, "eval_missing", f"no runnable lab eval for {verb}: see the runner's registry/laya-{verb}.json")
+        raise Refusal(503, "eval_missing", f"no runnable lab eval for {verb}: {missing}")
     spec = REVIEW_SURFACES[surface]
-    if verb == "sweep":
+    if verb in ("sweep", "retrain"):  # the retrain's first gate is the sweep's own: clean operator labels
         ready = review_data.sweep_readiness(base, spec.name, loaded=loaded)
         if not ready["ready"]:
-            raise Refusal(409, "too_few_labels", ready["reason"] or "not enough clean operator labels to sweep")
+            raise Refusal(409, "too_few_labels", ready["reason"] or f"not enough clean operator labels to {verb}")
     if verb == "promote" and not review_data.promotion_candidates(base, spec.golden_suite):
         raise Refusal(409, "nothing_to_promote", "No operator flip is waiting to become a golden case")
 

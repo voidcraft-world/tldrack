@@ -111,6 +111,19 @@ def _stats_all(
     return out
 
 
+def training(base: Path | None, query: Mapping[str, Any] | None) -> Response:
+    """GET /training: one surface's snapshots and the rows a gate scored them on. The body: owned by training.py —
+    see the note there. `surface` defaults to the first review surface."""
+    from laya_bridge.training import training_state
+
+    try:
+        raw_surface = _query_value(_check_query(query, ("surface",)), "surface")
+        surface = next(iter(REVIEW_SURFACES)) if raw_surface is None else _surface(raw_surface, "bad_query")
+    except Refusal as refusal:
+        return refusal_response(refusal)
+    return 200, training_state(base, surface)
+
+
 def queue(
     base: Path | None, query: Mapping[str, Any] | None, *, loaded: Mapping[str, str] | None = None, now: datetime | None = None
 ) -> Response:

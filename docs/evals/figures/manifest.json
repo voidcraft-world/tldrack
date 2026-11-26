@@ -1,9 +1,9 @@
 {
-  "source": "01a2019ce78f9df20f386750819ee7c0805f2097c6204c6c2853240fe62a486f",
+  "source": "9d5036a7b0121f5ca3a099f9b3d7cb7ac740b59281b1a3cb290438c7bb594fb4",
   "figures": {
-    "labels-buy.dark.png": "1298d40d5fad358cffa8d3b63ec7fbceb201dfabe9ae52c79eecff19cd86d555",
-    "labels-buy.light.png": "4ef319973f92834858b5cd9308fd9f6ea504944d5e3e3b52d9c7786d13369465",
-    "roc.dark.png": "e4613ceb157b5f8010781024b07c588a674e718de03c2a8313d1fc37bf33b010",
-    "roc.light.png": "2391c8ab82caa10fc734d7728a0d07289a67c2c78635d4c06d5986bb1db7d662"
+    "labels-buy.dark.png": "88305c68b7ce29663de2a420fec4f1396f4ea0ff740202deb7cad92c97dca3e2",
+    "labels-buy.light.png": "01c95e185d585e764269be71058a95ed2e90ab0cc1d77ef08632b018b7895c88",
+    "roc.dark.png": "7ead9d2ac7488c871dba8faefc38f6cd8fc48f51a721013fa326283a335dfc97",
+    "roc.light.png": "36c19c07d29e4d9880ac6d7c96fac600ff0bb1f75e55ab01bbd80e08c05d5716"
   }
 }

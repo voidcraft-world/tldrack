@@ -149,7 +149,7 @@ const schemas = {
   recent: review.reviewRecentSchema, example: review.reviewExampleResultSchema,
   lab: review.layaLabResultSchema, restart: review.layaRestartResultSchema, landing: decide.layaLandingRowSchema,
   rack: review.reviewRackRequestSchema, retest_request: review.reviewRetestRequestSchema,
-  retest: review.reviewRetestResultSchema,
+  retest: review.reviewRetestResultSchema, training: review.layaTrainingStateSchema,
 };
 const failures = [];
 const refused = [];

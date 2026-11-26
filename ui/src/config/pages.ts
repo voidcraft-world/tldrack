@@ -9,3 +9,4 @@ export const DIAGRAM_PAGE = 'diagram.html';
 export const OFFICE_PAGE = 'office.html';
 export const EVALS_PAGE = 'evals.html';
 export const SETTINGS_PAGE = 'settings.html';
+export const TRAINING_PAGE = 'training.html';

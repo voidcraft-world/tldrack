@@ -29,7 +29,8 @@ step that was running and nothing before it: the next run starts at the first st
                every golden case stay out, the curated supplements join, operator rows are copied toward class
                balance. Its end is the cycle's TRAINING CUTOFF.
 4. `train`     `train.prepare` + `train.fit`: DEFAULT_EPOCHS epochs under the gpu lease. A fit that was cut off is
-               taken back first (`train.discard`), so its training record never marks a row as trained.
+               taken back first (`train.discard`), so its training record never marks a row as trained. While it
+               runs the block holds `progress` (`train.follow_fit`), which the TRAINING page draws.
 5. `gate`      the promotion gate against the served model (`train.judge_fit`; `gate.py` owns the checks).
 6. `register`  `--as challenger`, never served. Skipped when the gate refused: the cycle then closes `refused`.
 7. `sweep`     a RE-SWEEP dry run on the challenger, on operator labels it never trained on, which under the label
@@ -375,7 +376,13 @@ def step_train(cycle: Cycle, block: dict[str, Any]) -> dict[str, Any]:
     )
     cycle.journal.update(checkpoint=plan.out.name, model_digest=None)
     save(cycle.base, cycle.journal, cycle.clock())  # the folder is named before an hour of GPU: a kill can be taken back
-    report = train.compact_report(train.fit(cycle.base, plan))
+
+    def on_progress(progress: dict[str, Any]) -> None:
+        block["progress"] = progress
+        save(cycle.base, cycle.journal, cycle.clock())
+
+    report = train.compact_report(train.fit(cycle.base, plan, on_progress))
+    block.pop("progress", None)  # the fit ended: its numbers below are what it left
     cycle.journal["model_digest"] = infer.checkpoint_digest(plan.out.name, plan.out)
     return {
         "eval_items": report["eval_items"],

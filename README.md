@@ -150,14 +150,19 @@ The same held-out turns, one curve per voter. Up and to the left is better.
 
 Claude Opus 5.5 and Claude Fable 5.2 are on the chart as references: frontier cloud models, asked the same
 question with no training. Most of these held-out labels were written by a Claude model, so their curves
-are partly Claude agreeing with Claude. The two tie with each other (AUC 0.90 and 0.91). On the 43 turns
-the operator graded by hand, both tie with the fine-tune (0.68 and 0.71 against 0.69, each difference well
-inside its interval), and each is several times slower per verdict.
+are partly Claude agreeing with Claude. The two tie with each other (AUC 0.89 and 0.89). On the 43 turns
+the operator had graded by hand at the 2026-11-20 run, both tied with the fine-tune (0.68 and 0.71 against
+0.69, each difference well inside its interval), and each is several times slower per verdict.
+
+LAYA · RETRAIN · Q2 is the next fine-tune: the same base model, retrained on every label since, 42 of them
+the operator's own. It ranks above the served one on both sets: AUC 0.85 against 0.82 on the held-out turns
+(+0.024 [+0.000, +0.049]) and 0.89 against 0.86 on the public golden cases (+0.030 [+0.010, +0.052]). It is
+a challenger: registered, never served until the operator promotes it.
 
 LAYA · 18 QUESTIONS and LAYA · 3 QUESTIONS are experiments, not served models: the same fine-tune asked
 more than its one question of each turn. Eighteen questions, the turn's facts and one fitted line over
-the answers rank below the single question (AUC 0.74 against 0.83) at twelve times the time. Three
-questions with nothing fitted, the most confident answer taken, rank level with it (0.85 against 0.83,
+the answers rank below the single question (AUC 0.71 against 0.82) at eleven times the time. Three
+questions with nothing fitted, the most confident answer taken, rank level with it (0.83 against 0.82,
 the difference inside the interval) at three times the time. `lab/README.md` has the breakdown.
 
 <p align="center">

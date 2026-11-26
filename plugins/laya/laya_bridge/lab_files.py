@@ -30,6 +30,8 @@ writers and reads it back with `ops.ops_state` / `review_data`).
 - `retrain/<suite>.json`: the gated retrain's step journal (laya-lab `retrain.py`), the cycle in flight or last closed,
   read as OPS's RETRAIN line (`retrain_view`); `evals/retrain-<suite>-<stamp>.json` is a closed cycle's copy, which
   `run_verdict` reads.
+- `checkpoints/<checkpoint>/laya-lab-report.json` (`TRAIN_REPORT_FILENAME`): laya's train report beside the weights
+  (laya-lab `train.fit`), which the TRAINING page reads for a snapshot the registry does not hold.
 """
 
 from __future__ import annotations
@@ -373,6 +375,16 @@ def _newest_of(base: Path, kind: str, suite: str) -> tuple[Path, dict] | None:
     return None
 
 
+def newest_retrain_report(base: Path, suite: str) -> tuple[Path, dict] | None:
+    """The newest retrain report of `suite` (a closed cycle's copy, or a run that found nothing owed), or None."""
+    return _newest_of(base, "retrain", suite)
+
+
+def report_at(path: Path, report: Mapping[str, Any]) -> str | None:
+    """When a report was written: its own `at`, else its filename's stamp (local time, no `Z`)."""
+    return report["at"] if is_iso(report.get("at")) else stamp_at(_stamp_of(path))
+
+
 def newest_compare(base: Path, suite: str) -> tuple[Path, dict] | None:
     """The newest `laya-lab compare` report of `suite`, or None."""
     return _newest_of(base, "compare", suite)
@@ -669,7 +681,11 @@ RETRAIN_VERDICTS = {"done": "PASS", "refused": "REFUSE", "abandoned": "FAIL", RE
 RETRAIN_VERSION = 1
 #: The card the retrain's last step writes beside a checkpoint's weights (laya-lab `retrain.model_card`).
 MODEL_CARD_FILENAME = "MODEL_CARD.md"
+#: laya's train report beside a checkpoint's weights (laya-lab `train.fit`).
+TRAIN_REPORT_FILENAME = "laya-lab-report.json"
 RETRAIN_CAP_BYTES = 256 * 1024
+#: One line of names and numbers a journal block keeps (`why`, the cycle's `owed.reason`), as OPS carries it.
+RETRAIN_WHY_MAX = 200
 RETRAIN_ID = re.compile(r"\d{8}-\d{6}-[0-9a-f]{6}")
 #: A failed step's error as OPS carries it: the exception's type name. Its message stays in the journal
 #: (`laya-lab status` prints it): an error's text is not held to "names and numbers only".
@@ -706,10 +722,46 @@ def read_retrain_journal(base: Path | None, suite: str) -> dict | None:
     return journal
 
 
+def train_progress(epoch: int, epochs: int, step: int, steps: int | None, loss: float | None) -> dict:
+    """The train step's `progress` in the journal, written while a fit runs (laya-lab `retrain.step_train`): the epoch
+    it is in (1-based), the micro-batches done in that epoch, how many an epoch holds (None until the trainer said how
+    many items it trains on), and the last loss it printed."""
+    return {"epoch": epoch, "epochs": epochs, "step": step, "steps": steps, "loss": loss}
+
+
+def train_progress_view(raw: object) -> dict | None:
+    """A journal's `progress` as OPS carries it, or None: absent, or not whole. `done` is the share of the fit behind
+    it, by micro-batches, and None while an epoch's size is unknown."""
+    if not isinstance(raw, dict) or not all(is_count(raw.get(key)) for key in ("epoch", "epochs", "step")):
+        return None
+    epoch, epochs, step, steps = raw["epoch"], raw["epochs"], raw["step"], raw.get("steps")
+    if not 1 <= epoch <= epochs:
+        return None
+    steps = steps if is_count(steps) and steps > 0 else None
+    done = None if steps is None else min(1.0, ((epoch - 1) * steps + min(step, steps)) / (epochs * steps))
+    loss = raw.get("loss")
+    return {
+        "epoch": epoch,
+        "epochs": epochs,
+        "step": step,
+        "steps": steps,
+        "done": None if done is None else round(done, 4),
+        "loss": float(loss) if is_number(loss) else None,
+    }
+
+
+def _why(value: object) -> str | None:
+    return files.clip(value, RETRAIN_WHY_MAX) if isinstance(value, str) and value else None
+
+
 def retrain_view(journal: Mapping[str, Any]) -> dict:
     """`layaOpsStateSchema.retrain[]` minus its surface: the cycle's state, each step's state in order, the step it
     stands at (the first not done or skipped; None once closed), a failed step's error type, and the cycle's few
-    numbers. Names, states and numbers only."""
+    numbers. Names, states and numbers only.
+
+    Each step also carries when it started and how long it took, the cycle why it opened and when it closed, the train
+    step its progress while a fit runs and its before/after once it ended, and the gate its one-line reason: what the
+    TRAINING page draws its progress bar and its timings from."""
     steps_in = journal["steps"]
 
     def block(name: str) -> Mapping[str, Any]:
@@ -729,7 +781,22 @@ def retrain_view(journal: Mapping[str, Any]) -> dict:
         "started_at": journal["started_at"] if is_iso(journal.get("started_at")) else None,
         "updated_at": journal["updated_at"] if is_iso(journal.get("updated_at")) else None,
         "step": at,
-        "steps": [{"name": name, "state": states[name]} for name in RETRAIN_STEPS],
+        "steps": [
+            {
+                "name": name,
+                "state": states[name],
+                "started_at": block(name)["started_at"] if is_iso(block(name).get("started_at")) else None,
+                "seconds": float(block(name)["seconds"])
+                if is_number(block(name).get("seconds")) and block(name)["seconds"] >= 0
+                else None,
+            }
+            for name in RETRAIN_STEPS
+        ],
+        "closed_at": journal["closed_at"] if is_iso(journal.get("closed_at")) else None,
+        "reason": _why((journal.get("owed") or {}).get("reason") if isinstance(journal.get("owed"), dict) else None),
+        "progress": train_progress_view(train.get("progress")) if states["train"] == "running" else None,
+        "eval": eval_view({"eval_items": train.get("eval_items"), "before": train.get("before"), "after": train.get("after")}),
+        "gate_why": _why(gate.get("why")),
         "error": error if isinstance(error, str) and ERROR_NAME.fullmatch(error) else None,
         "checkpoint": checkpoint if is_basename(checkpoint) and MODEL_NAME.fullmatch(checkpoint) else None,
         "teacher": teacher if isinstance(teacher, str) and TEACHER_NAME.fullmatch(teacher) else None,

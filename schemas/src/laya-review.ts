@@ -76,9 +76,9 @@ export const REVIEW_GRADES = ['done', 'read', 'running', 'you'] as const;
 const NEEDS_SIDE = 'needs rides on its own side: read beside DONE, you and running beside OPEN';
 /** The most blind retests one queue page carries (`review_data.py` `retest_cards`: one per 10 cards of a 50-card page). */
 export const REVIEW_RETEST_PAGE_MAX = 5;
-/** The lab verbs the plugin runs as jobs; TRAIN and LABEL never are: owned by
- *  plugins/laya/laya_bridge/lab_jobs.py — see the note there. */
-export const layaLabVerbSchema = z.enum(['challenger-sweep', 'sweep', 'sweep-reset', 'score', 'promote', 'golden', 'compare']);
+/** The lab verbs the plugin runs as jobs; TRAIN and LABEL never are, and `retrain` is the gated retrain, the only
+ *  one that trains: owned by plugins/laya/laya_bridge/lab_jobs.py — see the note there. */
+export const layaLabVerbSchema = z.enum(['challenger-sweep', 'sweep', 'sweep-reset', 'score', 'promote', 'golden', 'compare', 'retrain']);
 /** A lab job's state: one runs, the rest wait their turn in order (`queued`, with `position`). */
 export const LAYA_LAB_JOB_STATES = ['idle', 'working', 'queued', 'failed'] as const;
 /** The gated retrain's steps, in order, the states a step can be in, and a cycle's states: owned by
@@ -699,7 +699,28 @@ export const layaOpsStateSchema = z.object({
         started_at: iso.nullable(),
         updated_at: iso.nullable(),
         step: z.enum(LAYA_RETRAIN_STEPS).nullable(), // the first step not done or skipped; null once the cycle closed
-        steps: z.array(z.object({ name: z.enum(LAYA_RETRAIN_STEPS), state: z.enum(LAYA_RETRAIN_STEP_STATES) })).max(8),
+        // `started_at` and `seconds`: when a step last started and how long it took; absent from an older bridge.
+        steps: z
+          .array(
+            z.object({
+              name: z.enum(LAYA_RETRAIN_STEPS),
+              state: z.enum(LAYA_RETRAIN_STEP_STATES),
+              started_at: iso.nullable().optional(),
+              seconds: z.number().nonnegative().nullable().optional(),
+            })
+          )
+          .max(8),
+        // What the TRAINING page adds to the row (`lab_files.retrain_view` owns each); all absent from an older bridge.
+        closed_at: iso.nullable().optional(),
+        reason: z.string().max(200).nullable().optional(), // why the cycle opened: names and numbers
+        // The fit in flight (`lab_files.train_progress_view`): the epoch it is in, micro-batches done in it and in one
+        // epoch, the share of the whole fit behind it, the last loss printed. Null unless the train step is running.
+        progress: z
+          .object({ epoch: n.min(1), epochs: n.min(1), step: n, steps: n.min(1).nullable(), done: p01.nullable(), loss: z.number().nullable() })
+          .nullable()
+          .optional(),
+        eval: z.object({ items: n, before: metrics, after: metrics }).nullable().optional(), // the fit's own held-out split
+        gate_why: z.string().max(200).nullable().optional(),
         error: z.string().max(64).nullable(), // a failed step's error type; its message stays on the Mac
         checkpoint: basename.nullable(),
         teacher: z.string().max(64).nullable(), // `sonnet`, or the local teacher's tag once it cleared its bar
@@ -731,6 +752,83 @@ export const layaOpsStateSchema = z.object({
     .max(120),
   lab: z.object({ ok: z.boolean(), hint: z.string().max(160).nullable() }),
 });
+
+/** `GET /training`'s bounds: owned by plugins/laya/laya_bridge/training.py (`SNAPSHOTS_MAX`, `EVIDENCE_MAX`,
+ *  `POINTS_MAX`, `CHECKS_MAX`) — see the note there. */
+export const LAYA_TRAINING_SNAPSHOTS_MAX = 40;
+export const LAYA_TRAINING_EVIDENCE_MAX = 8;
+export const LAYA_TRAINING_POINTS_MAX = 2000;
+export const LAYA_TRAINING_CHECKS_MAX = 8;
+export const LAYA_TRAINING_SETS = ['golden', 'heldout'] as const;
+const trainingCuts = z.object({ at: p01, done_at: p01 });
+const trainingPoints = z.array(p01).min(1).max(LAYA_TRAINING_POINTS_MAX);
+/** One set a promotion gate scored its candidate and the served model on: row i is `expected[i]` (true: open) with
+ *  each model's p. Three lists of one length; a row is a label and two numbers, never an id or a text. */
+export const layaTrainingSetSchema = z
+  .object({
+    set: z.enum(LAYA_TRAINING_SETS),
+    expected: z.array(z.boolean()).min(1).max(LAYA_TRAINING_POINTS_MAX),
+    candidate: trainingPoints,
+    served: trainingPoints,
+  })
+  .refine((rows) => rows.expected.length === rows.candidate.length && rows.expected.length === rows.served.length, {
+    message: 'a set is three lists of one length',
+  });
+/**
+ * `GET /plugin/laya/training`: the TRAINING page in one body. What a snapshot is, where its points come from and why
+ * they are numbers only: owned by plugins/laya/laya_bridge/training.py — see the note there.
+ */
+export const layaTrainingStateSchema = z.object({
+  ...envelope,
+  surface: layaReviewSurfaceSchema,
+  snapshots: z
+    .array(
+      z.object({
+        name: basename,
+        alias: z.enum(['champion', 'challenger', 'previous']).nullable(),
+        registered: z.boolean(),
+        rejected: z.boolean(),
+        at: iso.nullable(), // when it was trained: its folder's stamp, local time
+        gate: gateTagSchema.nullable(), // the tag it was registered under
+        verdict: z.enum(['PASS', 'REFUSE', 'INCONCLUSIVE']).nullable(), // its newest gate report's verdict
+        epochs: n.nullable(),
+        train_rows: n.nullable(),
+        eval: z.object({ items: n, before: metrics, after: metrics }).nullable(), // base → fine-tune on its own held-out split
+        scored: z.boolean(), // some gate kept its per-row scores: `evidence` holds them
+      })
+    )
+    .max(LAYA_TRAINING_SNAPSHOTS_MAX),
+  evidence: z
+    .array(
+      z.object({
+        candidate: basename,
+        served: basename,
+        at: iso.nullable(),
+        verdict: z.enum(['PASS', 'REFUSE', 'INCONCLUSIVE']),
+        promote: z.boolean(),
+        why: z.string().max(200).nullable(),
+        cuts: z.object({ candidate: trainingCuts, served: trainingCuts }), // the ⚠️ and ✅ cuts each was judged at
+        false_warning_cost: z.number().positive().nullable(),
+        checks: z.array(z.object({ name: z.string().max(32), state: z.enum(['pass', 'fail', 'skipped', 'unmeasured', 'pending']) })).max(LAYA_TRAINING_CHECKS_MAX),
+        sets: z.array(layaTrainingSetSchema).min(1).max(LAYA_TRAINING_SETS.length),
+      })
+    )
+    .max(LAYA_TRAINING_EVIDENCE_MAX),
+  // The newest retrain report: a closed cycle, or a run that found nothing owed and why. Null before the first.
+  last_run: z
+    .object({
+      at: iso.nullable(),
+      state: z.enum(['done', 'refused', 'abandoned', 'noop']),
+      verdict: z.enum(['PASS', 'REFUSE', 'FAIL', 'NO-OP']),
+      reason: z.string().max(200).nullable(),
+    })
+    .nullable(),
+});
+export type LayaTrainingState = z.infer<typeof layaTrainingStateSchema>;
+export type LayaTrainingSet = z.infer<typeof layaTrainingSetSchema>;
+export type LayaTrainingSnapshot = LayaTrainingState['snapshots'][number];
+export type LayaTrainingEvidence = LayaTrainingState['evidence'][number];
+export type LayaRetrainRow = NonNullable<LayaOpsState['retrain']>[number];
 
 export type LayaReviewSurface = z.infer<typeof layaReviewSurfaceSchema>;
 export type ReviewStratum = (typeof REVIEW_STRATA)[number];

@@ -243,3 +243,30 @@ def test_a_retrain_records_its_version_and_the_bench_names_it_apart(lab, public_
         f"LAYA · RETRAIN · Q{open_work.QUESTION_VERSION}",
         "LAYA · RETRAIN · Q3",
     ], "a rebuild of a retrain is the retrain's"
+
+
+def test_a_row_a_retrain_trained_on_leaves_the_held_out_set(lab, public_golden, tmp_path, capsys):
+    """The served model held the row out and the retrain's own split did not: no voter is asked it."""
+    texts = synthetic("still-open", 6) + synthetic("all-done", 6)
+    keys = lab.unlabelled(texts)
+    lab.labels({key: i < 6 for i, key in enumerate(keys)})
+    served_record(lab, synthetic("trained-open", 2), synthetic("held-open", 1))
+    router = FakeRouter(lambda state: 0.5)
+    held = lambda folder: next(
+        found for found in json.loads(next(folder.glob("*.json")).read_text())["sets"] if found["set"] == "heldout"
+    )
+
+    assert bench.run(SUITE, lab.base, router=router, out_dir=tmp_path / "plain") == 0
+    assert held(tmp_path / "plain")["n"] == {"open": 6, "done": 6}
+
+    retrained = lab.checkpoint(f"{CHECKPOINT[:-4]}2000", train_texts=[texts[0], texts[6]])
+    question.write_record(retrained.parent / f"{retrained.name}.data", open_work.QUESTION_VERSION, retrain=True)
+    assert bench.run(SUITE, lab.base, router=router, out_dir=tmp_path / "out", challengers=[retrained.name]) == 0
+    assert held(tmp_path / "out")["n"] == {"open": 5, "done": 5}
+
+    bare = lab.checkpoint(f"{CHECKPOINT[:-4]}2100", train_texts=None)
+    (bare.parent / f"{bare.name}.data").mkdir()
+    question.write_record(bare.parent / f"{bare.name}.data", open_work.QUESTION_VERSION, retrain=True)
+    capsys.readouterr()
+    assert bench.run(SUITE, lab.base, router=router, out_dir=tmp_path / "bare", challengers=[bare.name]) == bench.REFUSED
+    assert "its training record cannot be read" in capsys.readouterr().out
