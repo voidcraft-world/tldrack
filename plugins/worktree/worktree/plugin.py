@@ -1037,11 +1037,16 @@ class WorktreePlugin:
             if prompt:
                 # Folded in as the last STEP rather than given a thread of its
                 # own. It waits up to READY_TIMEOUT_SECONDS for Claude's input
-                # box — already off the request thread here, and one worker is
-                # one thing to reason about instead of two racing ones.
+                # box, then for the prompt to leave it — already off the request
+                # thread here, and one worker is one thing to reason about
+                # instead of two racing ones.
                 self._creates.advance(branch, "prompt")
                 self._invalidate()
-                if not create_mod.send_prompt(session, prompt):
+                problem = create_mod.send_prompt(session, prompt)
+                if problem == create_mod.PROMPT_UNSUBMITTED:
+                    # It is in the input box: pasting it again would double it.
+                    self._context.log(f"  worktree: prompt for '{session}' {problem}")
+                elif problem is not None:
                     self._context.log(f"  worktree: prompt NOT typed into '{session}' — paste: {prompt}")
         except Exception as exc:  # noqa: BLE001 — a worker crash must not wedge the branch
             return self._create_failed(branch, f"{type(exc).__name__}: {exc}")

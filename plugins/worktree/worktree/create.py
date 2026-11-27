@@ -29,13 +29,36 @@ input box Claude has already drawn. No shell, no option parser, no subcommand
 resolution, and multi-line-safe input is a formatting question rather than a
 security one. The cost is a readiness race, and its failure mode is chosen to be
 harmless: if the pane never looks ready we DO NOT SEND, and say so
-(`prompt_sent: false`). A task pasted into a bare shell is the outcome worth
+(`PROMPT_NOT_TYPED`). A task pasted into a bare shell is the outcome worth
 paying to avoid.
+
+── SUBMITTED, OR IT SAYS SO ────────────────────────────────────────────────
+The input frame is drawn before Claude reads its input. Measured (2.1.332): the
+frame was up 0.9 s after the spawn, a prompt typed at once arrived as ONE chunk
+that the TUI filed as a paste (`[Pasted text #1]…`), and the Enter sent right
+behind it was swallowed. The prompt then sat in the box until a person pressed
+Enter, while this module reported it sent. A session that has been up for a
+while submits the same line with the same two calls, so the race is the start,
+not the length.
+
+So the Enter is its own step (`submit_prompt`), and it has three rules:
+
+- **Wait until the pane SHOWS the line.** A painted draft proves the TUI took
+  the burst and is reading keys, which no fixed pause can.
+- **Enter only on our line.** Never on a screen that does not show the prompt
+  in the input box (`prompt_drafted`): on a trust list, a permission dialog or
+  a menu, an Enter picks the highlighted option.
+- **Sent means it left the box.** After each Enter the pane is read again:
+  a running turn or an empty box is the proof (`prompt_submitted`). While the
+  line still sits there the Enter is repeated, bounded (`SUBMIT_TRIES`), and
+  the line is NEVER typed twice. Past the bound the answer is the honest one,
+  `PROMPT_UNSUBMITTED`.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -65,6 +88,22 @@ BOOTSTRAP_TIMEOUT_SECONDS = 300
 #: session is already created and usable by then — only the typing is skipped.
 READY_TIMEOUT_SECONDS = 30
 READY_POLL_SECONDS = 0.4
+
+#: The submit confirm (module header § SUBMITTED): how often the pane is read
+#: after the prompt is typed, how many reads before giving up, how many Enters
+#: at most, and how much of the prompt identifies it in the input box.
+SUBMIT_POLL_SECONDS = 0.5
+SUBMIT_LOOKS = 30
+SUBMIT_TRIES = 3
+SUBMIT_MATCH_CHARS = 24
+#: What a running turn draws in the pane, lowercased: the spinner line's hint.
+WORKING_MARKER = "esc to interrupt"
+
+#: `send_prompt`'s two failures. Not typed: nothing went in, so pasting the
+#: prompt by hand is right. Unsubmitted: it IS in the input box, so pasting
+#: would double it and the only thing left to do is press Enter.
+PROMPT_NOT_TYPED = "not typed"
+PROMPT_UNSUBMITTED = "typed, but not submitted: press Enter in the pane"
 
 #: The bridge caps a plugin POST body at 4 KiB; this is the narrower cap on the
 #: part that gets typed, so a paste cannot become a wall of keystrokes.
@@ -192,11 +231,12 @@ def build_spawn_command(claude_bin: str, session: str, cwd: Path, env: dict[str,
 
 
 def build_send_keys_commands(session: str, prompt: str) -> list[list[str]]:
-    """Type `prompt` into the pane, then submit it.
+    """The two tmux calls that deliver a prompt: type it, and press Enter.
 
     Two calls, not one: `-l` means LITERAL, so an `Enter` in the same call would
     be typed as the five characters `E n t e r`. The submit has to be a separate,
-    non-literal key.
+    non-literal key, and it is never sent straight behind the text: `submit_prompt`
+    owns when.
 
     `--` before the prompt is the guard that matters here, and unlike `claude`'s
     it genuinely works: `send-keys` has no subcommands, so ending its option list
@@ -245,6 +285,89 @@ def looks_ready(pane_text: object) -> bool:
         if len(rule) >= _RULE_MIN and set(rule) == {"─"} and line.lstrip().startswith(("❯", ">")):
             return True
     return False
+
+
+#: The input box's top rule once a long draft has scrolled: `─── ↑ 2 more ───…`.
+_SCROLLED_RULE = re.compile(r"─+ ↑ \d+ more ─+")
+#: A burst the TUI filed as a paste, as the box shows it: `[Pasted text #1 +3 lines]`.
+_PASTE_PLACEHOLDER = re.compile(r"\[Pasted text[^\]]*\]")
+
+
+def _is_rule(line: str) -> bool:
+    stripped = line.strip()
+    return len(stripped) >= _RULE_MIN and set(stripped) == {"─"}
+
+
+def input_box(pane_text: object) -> tuple[str, bool] | None:
+    """Claude's input box as the pane shows it: `(text, scrolled)`, or None when
+    none is drawn (pure). The LAST frame in the pane wins.
+
+    Two frames. The usual one is a caret line directly under a rule, running
+    down to the next rule: `text` is the whole draft, `""` when it is empty. A
+    draft taller than the box SCROLLS it: the top rule reads `─── ↑ 2 more ───`,
+    the caret line is off screen, and `text` is only the draft's END. That is
+    not a corner case: a session nobody has attached to is 80x24, the box shows
+    six rows there, and a 520-character prompt already scrolls (measured). A
+    reader that knows only the caret line calls every long prompt "not ours".
+    """
+    if not isinstance(pane_text, str):
+        return None
+    lines = pane_text.splitlines()
+    start, scrolled = None, False
+    for index, line in enumerate(lines):
+        if _SCROLLED_RULE.fullmatch(line.strip()):
+            start, scrolled = index + 1, True
+        elif index and _is_rule(lines[index - 1]) and line.lstrip().startswith(("❯", ">")):
+            start, scrolled = index, False
+    if start is None:
+        return None
+    body, closed = [], False
+    for line in lines[start:]:
+        if _is_rule(line):
+            closed = True
+            break
+        body.append(line)
+    if scrolled and not closed:
+        return None  # a rule-shaped line of output, not a frame
+    if body and not scrolled:
+        body[0] = body[0].lstrip()[1:]  # the caret
+    return " ".join(" ".join(body).replace(" ", " ").split()), scrolled
+
+
+def _squash(text: str) -> str:
+    """Without whitespace: the box wraps a draft wherever the pane is wide enough to."""
+    return "".join(text.split())
+
+
+def prompt_drafted(prompt: str, pane_text: object) -> bool:
+    """Is OUR prompt sitting in the input box, unsent? (pure) The one screen an
+    Enter is safe on (module header § SUBMITTED).
+
+    What the box shows is a slice of the prompt (all of it, or its end once the
+    box has scrolled), with a placeholder wherever the TUI filed part of the
+    burst as a paste. So every piece of text around the placeholders has to
+    come from the prompt, and without a placeholder there has to be enough of
+    it (`SUBMIT_MATCH_CHARS`) that a stray keystroke in the box is not "ours".
+    """
+    box = input_box(pane_text)
+    ours = _squash(prompt)
+    if box is None or not box[0] or not ours:
+        return False
+    pieces = [piece for piece in map(_squash, _PASTE_PLACEHOLDER.split(box[0])) if piece]
+    if any(piece not in ours for piece in pieces):
+        return False
+    if _PASTE_PLACEHOLDER.search(box[0]):
+        return True
+    return sum(map(len, pieces)) >= min(SUBMIT_MATCH_CHARS, len(ours))
+
+
+def prompt_submitted(pane_text: object) -> bool:
+    """Has the prompt left the input box? (pure) A turn running proves it; else
+    the box is drawn and empty again. Only meaningful AFTER an Enter: an empty
+    box before one is a prompt the TUI has not painted yet."""
+    if not isinstance(pane_text, str):
+        return False
+    return WORKING_MARKER in pane_text.lower() or input_box(pane_text) == ("", False)
 
 
 def decide_create(
@@ -559,24 +682,57 @@ def run_spawn(command: list[str], session: str) -> tuple[int, dict]:
     return 200, {"session": session, "created": True}
 
 
-def send_prompt(session: str, prompt: str, ready_timeout: float = READY_TIMEOUT_SECONDS) -> bool:
-    """Wait for Claude's input box, then type the prompt. True if it was sent.
+def capture_pane(session: str) -> str | None:
+    """The pane's visible rows, or None (the session died, or tmux is wedged)."""
+    code, out, _err = run_bounded(["tmux", "capture-pane", "-p", "-t", pane_target(session)], PROBE_TIMEOUT_SECONDS)
+    return out if code == 0 else None
+
+
+def submit_prompt(session: str, prompt: str, press_enter: list[str]) -> bool:
+    """Enter the typed prompt and confirm it left the input box. True only on
+    that proof. The rules are the module header's (§ SUBMITTED): read the pane
+    every `SUBMIT_POLL_SECONDS`, press `press_enter` only while the pane shows
+    our line, at most `SUBMIT_TRIES` times, and stop reading after
+    `SUBMIT_LOOKS`."""
+    pressed = 0
+    for _look in range(SUBMIT_LOOKS):
+        time.sleep(SUBMIT_POLL_SECONDS)
+        pane = capture_pane(session)
+        if pane is None:
+            return False
+        if pressed and prompt_submitted(pane):
+            return True
+        if not prompt_drafted(prompt, pane):
+            continue  # not painted yet, or mid-repaint: look again, press nothing
+        if pressed == SUBMIT_TRIES:
+            return False
+        code, _out, _err = run_bounded(press_enter, PROBE_TIMEOUT_SECONDS)
+        if code != 0:
+            return False
+        pressed += 1
+    return False
+
+
+def send_prompt(session: str, prompt: str, ready_timeout: float = READY_TIMEOUT_SECONDS) -> str | None:
+    """Wait for Claude's input box, type the prompt, submit it. None once it has
+    provably left the input box, else why not: `PROMPT_NOT_TYPED` (nothing went
+    in) or `PROMPT_UNSUBMITTED` (it is in the box, waiting for an Enter).
 
     Runs on a BACKGROUND thread — never a request thread. `READY_TIMEOUT_SECONDS`
     is longer than any bridge route may block for, and the whole point of the
     route answering before this finishes is that session creation is not held
     hostage to a TUI that is still painting.
     """
+    type_prompt, press_enter = build_send_keys_commands(session, prompt)
     deadline = time.monotonic() + ready_timeout
     while time.monotonic() < deadline:
-        code, out, _err = run_bounded(["tmux", "capture-pane", "-p", "-t", pane_target(session)], PROBE_TIMEOUT_SECONDS)
-        if code != 0:
-            return False  # the session died, or tmux is wedged — nothing to type into
-        if looks_ready(out):
-            for command in build_send_keys_commands(session, prompt):
-                send_code, _o, _e = run_bounded(command, PROBE_TIMEOUT_SECONDS)
-                if send_code != 0:
-                    return False
-            return True
+        pane = capture_pane(session)
+        if pane is None:
+            return PROMPT_NOT_TYPED  # nothing to type into
+        if looks_ready(pane):
+            code, _out, _err = run_bounded(type_prompt, PROBE_TIMEOUT_SECONDS)
+            if code != 0:
+                return PROMPT_NOT_TYPED
+            return None if submit_prompt(session, prompt, press_enter) else PROMPT_UNSUBMITTED
         time.sleep(READY_POLL_SECONDS)
-    return False
+    return PROMPT_NOT_TYPED
