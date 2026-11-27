@@ -42,6 +42,7 @@ The returned object is duck-typed; the core's `voidcraft_world_bridge/plugins.py
 | `handle_post(subpath, query, body)` | `body` is a parsed JSON object or `None` |
 | `busy_reasons()` | optional: short strings for in-process jobs a restart would kill; lock-and-read only, no I/O |
 | `handle_request(method, subpath, query, body, headers)` | optional: called INSTEAD of the pair, header names lowercased, for a plugin that must read a header |
+| `pane_buttons()` | optional: `[{"label", "title", "route"}]`, buttons drawn in every terminal pane after + IMAGE. A press POSTs `{"session"}` to `route` (one of the plugin's own) and the answer's `paste` lands in the draft, never sent. Owned by `bridge/tldrack/pane_buttons.py` — see the note there |
 
 A handler returns `(status, dict)` for JSON or `(status, bytes, content_type)` for a page or an asset.
 Routes mount at `http://127.0.0.1:<status_port>/plugin/<name>/…`.

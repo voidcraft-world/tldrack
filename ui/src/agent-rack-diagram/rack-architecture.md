@@ -36,6 +36,7 @@ flowchart LR
     bridge -->|"child process"| ttyd
     bridge -->|"/spawn via spawn_argv"| tmux
     ttyd -->|"tmux attach"| tmux
+    ttyd -->|"pane tools: /images · /persona<br/>/pane-buttons, then the plugin's own route"| bridge
     tmux --> claude
     tmux --> codex
     tmux --> agy

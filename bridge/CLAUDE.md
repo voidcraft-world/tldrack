@@ -121,6 +121,7 @@ The injected script provides:
 7. **Work-persona selector** (top left): see `/persona` below.
 8. **⤒ TOP** (top middle): jumps to the first prompt of the conversation, then reads ⤓ END to come back. It types the agent's own scroll keys (Ctrl+Home, Ctrl+End), because an alternate-screen agent leaves no tmux history. Owned by `tldrack/index_patch.py` (`SCROLL_JUMPS`) — see the note there.
 9. **Font size and soft keys**: see Page contract.
+10. **Plugin buttons**: whatever mounted plugins declare with `pane_buttons()`, served by `GET /pane-buttons` and drawn after + IMAGE. A press POSTs to the plugin's own route and pastes its answer without Enter. Owned by `tldrack/pane_buttons.py` — see the note there.
 
 Without the plugin a button shows the reason beside it and types nothing. The `postMessage` strings must match `ui/src/events/messages.ts`: owned by `tldrack/index_patch.py` — see the note there.
 
@@ -278,6 +279,7 @@ The plugin host, the Host and Origin guards, CORS and `/snapshot`'s `bridge` + `
 - **Entry contract**: `<dir>/bridge_plugin.py` defines `PLUGIN_NAME` (lowercase kebab token) and `create_plugin(context)`. The plugin is duck-typed: `name`, `routes()`, `handle_get(subpath, query)`, `handle_post(subpath, query, body)`. Handlers return `(status, dict)` for JSON or `(status, bytes, content_type)` for a raw page. Routes mount under `/plugin/<name>/…`.
 - **Host guarantees a plugin cannot weaken**: the Origin guard runs on every plugin POST before dispatch; a plugin that fails to import is logged and skipped; a handler exception becomes a 500.
 - **Plugins run inside the bridge venv**: stdlib plus the core. Heavy work shells out to the plugin's own tooling, and every subprocess call carries a timeout, because handlers run on request threads.
+- **A plugin may put a button in every terminal pane** by defining `pane_buttons()`: owned by `tldrack/pane_buttons.py` — see the note there.
 - **Two opt-in affordances**, both clamped by the host: `handle_request(method, subpath, query, body, headers)` also receives the request headers (a plugin without it never sees one, because headers carry credentials); `max_body_bytes` raises that plugin's POST cap, never past the core's ceiling.
 - `close_plugins` runs at normal exit and at once when status-server startup fails; the freshness watcher stops first.
 - **Changing the core**: change and test it in its own repository, on a spare port. To run this bridge against an unreleased change, add a `[tool.uv.sources]` path entry to `pyproject.toml` temporarily and never commit it; `uv pip install -e` does not stick, because `uv run` re-syncs to the lock on every start. Release through the core's `scripts/release.py`, never a hand-pushed tag; with `VOIDCRAFT_BRIDGE_CONSUMERS` naming this directory, the release moves this lock. Restart the bridge to run it.
