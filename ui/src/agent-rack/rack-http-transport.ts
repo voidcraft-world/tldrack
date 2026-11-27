@@ -37,6 +37,7 @@ import { augment_rack_sessions } from './rack-ingest.ts';
 import { create_launch_notice, launch_new } from './spawn-client.ts';
 import {
     clean_up_worktree,
+    base_url_for,
     cleanup_notice,
     cleanup_request,
     create_island_focus,
@@ -237,6 +238,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
             // worktree UI off every machine that has not registered it.
             worktrees: worktree_state?.worktrees,
             task_groups: worktree_state?.task_groups,
+            worktree_repos: worktrees.repos() ?? undefined,
             missions: missions.state() ?? undefined,
             // Resolved HERE, since nothing else polls: `rack-view.ts` `attach_only_sessions`.
             attach_only: worktree_state?.worktree_paths
@@ -479,8 +481,9 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
         tick_lead: () => void lead.tick(),
     };
 
-    async function make_pr(branch: string): Promise<void> {
-        await open_pr(url, branch);
+    async function make_pr(row: WorktreeRow): Promise<void> {
+        // The row's own repository, never the default (`worktree-client.ts` `repo_base_url`).
+        await open_pr(base_url_for(url, row), row.branch);
         // The plugin answers 202 and finishes on a background thread; this tick
         // just picks up `pr_status: "opening"` so the button can show it.
         await worktrees.tick();
@@ -494,7 +497,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
             focused = null;
             emit();
         }
-        const notice = cleanup_notice(await clean_up_worktree(url, cleanup_request(row, session)));
+        const notice = cleanup_notice(await clean_up_worktree(base_url_for(url, row), cleanup_request(row, session)));
         if (notice) launch_notice.show(notice);
         await worktrees.tick();
     }
@@ -537,7 +540,8 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
                 return;
             }
             if (action === 'group_control' && session && value) {
-                void control_task_group(url, session, value).then(result => {
+                const repo = worktrees.state()?.group_repos?.[session];
+                void control_task_group(base_url_for(url, { repo }), session, value).then(result => {
                     if (!result.ok) launch_notice.show(result.error ?? 'Could not update task group');
                     void worktrees.tick();
                 });
@@ -561,7 +565,7 @@ export function create_http_transport(config: RemoteConfig): RemoteRackTransport
                     worktrees.state()?.worktrees,
                 );
                 if (!row) return;
-                if (action === 'pr') void make_pr(row.branch);
+                if (action === 'pr') void make_pr(row);
                 else void make_cleanup(row, session);
                 return;
             }

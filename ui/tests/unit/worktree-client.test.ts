@@ -129,8 +129,9 @@ test('the poller follows worktree_paths even when the managed rows are unchanged
         base_url: (p) => p,
         poll_interval_ms: 1000,
         on_change: () => { changes += 1; },
-        fetch_impl: (async () => new Response(JSON.stringify(bodies[Math.min(call++, bodies.length - 1)]),
-            { status: 200 })) as never,
+        // A plugin from before `/repos`: the poller reads the one bare `/state`, as it always did.
+        fetch_impl: (async (url: string) => (url.endsWith('/repos') ? new Response('', { status: 404 })
+            : new Response(JSON.stringify(bodies[Math.min(call++, bodies.length - 1)]), { status: 200 }))) as never,
         set_interval: (() => 0) as never,
         clear_interval: () => {},
     });
@@ -173,7 +174,8 @@ test('the timer rests while its owner does not want it, and a tick asked for by 
         poll_interval_ms: 5000,
         on_change: () => {},
         wanted: () => wanted,
-        fetch_impl: (async () => {
+        fetch_impl: (async (url: string) => {
+            if (url.endsWith('/repos')) return new Response('', { status: 404 });
             fetches += 1;
             return new Response(JSON.stringify({ worktrees: [row('wt-a')], root: '/wt', base: 'main' }), { status: 200 });
         }) as never,
@@ -946,4 +948,113 @@ test('clean_up_worktree posts to /cleanup; 202 is success and a refusal reaches 
     const boom = (async (): Promise<Response> => { throw new Error('offline'); }) as never;
     assert.equal(cleanup_notice(await clean_up_worktree((p) => p, { branch: 'x' }, boom)),
         'not cleaned up — could not start the clean-up');
+});
+
+// ── several repositories (worktree-client.ts § several repositories) ─────────────────────────────
+import {
+    base_url_for,
+    create_worktree as create_in,
+    fetch_worktree_repos,
+    merge_worktree_states,
+    parse_create_request as parse_create,
+    repo_base_url,
+} from '../../src/agent-rack/worktree-client.ts';
+import { repo_for_directory } from '../../src/engine/terminal/rack-view.ts';
+
+const REPOS = {
+    repos: [
+        { key: 'my-app-4cb33f47', label: 'my-app', path: '~/code/my-app', default: true },
+        { key: 'tldrack-1a2b3c4d', label: 'tldrack', path: '~/code/github/tldrack', default: false },
+    ],
+};
+
+function repo_state(key: string, branch: string) {
+    return {
+        worktrees: [{ ...row(`wt-${branch}`, branch), path: `/w/${key}/${branch}` }],
+        root: `/r/${key}`, base: 'main', repo_key: key,
+        worktree_paths: [`~/w/${key}/${branch}`],
+        worktree_trees: [{ path: `~/w/${key}/${branch}`, branch, pr: null, landing: null }],
+    };
+}
+
+test('repo_base_url binds every path, query or not, to one repository', () => {
+    const bound = repo_base_url((p) => `http://h${p}`, 'tldrack-1a2b3c4d');
+    assert.equal(bound('/plugin/worktree/state'), 'http://h/plugin/worktree/state?repo=tldrack-1a2b3c4d');
+    assert.equal(bound('/plugin/worktree/changes?branch=x'), 'http://h/plugin/worktree/changes?branch=x&repo=tldrack-1a2b3c4d');
+    const base = (p: string) => p;
+    assert.equal(base_url_for(base, { repo: 'k' })('/x'), '/x?repo=k');
+    assert.equal(base_url_for(base, {})('/x'), '/x', 'no key: the default repository, as before');
+    assert.equal(base_url_for(base, null)('/x'), '/x');
+});
+
+test('fetch_worktree_repos keeps well-formed rows and is null for an older plugin', async () => {
+    const answer = (body: unknown, status = 200) => (async () => new Response(JSON.stringify(body), { status })) as never;
+    const repos = await fetch_worktree_repos((p) => p, answer({ repos: [...REPOS.repos, { key: '../x', path: '/x' }, { key: 'ok' }] }));
+    assert.deepEqual(repos?.map((repo) => repo.key), ['my-app-4cb33f47', 'tldrack-1a2b3c4d']);
+    assert.equal(await fetch_worktree_repos((p) => p, answer({ error: 'not found' }, 404)), null);
+    assert.equal(await fetch_worktree_repos((p) => p, answer({ nope: 1 })), null);
+});
+
+test('the poller reads EVERY served repository and stamps each row and tree with its key', async () => {
+    const asked: string[] = [];
+    const poller = create_worktree_poller({
+        base_url: (p) => p,
+        poll_interval_ms: 1000,
+        on_change: () => {},
+        fetch_impl: (async (url: string) => {
+            asked.push(url);
+            if (url.endsWith('/repos')) return new Response(JSON.stringify(REPOS), { status: 200 });
+            const key = new URL(`http://h${url}`).searchParams.get('repo') ?? '';
+            return new Response(JSON.stringify(repo_state(key, key.startsWith('tldrack') ? 'feat/x' : 'feat/y')), { status: 200 });
+        }) as never,
+        set_interval: (() => 0) as never,
+        clear_interval: () => {},
+    });
+    await poller.tick();
+    assert.deepEqual(asked, [
+        '/plugin/worktree/repos',
+        '/plugin/worktree/state?repo=my-app-4cb33f47',
+        '/plugin/worktree/state?repo=tldrack-1a2b3c4d',
+    ]);
+    const state = poller.state()!;
+    assert.deepEqual(state.worktrees.map((r) => [r.branch, r.repo]), [['feat/y', 'my-app-4cb33f47'], ['feat/x', 'tldrack-1a2b3c4d']]);
+    assert.deepEqual(state.worktree_trees?.map((t) => t.repo), ['my-app-4cb33f47', 'tldrack-1a2b3c4d']);
+    assert.equal(state.worktree_paths?.length, 2, 'both repositories\' trees are attach-only');
+    assert.equal(state.root, '/r/my-app-4cb33f47', 'the default repository\'s root');
+    assert.deepEqual(poller.repos()?.map((repo) => repo.label), ['my-app', 'tldrack']);
+    await poller.tick();
+    assert.equal(asked.filter((url) => url.endsWith('/repos')).length, 1, '/repos is not re-read every tick');
+});
+
+test('merge_worktree_states: one answer passes through, none is null, groups know their repository', () => {
+    const one = { worktrees: [row('wt-a')], root: '/a', base: 'main', repo: 'a' };
+    assert.equal(merge_worktree_states([one, null]), one);
+    assert.equal(merge_worktree_states([null, null]), null);
+    const group = { id: '6f1c1e9a-2b3c-4d5e-8f90-123456789abc' } as never;
+    const merged = merge_worktree_states([
+        { ...one, task_groups: [] },
+        { worktrees: [], root: '/b', base: 'dev', repo: 'b', task_groups: [group] },
+    ])!;
+    assert.deepEqual(merged.group_repos, { '6f1c1e9a-2b3c-4d5e-8f90-123456789abc': 'b' });
+    assert.equal('worktree_paths' in merged, false, 'absent stays absent');
+});
+
+test('🏝 names its repository, and the create posts to it with the plugin\'s own body', async () => {
+    assert.deepEqual(parse_create(JSON.stringify({ branch: 'b', repo: 'tldrack-1a2b3c4d' })), { branch: 'b', repo: 'tldrack-1a2b3c4d' });
+    assert.deepEqual(parse_create(JSON.stringify({ branch: 'b', repo: '../etc' })), { branch: 'b' }, 'a bad key is dropped');
+    let sent: { url: string; body: unknown } | null = null;
+    await create_in((p) => p, { branch: 'b', repo: 'tldrack-1a2b3c4d' }, (async (url: string, init: RequestInit) => {
+        sent = { url, body: JSON.parse(String(init.body)) };
+        return new Response(JSON.stringify({ ok: true }), { status: 202 });
+    }) as never);
+    assert.deepEqual(sent, { url: '/plugin/worktree/create?repo=tldrack-1a2b3c4d', body: { branch: 'b' } });
+});
+
+test('repo_for_directory: the served repository holding a launch directory, longest path winning', () => {
+    const repos = REPOS.repos;
+    const home = '/Users/u';
+    assert.equal(repo_for_directory(`${home}/code/github/tldrack`, repos)?.key, 'tldrack-1a2b3c4d');
+    assert.equal(repo_for_directory(`${home}/code/github/tldrack/ui`, repos)?.key, 'tldrack-1a2b3c4d');
+    assert.equal(repo_for_directory(`${home}/code/github/other`, repos), null);
+    assert.equal(repo_for_directory(`${home}/code/github/tldrack`, undefined), null);
 });

@@ -20,6 +20,7 @@ import type {
     BranchLandingHow,
     CreateStep,
     WorktreeIsland,
+    WorktreeRepo,
     WorktreeRow,
 } from '../engine/terminal/rack-view.ts';
 // A real value import, unlike the type-only one above, and allowed under the
@@ -32,13 +33,19 @@ import { local_fetch } from '../engine/terminal/local-network-gate.ts';
 import { parse_profile_id } from '../engine/terminal/terminal-status-logic.ts';
 
 import { parse_task_groups, type TaskGroup } from './task-groups.ts';
-export type { BranchLanding, BranchLandingHow, WorktreeRow };
+export type { BranchLanding, BranchLandingHow, WorktreeRepo, WorktreeRow };
 
 export interface WorktreeState {
     task_groups?: TaskGroup[];
+    /** Which repository each task group is in, by group id: `control_task_group` posts to that one. Absent
+     *  while one repository answers. */
+    group_repos?: Record<string, string>;
     worktrees: WorktreeRow[];
     root: string;
     base: string;
+    /** The repository key this state is for (`/state.repo_key`), or absent from an older plugin and on a
+     *  state merged from several (`merge_worktree_states`). */
+    repo?: string;
     /**
      * Every NON-main worktree path on the machine, `~`-collapsed and unfiltered
      * — the managed rows above are a subset. Feeds `rack-view.ts::
@@ -66,6 +73,9 @@ export interface WorktreeCreateRequest {
      *  → the bridge's default profile, which is also what an older plugin does
      *  with it (ignores the key and spawns `claude`). */
     profile?: string;
+    /** The repository key to start it in (the launch directory's: `rack-view.ts` `repo_for_directory`).
+     *  Never posted in the body: the transport binds the URL to it (`base_url_for`). Absent → the default. */
+    repo?: string;
 }
 
 // ── the harbor document: what `GET /branches` ships ──────────────────────────
@@ -439,6 +449,88 @@ export const CREATE_POLL_INTERVAL_MS = 1000;
 export type BaseUrl = (path: string) => string;
 export type FetchImpl = (...args: Parameters<typeof fetch>) => Promise<Response>;
 
+// ── several repositories ──────────────────────────────────────────────────────
+//
+// THE BUG THIS EXISTS FOR (2026-11-26). The plugin serves every repository in settings.json
+// `plugins.worktree.repos`, and every one of its routes takes `repo` (absent: the FIRST). This client
+// asked `/state` with no `repo` and posted every action without one, so a second repository's trees had
+// no island, no PR / CLEAN button and no attach-only URL, and an action on one went to the first.
+//
+// ONE SEAM: `repo_base_url`. The plugin reads `?repo=` on every GET and POST (`repos.py` `_pick`: the body's
+// `repo` first, then the query), so a `BaseUrl` bound to a repository routes EVERY wrapper below without
+// any of them growing a parameter. The poller reads each repository through it and stamps what came back
+// with its key (`WorktreeRow.repo`, `WorktreeIsland.repo`); an action takes the bound URL of its row's key.
+// One repository, or a plugin with no `/repos`: exactly one bare `/state`, as before.
+
+/** A repository key as the plugin mints it (`repo.py` `repo_key`: a slug and a hash). */
+export const REPO_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** `base_url` bound to one repository: every path it builds carries `repo=<key>` (the note above). */
+export function repo_base_url(base_url: BaseUrl, repo: string): BaseUrl {
+    return (path) => {
+        const url = base_url(path);
+        return `${url}${url.includes('?') ? '&' : '?'}repo=${encodeURIComponent(repo)}`;
+    };
+}
+
+/** The URL an action on `item` takes: its repository's, else the plugin's default. */
+export function base_url_for(base_url: BaseUrl, item: { repo?: string } | null | undefined): BaseUrl {
+    return item?.repo ? repo_base_url(base_url, item.repo) : base_url;
+}
+
+/** `GET /repos`, or null: no plugin, a plugin from before the route, or a body that is not one. */
+export async function fetch_worktree_repos(
+    base_url: BaseUrl,
+    fetch_impl: FetchImpl = (...args) => local_fetch(...args),
+): Promise<WorktreeRepo[] | null> {
+    try {
+        const response = await fetch_impl(base_url('/plugin/worktree/repos'), { signal: AbortSignal.timeout(STATE_TIMEOUT_MS) });
+        if (!response.ok) return null;
+        const body = (await response.json()) as { repos?: unknown };
+        if (!Array.isArray(body.repos)) return null;
+        const repos: WorktreeRepo[] = [];
+        for (const raw of body.repos as Record<string, unknown>[]) {
+            if (!raw || typeof raw !== 'object' || typeof raw.key !== 'string' || !REPO_KEY.test(raw.key)) continue;
+            if (typeof raw.path !== 'string' || raw.path === '') continue;
+            repos.push({
+                key: raw.key,
+                label: typeof raw.label === 'string' && raw.label ? raw.label : raw.key,
+                path: raw.path,
+                default: raw.default === true,
+            });
+        }
+        return repos;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * One view of several repositories' `/state`, in `repos` order: rows, trees and paths side by side (each
+ * already stamped with its key), the default repository's `root` and `base`, and which repository holds each
+ * task group. Null when none answered. A repository that did not answer this tick is simply absent.
+ */
+export function merge_worktree_states(states: readonly (WorktreeState | null)[]): WorktreeState | null {
+    const present = states.filter((state): state is WorktreeState => state !== null);
+    if (present.length === 0) return null;
+    if (present.length === 1) return present[0];
+    const [first] = present;
+    const merged: WorktreeState = { worktrees: present.flatMap((state) => state.worktrees), root: first.root, base: first.base };
+    if (present.some((state) => state.task_groups)) {
+        merged.task_groups = present.flatMap((state) => state.task_groups ?? []);
+        const group_repos: Record<string, string> = {};
+        for (const state of present) {
+            for (const group of state.task_groups ?? []) if (state.repo) group_repos[group.id] = state.repo;
+        }
+        merged.group_repos = group_repos;
+    }
+    if (present.some((state) => state.worktree_paths)) {
+        merged.worktree_paths = present.flatMap((state) => state.worktree_paths ?? []);
+        merged.worktree_trees = present.flatMap((state) => state.worktree_trees ?? []);
+    }
+    return merged;
+}
+
 function is_row(value: unknown): value is WorktreeRow {
     if (!value || typeof value !== 'object') return false;
     const row = value as Record<string, unknown>;
@@ -465,11 +557,15 @@ export async function fetch_worktree_state(
         if (!Array.isArray(body.worktrees)) return null;
         const task_groups = parse_task_groups(body.task_groups);
         const can_clean = can_clean_up(body);
+        const raw_key = (body as { repo_key?: unknown }).repo_key;
+        const repo = typeof raw_key === 'string' && REPO_KEY.test(raw_key) ? raw_key : undefined;
+        const stamp = <T extends object>(item: T): T => (repo ? { ...item, repo } : item);
         const state: WorktreeState = {
-            worktrees: body.worktrees.filter(is_row).map((row) => with_cleanup(row, can_clean)),
+            worktrees: body.worktrees.filter(is_row).map((row) => stamp(with_cleanup(row, can_clean))),
             ...(task_groups !== undefined ? { task_groups } : {}),
             root: typeof body.root === 'string' ? body.root : '',
             base: typeof body.base === 'string' ? body.base : 'main',
+            ...(repo ? { repo } : {}),
         };
         // Copied only when the plugin sent it: absent stays absent, so an
         // un-restarted plugin leaves `RackPayload.attach_only` off entirely.
@@ -478,9 +574,9 @@ export async function fetch_worktree_state(
                 (path): path is string => typeof path === 'string',
             );
             const pr_known = (body as { pr_known?: unknown }).pr_known === true;
-            state.worktree_trees = Array.isArray(body.worktree_trees)
+            state.worktree_trees = (Array.isArray(body.worktree_trees)
                 ? body.worktree_trees.filter(is_island).map((tree) => with_pr(tree, pr_known))
-                : state.worktree_paths.map((path) => ({ path }));
+                : state.worktree_paths.map((path) => ({ path }))).map(stamp);
         }
         return state;
     } catch {
@@ -669,7 +765,9 @@ export async function create_worktree(
     request: WorktreeCreateRequest,
     fetch_impl: FetchImpl = (...args) => local_fetch(...args),
 ): Promise<ActionResult> {
-    return action_result(await post(base_url, fetch_impl, '/create', request,
+    // The repository rides the URL, as every route's does (`repo_base_url`); the body is the plugin's own shape.
+    const { repo, ...body } = request;
+    return action_result(await post(base_url_for(base_url, { repo }), fetch_impl, '/create', body,
         CREATE_TIMEOUT_MS, 'could not create the worktree'));
 }
 
@@ -1492,6 +1590,8 @@ export function parse_create_request(value: unknown): WorktreeCreateRequest | nu
     // default) rather than forwarded for the plugin to refuse the whole create.
     const profile = parse_profile_id(candidate.profile);
     if (profile !== null) request.profile = profile;
+    // Validated like the profile: a malformed key is dropped (→ the default repository), never forwarded.
+    if (typeof candidate.repo === 'string' && REPO_KEY.test(candidate.repo)) request.repo = candidate.repo;
     return request;
 }
 
@@ -1499,6 +1599,8 @@ export interface WorktreePoller {
     /** Last known state — `null` until the first successful fetch, and after a
      *  fetch that found no plugin. */
     state: () => WorktreeState | null;
+    /** The served repositories as `/repos` last said, or null (not asked yet, no plugin, an older plugin). */
+    repos: () => WorktreeRepo[] | null;
     /** Session names backed by a worktree. THE reason this is a Set: it decides
      *  the `attach:` invariant on every focus change. */
     sessions: () => Set<string>;
@@ -1506,6 +1608,9 @@ export interface WorktreePoller {
     start: () => void;
     stop: () => void;
 }
+
+/** How many ticks `/repos` is believed before it is read again (`create_worktree_poller`). */
+export const REPOS_REFRESH_TICKS = 20;
 
 /** A rack poller's injectable I/O — the fakes a test hands in. */
 export interface PollerIoDeps {
@@ -1666,6 +1771,24 @@ export function create_worktree_poller(deps: WorktreePollerDeps): WorktreePoller
     let timer: ReturnType<typeof setInterval> | null = null;
     let timer_interval_ms = 0;
     let stopped = false;
+    /** `/repos` as last read (`undefined`: never asked), and the ticks since. The list is fixed at the
+     *  bridge's start (`repos.py`), so it is re-read only now and then: a restart that changed it shows. */
+    let repos: WorktreeRepo[] | null | undefined;
+    let repos_age = 0;
+
+    /** Every served repository's `/state`, merged (the note at `repo_base_url`). One repository, or a plugin
+     *  that predates `/repos`: the one bare `/state` this poller always made. */
+    async function read_state(): Promise<WorktreeState | null> {
+        if (repos === undefined || ++repos_age >= REPOS_REFRESH_TICKS) {
+            repos = await fetch_worktree_repos(deps.base_url, do_fetch);
+            repos_age = 0;
+        }
+        if (!repos || repos.length <= 1) return fetch_worktree_state(deps.base_url, do_fetch);
+        const states = await Promise.all(
+            repos.map((repo) => fetch_worktree_state(repo_base_url(deps.base_url, repo.key), do_fetch)),
+        );
+        return merge_worktree_states(states);
+    }
 
     function desired_interval_ms(): number {
         return has_active_create(state) || has_active_cleanup(state) ? CREATE_POLL_INTERVAL_MS : deps.poll_interval_ms;
@@ -1685,7 +1808,7 @@ export function create_worktree_poller(deps: WorktreePollerDeps): WorktreePoller
 
     async function tick(): Promise<void> {
         if (stopped) return;
-        const next = await fetch_worktree_state(deps.base_url, do_fetch);
+        const next = await read_state();
         const next_signature = next ? JSON.stringify(next) : '';
         if (next_signature === signature) return;
         signature = next_signature;
@@ -1698,6 +1821,7 @@ export function create_worktree_poller(deps: WorktreePollerDeps): WorktreePoller
 
     return {
         state: () => state,
+        repos: () => repos ?? null,
         sessions: () => new Set((state?.worktrees ?? []).map((row) => row.session)),
         tick,
         start: () => {
