@@ -33,7 +33,9 @@ For an isolated rack pair, edit `scripts/readme-images/scene.json`:
 
 The default includes one LEAD, three workers, independent sessions, working and waiting states,
 active and merged worktrees, Services, Devices, a terminal, the 3D office, files and a canvas. LEAD and coordinator
-are different features; name the one actually shown.
+are different features; name the one actually shown. The example operator prompt gives the objective
+and constraints; the LEAD response owns planning the waves and assigning workers. Keep any deferred
+validation consistent across the transcript, worker states and canvas.
 
 ## Capture and inspect
 

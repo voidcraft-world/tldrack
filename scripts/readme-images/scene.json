@@ -14,7 +14,7 @@
       "tasks": {
         "done": 2,
         "total": 4,
-        "current": "Review the search workers"
+        "current": "Review implementation wave 2"
       },
       "lead": {
         "run": "demo-search",
@@ -37,7 +37,7 @@
       "tasks": {
         "done": 2,
         "total": 4,
-        "current": "Test pagination"
+        "current": "Implement pagination"
       },
       "worker": {
         "run": "demo-search",
@@ -46,7 +46,7 @@
       "activity": {
         "zone": "codebase",
         "tool": "Edit",
-        "detail": "Adding pagination tests"
+        "detail": "Adding pagination support"
       }
     },
     {
@@ -61,7 +61,7 @@
       "tasks": {
         "done": 3,
         "total": 4,
-        "current": "Run browser checks"
+        "current": "Implement empty-result states"
       },
       "worker": {
         "run": "demo-search",
@@ -70,7 +70,7 @@
       "activity": {
         "zone": "computer",
         "tool": "Bash",
-        "detail": "Running browser checks"
+        "detail": "Generating search components"
       }
     },
     {
@@ -150,11 +150,11 @@
     },
     {
       "tone": "prompt",
-      "text": "\u276f Ship the search update. Split the API, UI and docs into workers."
+      "text": "\u276f Complete all phases of the design document. Run linters and end-to-end tests after all implementation waves are complete."
     },
     {
       "tone": "normal",
-      "text": "I started three workers in isolated worktrees. I\u2019m reviewing their changes as they finish."
+      "text": "I read the design document, mapped its dependencies, and assigned workers in implementation waves."
     },
     {
       "tone": "heading",
@@ -162,19 +162,19 @@
     },
     {
       "tone": "success",
-      "text": "\u2713 Plan the API and result states"
+      "text": "\u2713 Read the design and plan the waves"
     },
     {
       "tone": "success",
-      "text": "\u2713 Merge the search guide"
+      "text": "\u2713 Wave 1: API contract and guide"
     },
     {
       "tone": "active",
-      "text": "\u25cf Review API pagination and browser checks"
+      "text": "\u25cf Wave 2: API and UI implementation"
     },
     {
       "tone": "muted",
-      "text": "\u25cb Merge the remaining changes"
+      "text": "\u25cb Final validation: linters + end-to-end tests"
     },
     {
       "tone": "heading",
@@ -186,7 +186,7 @@
     },
     {
       "tone": "normal",
-      "text": "Polish search results    Claude Code   testing"
+      "text": "Polish search results    Claude Code   working"
     },
     {
       "tone": "success",
@@ -210,7 +210,11 @@
     },
     {
       "tone": "normal",
-      "text": "The docs are merged. The API worker is checking pagination; the UI worker is running browser checks."
+      "text": "Wave 1 is merged. Wave 2 workers are implementing pagination and empty-result states."
+    },
+    {
+      "tone": "normal",
+      "text": "Linters and end-to-end tests are queued until all waves finish. Then I will fix failures and report the results."
     },
     {
       "tone": "active",
@@ -226,7 +230,7 @@
     {
       "selector": ".row--family",
       "title": "LEAD + workers",
-      "text": "One LEAD manages workers; their rows stay grouped together."
+      "text": "The LEAD plans the waves and assigns workers in separate worktrees."
     },
     {
       "selector": ".row:has-text(\"Keyboard shortcuts\")",
@@ -261,7 +265,7 @@
   ],
   "canvas": {
     "title": "Search update",
-    "summary": "The guide is merged. API pagination and browser checks are running.",
+    "summary": "Wave 1 is merged. Wave 2 is in progress. Linters and end-to-end tests follow all implementation waves.",
     "progress": "2 / 4 steps complete",
     "rows": [
       [
@@ -270,7 +274,7 @@
       ],
       [
         "Search UI",
-        "Testing"
+        "Working"
       ],
       [
         "Search guide",

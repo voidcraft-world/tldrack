@@ -1,8 +1,8 @@
 {
   "scene": "scripts/readme-images/scene.json",
-  "source_commit": "6dbd4624bf8617067f528f2ede8b628674ef3182",
-  "sources_sha256": "4d3d2d8d21c3897a7f5964f909807014de7baaa216c85667a9d56ee2032ea19b",
-  "scene_sha256": "65f0eb6d897209aacb52ff8d6ce4d35c043304866e1f455a108e08f3038ef84e",
+  "source_commit": "97c993a30e7438b0d6d9aaf6fff6fbaeba225764",
+  "sources_sha256": "25c2e87c99948219e3a364e7452be2adb774bc900db7b4fb40d11de4b8f742da",
+  "scene_sha256": "f277bf0f9ecbc097b7887866b9e79f3a562a3a2d22b4e50800c32b0a25891ce2",
   "viewport": {
     "width": 1920,
     "height": 1320
@@ -13,7 +13,7 @@
     "POST /rack-metrics/event"
   ],
   "images": {
-    "rack-demo.webp": "3693a286af9fd1ec03ab7aa1465ce3bcab6048f362eaa9d4211aba2892224e56",
-    "rack-annotated.webp": "e42cb75601fbe9f99308d4b68f36c273ad80c6d1294d75c62bf8a0236c550794"
+    "rack-demo.webp": "89b863650fc868fd66b36b7fb8873eb11f5ee4e00bfe66fdd4113d49c321b28e",
+    "rack-annotated.webp": "c92df4ae43f907ed746679817ce6dd371148afca2c0f8bf94262e04103f2306d"
   }
 }
