@@ -1,7 +1,7 @@
 {
   "scene": "scripts/readme-images/scene.json",
-  "source_commit": "17f6fd1be1090a298f6f4bfc14b05238ab2dff88",
-  "sources_sha256": "313e15c2d7d169e6fd156a604d0a062192d73fabdeee2c87608fb5fa1701ca0e",
+  "source_commit": "78de0bcc358ad6790db356061f67c87208c2a227",
+  "sources_sha256": "c1299c9fa1a1efc37f881d9660622e6518557af14936f0144f82cc5053f8da18",
   "scene_sha256": "668a54d4787464928000277b372958070fd342853ff2a9ac20ea6f8fb73ac4bc",
   "viewport": {
     "width": 1920,
@@ -14,7 +14,7 @@
     "POST /rack-metrics/event"
   ],
   "images": {
-    "rack-demo.webp": "ac951374539f097459529493618f86e5ae2a87d11560926bd47836f286661be5",
-    "rack-annotated.webp": "c6bd1717b1f0a097b71b9fdd05d4e675bd977dfaf8aef23e6ceb980af8fcb010"
+    "rack-demo.webp": "0b024153912aa9b29190d3af5bc6fb7024c1e98b778bb48299b70a5d49c2fac7",
+    "rack-annotated.webp": "9720cd746f0545c73597934676c0334e54fe22a3a965444b5dbef01fe8c8b9dd"
   }
 }
