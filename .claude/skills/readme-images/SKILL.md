@@ -14,7 +14,10 @@ Honor the requested subset: the plain rack, annotated rack, infographic, or revi
 Do not regenerate an approved infographic just because the UI changed. The README's image links
 are the inventory; follow them instead of guessing the newest filename.
 
-For the rack pair, edit `scripts/readme-images/scene.json`:
+When the operator supplies a screenshot and asks to use it as the base, follow
+**Screenshot-based edits** below. Use the isolated capture for fresh standalone UI screenshots.
+
+For an isolated rack pair, edit `scripts/readme-images/scene.json`:
 
 - `sessions`: public, invented names and states. `parent` and `worker` connect a worker to its
   LEAD; omit both for independent CLI sessions. `branch` gives a worktree; `merged: true` on a
@@ -74,11 +77,26 @@ python3 tests/test_purity.py --files scripts/readme-images/capture.mjs scripts/r
 The hash check reports staleness after changes to the scene, capture code, UI, schemas or canvas
 renderer. It does not regenerate images in CI or silently rewrite README links.
 
+## Screenshot-based edits
+
+Treat the supplied screenshot as the edit target, not merely a style reference. Preserve its
+column widths, toolbar, session controls, Services, Devices and detail pane. Add only the requested
+example states, LEAD/worker group or canvas diagram. Use the imagegen skill for requested raster
+edits. Replace private names and transcript content with public examples before publication.
+
+Inspect all text and controls against the original. Save the approved plain and annotated variants
+with an `-edited` suffix so the isolated captures and their manifest remain independently verifiable.
+Store the exact edit prompt in ignored output; record image hashes and the edit method in
+`docs/img/readme/edited-manifest.json`. Do not claim that a generated edit is a fresh live capture.
+Label it beside the README images as an edited screenshot with illustrative content. Generative
+editing is reviewed output, not a deterministic CI regeneration step.
+
 ## Infographic or illustrated annotations
 
 For an authored raster revision, use the imagegen skill and built-in image tool. Inspect the current
 image first; preserve its visual style and exact copy. Save a new version and compare every small
-label before updating a README link. Do not let generative editing alter UI text in a screenshot.
+label before updating a README link. For screenshot edits explicitly requested by the operator, use the workflow above and check every
+changed label. Otherwise preserve screenshot text.
 The deterministic callouts above are the default for screenshot annotations; an illustrated variant
 is optional when requested.
 

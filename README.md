@@ -5,7 +5,7 @@ Sessions name themselves from your prompt, so you can find the right task at a g
 reads finished turns for you and marks them ✅ done or ⚠️ needs you.
 
 <p align="center">
-  <a href="docs/images/tldrack-infographic-v5.webp"><img src="docs/images/tldrack-infographic-v5.webp" width="832" alt="TLDRack: a LEAD and its workers run alongside independent Claude Code sessions. A local model reviews finished turns and flags what needs you. Services and devices sit alongside the agents. The overview also illustrates the planned rack-script API."></a>
+  <a href="docs/images/tldrack-infographic-v4.webp"><img src="docs/images/tldrack-infographic-v4.webp" width="832" alt="TLDRack: a LEAD and its workers run alongside independent Claude Code sessions. A local model reviews finished turns and flags what needs you. The overview also illustrates the planned rack-script API."></a>
 </p>
 
 The overview includes the planned rack-script API.
@@ -13,12 +13,13 @@ The overview includes the planned rack-script API.
 <table>
   <tr><th>TLDRack</th><th>TLDRack · annotated</th></tr>
   <tr>
-    <td align="center"><a href="docs/img/readme/rack-demo.webp"><img src="docs/img/readme/rack-demo.webp" width="410" alt="The TLDRack interface with illustrative demo data: one LEAD with three workers, independent Claude Code and Codex sessions, working and merged worktrees, a terminal, the 3D office, generated files, a canvas, running services and device resource meters."></a></td>
-    <td align="center"><a href="docs/img/readme/rack-annotated.webp"><img src="docs/img/readme/rack-annotated.webp" width="410" alt="Annotated TLDRack demo: launch agents, group a LEAD with its workers, run independent sessions, follow worktrees through merge, read the agent terminal, use the office, files and canvases, and monitor services and devices."></a></td>
+    <td align="center"><a href="docs/img/readme/rack-demo-edited.webp"><img src="docs/img/readme/rack-demo-edited.webp" width="410" alt="An edited TLDRack screenshot with illustrative sessions: a LEAD and three workers, independent sessions, working and merged worktrees, terminal tools, the 3D office, a canvas diagram, services and device resource meters."></a></td>
+    <td align="center"><a href="docs/img/readme/rack-annotated-edited.webp"><img src="docs/img/readme/rack-annotated-edited.webp" width="410" alt="Annotated TLDRack demo: launch agents, group a LEAD with its workers, run independent sessions, follow worktrees through merge, read the agent terminal, use the office, files and canvases, and monitor services and devices."></a></td>
   </tr>
 </table>
 
-Screenshots use the real interface with illustrative demo sessions, PR states and terminal content.
+Images are edited from an operator-provided screenshot, with illustrative sessions, terminal content
+and a canvas diagram. The capture includes the operator’s configured host controls.
 Click an image to open it at full size. [Refresh these images](.claude/skills/readme-images/SKILL.md).
 
 <details>
