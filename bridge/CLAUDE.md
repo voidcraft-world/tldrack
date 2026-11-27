@@ -221,6 +221,8 @@ A stdlib `ThreadingHTTPServer` on a daemon thread, loopback only, that subclasse
 
 A profile is one agent CLI on one account: `{id, label, kind: claude|codex|antigravity|shell, config_dir, pin_env, args, model_label}`, from `<config>/profiles.json` (tolerant per entry), or DETECTED when that file is absent. The bridge owns the list because the bridge is what spawns; clients name a profile by id (labels such as `ONE` and `TWO` are the operator's). `tldrack hooks --install` (or `profiles --install-hooks <id>`, or `POST /profiles/install-hooks {"profile"}`) merges the relay: timestamped `.bak`, atomic, idempotent, replacing only its own entries. For Claude it also adds `CLAUDE_SETTINGS_ENV` to the settings `env` where the key is unset. Each snapshot profile carries `hooks_missing`.
 
+Live model/reasoning defaults: owned by `tldrack/profile_launch_settings.py` — see the note there.
+
 Nine things that must not be simplified:
 
 1. **`spawn_argv` is the spawn shape for every door**: `/spawn`, `/restore`, worktree `/create`, coordinator resume (plugins reach it as `PluginContext.profiles`). `tmux new-session … ";" set-option -t =S: @vc_profile <id>` is ONE invocation, so no poll sees an unstamped session.

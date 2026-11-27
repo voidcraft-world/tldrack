@@ -283,6 +283,8 @@ Settings: `settings.html` reads `GET /doctor` (the checks `tldrack doctor` print
 this bridge off or back on, never name a path or load code: `bridge/tldrack/features.py`. What one browser
 draws (the 3D office, motion) stays in that browser: `ui/src/config/rack-prefs.ts`.
 
+Launch defaults: `GET/POST /profile-launch-settings`, owned by `bridge/tldrack/profile_launch_settings.py` — see the note there.
+
 Update: the rack's ⚙ dot and the Settings UPDATE card read `GET /update` (the checkout against its
 remote, the page against the checkout, the running code against the disk). Guarded
 `POST /update {"action"}` fetches, or fast-forwards the checkout, rebuilds `ui/dist` and restarts the

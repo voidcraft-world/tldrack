@@ -2075,6 +2075,7 @@ def build_status_handler(
 
         GET_ROUTES = {
             "/profile-availability": "_handle_get_profile_availability",
+            "/profile-launch-settings": "_handle_get_profile_launch_settings",
             "/launch-directories": "_handle_get_launch_directories",
             "/features": "_handle_get_features",
             "/update": "_handle_get_update",
@@ -2112,6 +2113,7 @@ def build_status_handler(
         }
         POST_ROUTES = {
             "/profile-availability": "_handle_save_profile_availability",
+            "/profile-launch-settings": "_handle_save_profile_launch_settings",
             "/launch-directories": "_handle_save_launch_directories",
             "/features": "_handle_save_features",
             "/update": "_handle_post_update",
@@ -2204,6 +2206,7 @@ def build_status_handler(
 
         def end_headers(self) -> None:
             if urlsplit(self.path).path in (
+                "/profile-launch-settings",
                 "/ledger/search",
                 "/ledger/conversation",
                 "/ledger/threads",
@@ -2406,6 +2409,32 @@ def build_status_handler(
                 permission_mode=payload.get("permission_mode"),
             )
             self._send_json(status, body)
+
+        def _handle_get_profile_launch_settings(self) -> None:
+            if profiles is None:
+                self._send_json(503, {"error": "Launch profiles are unavailable"})
+                return
+            self._send_json(200, profiles.launch_settings.view())
+
+        def _handle_save_profile_launch_settings(self) -> None:
+            if not self._origin_allowed():
+                return
+            body = self._read_json_object()
+            if body is None:
+                return
+            if profiles is None:
+                self._send_json(503, {"error": "Launch profiles are unavailable"})
+                return
+            try:
+                state = profiles.launch_settings.save(body)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            except OSError:
+                self._send_json(500, {"error": "Could not save launch defaults to disk"})
+                return
+            notify_snapshot()
+            self._send_json(200, state)
 
         def _handle_get_profile_availability(self) -> None:
             if profiles is None:

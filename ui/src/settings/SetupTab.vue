@@ -1,5 +1,6 @@
 <template>
     <UpdateCard />
+    <LaunchModelsCard />
 
     <section class="fui-panel st-card" aria-labelledby="st-doctor-title">
         <div class="st-card__head">
@@ -63,6 +64,7 @@
 import { computed, ref } from 'vue';
 
 import LayaCard from './LayaCard.vue';
+import LaunchModelsCard from './LaunchModelsCard.vue';
 import UpdateCard from './UpdateCard.vue';
 import {
     LEVEL_MARKS,
