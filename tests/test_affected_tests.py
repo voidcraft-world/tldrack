@@ -8,18 +8,27 @@ both, so "did it execute" is a file on disk, not a log line. (The directory goes
 environment, never written into a scanned file: a temp path can hold a user name,
 and the purity scan rightly refuses it.) The trust rules are owned by
 the hook's docstring (`.claude/hooks/affected_tests.py`, WHAT IT WILL EXECUTE).
+
+The last part plays several sessions on one checkout, by `session_id`, to see who is
+woken (exit 2) and who is not; those rules are owned by the same docstring's WHO
+GETS WOKEN.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import json
 import os
 import py_compile
 import shutil
+import signal
 import subprocess
 import sys
+import time
+import types
+import uuid
 from pathlib import Path
 
 import pytest
@@ -78,18 +87,38 @@ def add_project(repo: Path, *, script_marker: str | None = None, committed: bool
         commit(repo, "ui")
 
 
-def call_hook(repo: Path, payload: dict, *args: str) -> int:
-    env = {
+def hook_env(repo: Path) -> dict[str, str]:
+    return {
         "PATH": os.environ["PATH"],
         "HOME": os.environ.get("HOME", str(repo.parent)),
         "CLAUDE_PROJECT_DIR": str(repo),
         "XDG_CACHE_HOME": str(repo.parent / "cache"),
         "MARKERS": str(repo.parent),
     }
-    done = subprocess.run(
-        [sys.executable, "-I", "-B", str(repo / HOOK), *args], input=json.dumps(payload), text=True, capture_output=True, env=env
-    )
-    return done.returncode
+
+
+def hook_command(repo: Path, *args: str) -> list[str]:
+    return [sys.executable, "-I", "-B", str(repo / HOOK), *args]
+
+
+def run_hook(repo: Path, payload: dict | None, *args: str) -> subprocess.CompletedProcess[str]:
+    stdin = "" if payload is None else json.dumps(payload)
+    return subprocess.run(hook_command(repo, *args), input=stdin, text=True, capture_output=True, env=hook_env(repo))
+
+
+def call_hook(repo: Path, payload: dict, *args: str) -> int:
+    return run_hook(repo, payload, *args).returncode
+
+
+def load_hook(root: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    """The hook as a module, with the environment a hook call gets, for the cases that call it directly."""
+    for name, value in hook_env(root).items():
+        monkeypatch.setenv(name, value)
+    spec = importlib.util.spec_from_file_location("affected_tests_under_test", root / HOOK)
+    hook = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, hook)  # dataclasses resolves annotations through sys.modules
+    spec.loader.exec_module(hook)
+    return hook
 
 
 def bash() -> dict:
@@ -110,6 +139,25 @@ def agent_edit(repo: Path, name: str, content: str) -> int:
     call_hook(repo, edit(repo, name), "--pre")
     (repo / name).write_text(content)
     return call_hook(repo, edit(repo, name))
+
+
+def as_session(payload: dict, session: str, duration_ms: int | None = None) -> dict:
+    """The payload as one session's tool call sends it: its session, a fresh tool_use_id, maybe a duration."""
+    ids = {"session_id": session, "tool_use_id": f"toolu_{uuid.uuid4().hex[:20]}"}
+    return {**payload, **ids, **({} if duration_ms is None else {"duration_ms": duration_ms})}
+
+
+def session_edit(repo: Path, name: str, content: str, session: str) -> subprocess.CompletedProcess[str]:
+    """`agent_edit`, made by one session."""
+    payload = as_session(edit(repo, name), session)
+    run_hook(repo, payload, "--pre")
+    (repo / name).write_text(content)
+    return run_hook(repo, payload)
+
+
+def next_call(repo: Path, session: str) -> subprocess.CompletedProcess[str]:
+    """A later call of `session` that changes nothing in the tree: it delivers what waits for it."""
+    return run_hook(repo, as_session(edit(repo, "../elsewhere.txt"), session))
 
 
 def touch_tracked(repo: Path) -> None:
@@ -300,11 +348,7 @@ def test_the_copy_holds_no_arrived_config_from_any_parent_directory(root, monkey
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text("arrived\n")
     (root / "ui" / "node_modules").mkdir()
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    monkeypatch.setenv("XDG_CACHE_HOME", str(root.parent / "cache"))
-    spec = importlib.util.spec_from_file_location("affected_tests_under_test", root / HOOK)
-    hook = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(hook)
+    hook = load_hook(root, monkeypatch)
     dest = root.parent / "copy"
     hook.sync_snapshot(dest, {})
     for name in arrived:
@@ -334,11 +378,7 @@ def test_a_stray_node_modules_above_a_project_skips_it(root):
 
 def test_the_copy_holds_the_bytes_it_checked(root, monkeypatch):
     add_project(root)
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    monkeypatch.setenv("XDG_CACHE_HOME", str(root.parent / "cache"))
-    spec = importlib.util.spec_from_file_location("affected_tests_under_test", root / HOOK)
-    hook = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(hook)
+    hook = load_hook(root, monkeypatch)
     (root / "ui" / "new.test.js").write_text("// the agent's\n")
     authored = {"ui/new.test.js": hashlib.sha256(b"// the agent's\n").hexdigest()}
     dest = root.parent / "copy"
@@ -361,11 +401,7 @@ def test_links_in_the_copy_come_only_from_tracked_names(root, monkeypatch):
     (root / "ui" / "foo-package.json").write_text("{}")  # ends with the name, is not the name
     commit(root, "a lookalike manifest")
     (root / "ui" / "foo-" / "node_modules").mkdir(parents=True)
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    monkeypatch.setenv("XDG_CACHE_HOME", str(root.parent / "cache"))
-    spec = importlib.util.spec_from_file_location("affected_tests_under_test", root / HOOK)
-    hook = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(hook)
+    hook = load_hook(root, monkeypatch)
     (root / "ui" / "new.test.js").write_text("// the agent's\n")
     authored = {"ui/new.test.js": hashlib.sha256(b"// the agent's\n").hexdigest()}
     elsewhere = root.parent / "elsewhere.js"
@@ -388,3 +424,588 @@ def test_a_configured_fsmonitor_never_runs_from_the_hook(root):
     touch_tracked(root)
     assert call_hook(root, bash()) == 0
     assert marker(root, "RAN").exists() and not marker(root, "PWNED").exists()
+
+
+# ---------------------------------------------------------------- who gets woken
+
+# A home path, built at run time so this file never holds one: the purity scan of the fixture refuses it.
+HAZARD = "/" + "Users" + "/zed/notes\n"
+FILES = ("a.js", "b.js", "c.js", "d.js", "e.js")
+UI = "node--ui"  # the ui project's runner: its lock and queue name
+
+
+def each_file_test() -> str:
+    """One node test per ui/*.js file, red while that file holds BROKEN; every run appends to $MARKERS/RUNS."""
+    return (
+        "const fs = require('fs'), path = require('path'), test = require('node:test');\n"
+        "fs.appendFileSync(process.env.MARKERS + '/RUNS', 'x');\n"
+        "for (const name of fs.readdirSync(__dirname).filter((n) => n.endsWith('.js') && !n.includes('.test.')).sort())\n"
+        "  test('clean ' + name, () => { if (fs.readFileSync(path.join(__dirname, name), 'utf8').includes('BROKEN')) throw new Error(name); });\n"
+    )
+
+
+def add_rack_project(repo: Path, *, broken: tuple[str, ...] = (), directory: str = "ui", gate: bool = False) -> None:
+    """A node project of FILES under `directory`; with `gate`, its test file throws at load while gate.txt holds BROKEN."""
+    (repo / directory).mkdir(exist_ok=True)
+    (repo / directory / "package.json").write_text("{}")
+    for name in FILES:
+        (repo / directory / name).write_text("BROKEN\n" if name in broken else "x\n")
+    loads = "if (fs.readFileSync(path.join(__dirname, 'gate.txt'), 'utf8').includes('BROKEN')) throw new Error('gate');\n"
+    head, rest = each_file_test().split("\n", 1)
+    (repo / directory / "each.test.js").write_text(f"{head}\n{loads}{rest}" if gate else each_file_test())
+    if gate:
+        (repo / directory / "gate.txt").write_text("ok\n")
+    commit(repo, directory)
+
+
+def warm(repo: Path) -> None:
+    """A first green pass of every check: the ledger exists, nothing is left to seed."""
+    assert session_edit(repo, "ui/d.js", "x\n", "W").returncode == 0
+
+
+def runs(repo: Path) -> int:
+    return len(marker(repo, "RUNS").read_text()) if marker(repo, "RUNS").exists() else 0
+
+
+def red(repo: Path) -> str:
+    return run_hook(repo, None, "--red").stdout
+
+
+def yours(done: subprocess.CompletedProcess[str]) -> str:
+    return "\n".join(line for line in done.stderr.splitlines() if line.startswith("yours: "))
+
+
+def red_test(name: str) -> str:
+    return f"tests ui (node) | each.test.js > clean {name}"
+
+
+def test_the_culprit_is_woken_and_a_bystander_sleeps(root):
+    add_rack_project(root)
+    warm(root)
+    broke = session_edit(root, "ui/a.js", "BROKEN\n", "A")
+    assert broke.returncode == 2 and red_test("a.js") in yours(broke)
+    assert "After editing ui/a.js:" in broke.stderr
+    bystander = session_edit(root, "ui/b.js", "y\n", "B")
+    assert bystander.returncode == 0, bystander.stderr  # (a) the project is red, and not by B
+    again = session_edit(root, "ui/c.js", "y\n", "A")
+    assert again.returncode == 2 and red_test("a.js") in yours(again)  # (b) still red: A hears again
+    assert session_edit(root, "ui/a.js", "x\n", "A").returncode == 0
+    assert "0 red signature(s)" in red(root)  # (j) the green run cleared it
+
+
+def test_a_change_before_the_first_red_co_owns_it_and_one_after_does_not(root, monkeypatch):
+    hook = load_hook(root, monkeypatch)
+    signature = red_test("a.js")
+    record = hook.Record("node tests (ui) FAILED", "tests ui (node)", {signature: None}, True, [], frozenset({"tests ui (node)"}))
+    ledger = {**hook.new_ledger(), "created": 0.0, "vouched": {"tests ui (node)": 8.0}}  # a complete run began at 8: green
+
+    def change(owner: str, at: float, ready: float | None = None) -> object:
+        return hook.Entry(owner, f"toolu_{owner}", "ui/a.js", at, at if ready is None else ready)
+
+    assert hook.judge(ledger, record, [change("A", 10.0)], 50.0, 100.0, True) == {"A": [signature]}
+    # (c) B's change landed while that pass still read the tree (before 100): a culprit too. C's came after.
+    # D's came before the green run at 8, which saw it: it made nothing red. E's command spanned 7 to 120: it may have.
+    later = [change("B", 90.0), change("C", 110.0), change("D", 5.0), change("E", 7.0, ready=120.0)]
+    assert hook.judge(ledger, record, later, 150.0, 200.0, True) == {"B": [signature], "E": [signature]}
+    entry = ledger["reds"][signature]
+    assert (entry["owners"], entry["first_red_end"], entry["last_red"], entry["after"]) == (["A", "B", "E"], 100.0, 200.0, 8.0)
+
+
+def test_a_late_claim_of_a_change_a_pass_already_saw_joins_it_without_a_rerun(root):
+    add_rack_project(root)
+    warm(root)
+    (root / "ui" / "a.js").write_text("BROKEN\n")  # two sessions' commands both ran while this happened
+    first = run_hook(root, as_session(bash(), "A", duration_ms=2000))
+    assert first.returncode == 2 and red_test("a.js") in yours(first)
+    tested = runs(root)
+    second = run_hook(root, as_session(bash(), "B", duration_ms=60_000))
+    assert second.returncode == 2 and red_test("a.js") in yours(second)  # B's window held it too: both claim
+    assert runs(root) == tested, "the change was already tested: B joins that verdict"
+
+
+@pytest.mark.parametrize("edits", [1, 2])  # agents edit one file several times in a row: a run of Edits is one write
+def test_a_neighbours_edit_inside_a_long_command_is_not_the_commands(root, monkeypatch, edits):
+    add_rack_project(root)
+    warm(root)
+    time.sleep(2.5)  # nothing before A's edits changes inside B's window
+    edited = time.time()
+    for _ in range(edits - 1):
+        assert session_edit(root, "ui/a.js", "y\n", "A").returncode == 0
+    assert session_edit(root, "ui/a.js", "BROKEN\n", "A").returncode == 2
+    long_command = round((time.time() - edited + 0.5) * 1000)  # B's command ran across A's whole edit
+    bystander = run_hook(root, as_session(bash(), "B", duration_ms=long_command))
+    assert bystander.returncode == 0, bystander.stderr
+    owners = json.loads(load_hook(root, monkeypatch).OWNERS.read_text())
+    assert owners["ui/a.js"]["session"] == "A"
+
+
+def test_a_bash_call_claims_only_its_own_window(root):
+    add_rack_project(root)
+    warm(root)
+    assert session_edit(root, "ui/b.js", "y\n", "C").returncode == 0  # C owns b.js now
+    (root / "ui" / "b.js").write_text(HAZARD)  # changed later by someone else, outside B's command
+    (root / "ui" / "e.js").write_text(HAZARD)  # a file no session ever claimed
+    time.sleep(2.2)
+    (root / "ui" / "a.js").write_text(HAZARD)  # B's own command
+    mine = run_hook(root, as_session(bash(), "B", duration_ms=300))
+    assert mine.returncode == 2 and yours(mine) == "yours: purity ui/a.js | a home directory path"  # (d)
+    assert "ui/b.js" not in mine.stderr and "ui/e.js" not in mine.stderr
+    last_owner = next_call(root, "C")
+    assert last_owner.returncode == 2 and yours(last_owner) == "yours: purity ui/b.js | a home directory path"
+    unowned = red(root).split("purity ui/e.js | a home directory path\n", 1)[1].splitlines()[0]
+    assert "owners: - (unowned)" in unowned  # (e) recorded, and nobody woken for it
+    assert next_call(root, "B").returncode == 0 and next_call(root, "W").returncode == 0
+
+
+def test_the_first_ledger_ever_records_what_is_already_red_quietly(root):
+    add_rack_project(root, broken=("a.js",))
+    first = session_edit(root, "ui/c.js", "y\n", "A")
+    assert first.returncode == 0, first.stderr  # (f) seeded, not A's
+    listed = red(root)
+    assert red_test("a.js") in listed and "owners: - (unowned)" in listed
+    assert session_edit(root, "ui/c.js", "z\n", "A").returncode == 0
+    new = session_edit(root, "ui/b.js", "BROKEN\n", "A")
+    assert new.returncode == 2 and yours(new) == f"yours: {red_test('b.js')}"
+    assert "also red here, not yours: 1" in new.stderr
+
+
+def test_mail_a_waiter_left_reaches_its_session_on_the_next_call(root, monkeypatch):
+    add_rack_project(root)
+    warm(root)
+    hook = load_hook(root, monkeypatch)
+    lock = hook.STATE / f"{UI}.lock"
+    lock.write_text(str(os.getpid()))  # a live runner holds the project
+    payload = as_session(write(root, "ui/a.js", "BROKEN\n"), "A")
+    started = time.time()
+    waiting = hook.claim(payload, "A", payload["tool_use_id"], started, started + 60)
+    assert waiting == {"purity-files", UI}
+    hook.settle(waiting, payload["tool_use_id"], time.time() + 1.0)  # its deadline comes first
+    assert not hook.is_done(payload["tool_use_id"], UI) and hook.deliver("A") == 0
+    lock.unlink()
+    assert next_call(root, "B").returncode == 0  # B's call ran A's change, and keeps quiet about it
+    later = next_call(root, "A")
+    assert later.returncode == 2 and red_test("a.js") in yours(later)  # (g)
+    assert next_call(root, "A").returncode == 0, "delivered once"
+
+
+def test_a_waiter_takes_over_when_the_runner_lock_frees(root, monkeypatch):
+    add_rack_project(root)
+    warm(root)
+    lock = load_hook(root, monkeypatch).STATE / f"{UI}.lock"
+    lock.write_text(str(os.getpid()))
+    payload = as_session(write(root, "ui/a.js", "BROKEN\n"), "A")
+    tested = runs(root)
+    waiter = subprocess.Popen(
+        hook_command(root), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=hook_env(root)
+    )
+    waiter.stdin.write(json.dumps(payload))
+    waiter.stdin.close()
+    time.sleep(1.5)
+    assert waiter.poll() is None and runs(root) == tested, "it waits while another runner holds the project"
+    lock.unlink()
+    assert waiter.wait(timeout=60) == 2  # (h)
+    assert red_test("a.js") in waiter.stderr.read() and runs(root) == tested + 1
+    assert not lock.exists()
+
+
+@pytest.mark.parametrize("holder", ["a dead pid", "a live stranger's pid"])
+def test_a_dead_runners_batch_runs_again(root, monkeypatch, holder):
+    add_rack_project(root)
+    warm(root)
+    hook = load_hook(root, monkeypatch)
+    lock = hook.STATE / f"{UI}.lock"
+    if holder == "a dead pid":
+        gone = subprocess.Popen(["true"])
+        gone.wait()
+        lock.write_text(str(gone.pid))  # killed at the hook timeout, mid-pass
+    else:
+        lock.write_text(str(os.getpid()))  # alive, and no runner: a reboot gave the dead runner's pid away
+        old = time.time() - hook.LOCK_STALE_S - 1
+        os.utime(lock, (old, old))  # older than any hook lives
+    (root / "ui" / "a.js").write_text("BROKEN\n")
+    now = time.time()
+    hook.write_entries(hook.INFLIGHT / f"{UI}.jsonl", [hook.Entry("A", "toolu_gone", "ui/a.js", now, now)])
+    tested = runs(root)
+    assert next_call(root, "B").returncode == 0
+    assert runs(root) == tested + 1  # (i) the next call took the dead lock and ran the batch
+    later = next_call(root, "A")
+    assert later.returncode == 2 and red_test("a.js") in yours(later)
+    assert not (hook.STATE / f"{UI}.lock").exists()
+
+
+def test_only_an_authoritative_run_clears_its_namespace(root, monkeypatch):
+    add_rack_project(root)
+    hook = load_hook(root, monkeypatch)
+    project = hook.Project("node", root / "ui")
+    elsewhere = "purity ui/a.js | a home directory path"
+    ledger = hook.new_ledger()
+    red_since = {"first_red_end": 1.0, "last_red": 1.0, "after": 0.0}
+    ledger["reds"] = {red_test("a.js"): {"owners": ["A"], **red_since}, elsewhere: {"owners": ["B"], **red_since}}
+    timed_out = hook.tests_record(project, hook.Ran(None, "", timed_out=True))
+    assert not timed_out.authoritative and list(timed_out.reds) == ["tests ui (node) | timed out"]
+    hook.judge(ledger, timed_out, [], 2.0, 2.0, True)
+    assert red_test("a.js") in ledger["reds"], "(j) a run that never finished clears nothing"
+    unloaded = hook.tests_record(project, hook.Ran(1, "✖ failing tests:\n\ntest at each.test.js:1:1\n✖ each.test.js (3ms)"))
+    assert not unloaded.authoritative, "a test file that failed to load hides its own tests"
+    hook.judge(ledger, unloaded, [], 2.5, 2.5, True)
+    assert red_test("a.js") in ledger["reds"]
+    green = hook.tests_record(project, hook.Ran(0, "ok"))
+    ledger["reds"][red_test("b.js")] = {"owners": ["C"], "first_red_end": 3.5, "last_red": 3.5, "after": 0.0}
+    hook.judge(ledger, green, [], 3.0, 4.0, True)  # it began reading at 3: it cannot speak for what was red at 3.5
+    assert sorted(ledger["reds"]) == [elsewhere, red_test("b.js")], "a green run clears its own namespace, and only its own"
+
+
+def test_signatures_name_the_failure_never_the_run(root, monkeypatch):
+    hook = load_hook(root, monkeypatch)
+    node = "\n".join(
+        [
+            "✖ fails here (0.602ms)",
+            "✖ failing tests:",
+            "",
+            "test at tests/unit/a.test.ts:4:1",
+            "✖ fails here (0.602ms)",
+            "  AssertionError [ERR_ASSERTION]: 1 == 2",
+            "test at b.test.js:1:1",
+            "✖ b.test.js (86.7ms)",
+        ]
+    )
+    pytest_out = "\n".join(
+        [
+            "ERROR    root:test_a.py:5 noise",
+            "=========================== short test summary info ============================",
+            "FAILED tests/test_a.py::test_bad - assert 1 == 2",
+            "FAILED tests/test_a.py::test_param[a b] - AssertionError: assert 'a b' == 'c'",
+            "2 failed, 2 passed in 0.01s",
+        ]
+    )
+    assert hook.failed_tests(node.splitlines()) == ["tests/unit/a.test.ts > fails here", "b.test.js > b.test.js"]
+    assert hook.failed_tests(pytest_out.splitlines()) == ["tests/test_a.py::test_bad", "tests/test_a.py::test_param[a b]"]
+    whole = ["b.test.js > b.test.js", "tests/test_a.py", "a.test.js"]  # node at load, pytest at collection, TAP
+    assert all(map(hook.whole_file, whole))
+    assert not any(map(hook.whole_file, ["tests/unit/a.test.ts > fails here", "tests/test_a.py::test_bad", "fails here"]))
+    hit = "HAZARD ui/a.js:3: a home directory path: ‹masked›"
+    words = "RATCHET ui/b.js: 2 private word(s), baseline 0"
+    record = hook.purity_record(hook.Ran(1, f"{hit}\n{words}\npurity: 1 hazards"), "t", "purity --files", frozenset())
+    assert record.authoritative
+    assert record.reds == {"purity ui/a.js | a home directory path": "ui/a.js", "purity ui/b.js | private words": "ui/b.js"}
+    crashed = hook.purity_record(hook.Ran(1, "Traceback (most recent call last):"), "t", "purity --files", frozenset())
+    assert not crashed.authoritative and list(crashed.reds) == ["purity | exit 1"]
+
+
+def bash_since(started: float, session: str) -> dict:
+    """A Bash call of `session` whose command ran from `started` until now."""
+    return as_session(bash(), session, duration_ms=round((time.time() - started + 0.3) * 1000))
+
+
+def test_a_write_that_kept_a_shell_change_leaves_the_command_its_claim(root):
+    add_rack_project(root)
+    warm(root)
+    started = time.time()
+    (root / "ui" / "a.js").write_text("BROKEN\n")  # early in C's long command
+    kept = (root / "ui" / "a.js").read_text() + "// A's comment\n"  # A read the file and Writes it back whole
+    assert run_hook(root, as_session(write(root, "ui/a.js", kept), "A")).returncode == 2
+    command = run_hook(root, bash_since(started, "C"))
+    assert command.returncode == 2 and red_test("a.js") in yours(command)  # a Write says nothing of what it kept
+    assert "owners: A, C;" in red(root)
+
+
+def test_a_command_that_wrote_again_after_its_break_turned_red_still_owns_it(root):
+    add_rack_project(root)
+    warm(root)
+    time.sleep(1.5)  # b.js was committed before C's window: B's Edit of it is not C's, so only a.js can make C an owner
+    started = time.time()
+    (root / "ui" / "a.js").write_text("BROKEN\n")  # C's command breaks a.js...
+    assert session_edit(root, "ui/b.js", "y\n", "B").returncode == 2  # ...B's pass sees it red first...
+    (root / "ui" / "a.js").write_text("BROKEN\n\n")  # ...and C's command writes it again (a formatter, a codegen rerun)
+    command = run_hook(root, bash_since(started, "C"))
+    assert command.returncode == 2 and red_test("a.js") in yours(command)  # dated from its window's start
+
+
+def test_a_failure_a_load_error_hid_reaches_its_culprit_once_revealed(root):
+    add_rack_project(root, gate=True)
+    warm(root)
+    hidden = session_edit(root, "ui/gate.txt", "BROKEN\n", "A")
+    assert hidden.returncode == 2 and yours(hidden) == "yours: tests ui (node) | each.test.js > each.test.js"
+    assert session_edit(root, "ui/b.js", "BROKEN\n", "B").returncode == 0  # its test never ran: nothing to tell yet
+    assert "suspects of tests ui (node)" in red(root)
+    assert session_edit(root, "ui/gate.txt", "ok\n", "A").returncode == 2  # A's fix reveals it: A may have caused it too
+    revealed = next_call(root, "B")
+    assert revealed.returncode == 2 and red_test("b.js") in yours(revealed)
+    assert "After editing ui/b.js:" in revealed.stderr
+    again = session_edit(root, "ui/c.js", "y\n", "B")
+    assert again.returncode == 2 and red_test("b.js") in yours(again)  # (b) and now it is B's like any other
+    listed = red(root)
+    assert "owners: A, B;" in listed and "each.test.js > each.test.js" not in listed and "suspects" not in listed
+
+
+def test_a_project_first_tested_after_the_ledger_exists_wakes_its_culprit(root):
+    add_rack_project(root)
+    add_rack_project(root, directory="lib")
+    warm(root)  # ui only: the ledger exists from here on
+    broke = session_edit(root, "lib/a.js", "BROKEN\n", "A")
+    assert broke.returncode == 2 and yours(broke) == "yours: tests lib (node) | each.test.js > clean a.js"  # (f), a later project
+
+
+@pytest.mark.parametrize(
+    "ended_by",
+    ["a commit, then a session's Bash call", "a commit from the operator's terminal", "a revert, then a session's Bash call"],
+)
+def test_a_claim_that_ended_names_no_owner_for_a_later_change(root, monkeypatch, ended_by):
+    add_rack_project(root)
+    warm(root)
+    assert session_edit(root, "ui/a.js", "y\n", "A").returncode == 0
+    time.sleep(1.1)  # commit times are whole seconds: one in the claim's own second may have come first
+    if ended_by.startswith("a revert"):
+        git(root, "checkout", "--", "ui/a.js")
+    else:
+        commit(root, "A's work lands")
+    if ended_by.endswith("Bash call"):
+        assert run_hook(root, as_session(bash(), "A", duration_ms=100)).returncode == 0  # it sees a.js clean
+    (root / "ui" / "a.js").write_text("BROKEN\n")  # much later, outside every window: the operator's editor
+    time.sleep(1.5)
+    assert run_hook(root, as_session(bash(), "B", duration_ms=100)).returncode == 0
+    assert next_call(root, "A").returncode == 0, "A's claim ended with its change"
+    assert "owners: - (unowned)" in red(root)
+    hook = load_hook(root, monkeypatch)
+    old = {"ui/b.js": {"session": "A", "ctime": 1, "base": None, "at": time.time() - hook.PRUNE_S - 1}}
+    assert hook.current_claims(old, None, time.time()) == {}, "and a claim older than PRUNE_S names nobody either"
+
+
+def test_an_old_change_git_brings_back_owns_nothing_new(root):
+    add_rack_project(root)
+    warm(root)
+    assert session_edit(root, "ui/e.js", "y\n", "O").returncode == 0
+    commit(root, "O's work")
+    assert run_hook(root, as_session(bash(), "O", duration_ms=100)).returncode == 0
+    assert session_edit(root, "ui/a.js", "BROKEN\n", "A").returncode == 2
+    time.sleep(1.5)
+    git(root, "reset", "--soft", "HEAD~1")  # e.js is dirty again, its bytes and its ctime untouched
+    assert run_hook(root, as_session(bash(), "X", duration_ms=100)).returncode == 0
+    assert next_call(root, "O").returncode == 0
+    assert "owners: A;" in red(root)
+
+
+def test_a_call_is_done_only_once_every_change_it_queued_is_judged(root, monkeypatch):
+    add_rack_project(root)
+    started = time.time()
+    (root / "ui" / "b.js").write_text("y\n")  # early in B's command: before the next pass begins, so it reads it
+    warm(root)
+    (root / "ui" / "c.js").write_text("BROKEN\n")  # late in B's command: no pass has read it
+    hook = load_hook(root, monkeypatch)
+    (hook.STATE / f"{UI}.lock").write_text(str(os.getpid()))  # this test is the project's runner
+    waiter = subprocess.Popen(
+        hook_command(root), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=hook_env(root)
+    )
+    waiter.stdin.write(json.dumps(bash_since(started, "B")))
+    waiter.stdin.close()
+    for _ in range(200):
+        if len(hook.read_entries(hook.QUEUE / f"{UI}.jsonl")) == 2:
+            break
+        time.sleep(0.05)
+    hook.drain(UI, hook.NOBODY, time.time() + 120)  # b.js joins the last verdict; c.js gets a pass of its own
+    assert waiter.wait(timeout=60) == 2, "it waited for the pass that judged c.js"
+    assert red_test("c.js") in waiter.stderr.read()
+    assert not list(hook.DONE.glob("*")), "every done mark was read by its waiter"
+
+
+def test_one_delivery_shows_a_checks_block_once(root, monkeypatch, capsys):
+    hook = load_hook(root, monkeypatch)
+    title, mine = "node tests (ui) FAILED", [red_test("a.js")]
+    hook.post_mail("A", UI, ["ui/a.js"], [{"title": title, "mine": mine, "text": f"{title}\nfrom the earlier verdict"}])
+    hook.post_mail("A", UI, ["ui/b.js"], [{"title": title, "mine": mine, "text": f"{title}\nfrom the newer pass"}])
+    hook.post_mail(
+        "A", "purity-files", ["ui/b.js"], [{"title": "purity FAILED for the changed files", "mine": ["p"], "text": "purity"}]
+    )
+    assert hook.deliver("A") == 2
+    shown = capsys.readouterr().err
+    assert "newer pass" in shown and "earlier verdict" not in shown and "purity" in shown
+    assert shown.startswith("After editing ui/a.js, ui/b.js:")
+
+
+def test_a_slower_scan_never_clears_what_a_faster_one_found_after_it_read(root, monkeypatch):
+    add_rack_project(root)
+    warm(root)
+    (root / "README.md").write_text("hi\n")
+    hook = load_hook(root, monkeypatch)
+    now = time.time()
+    batch = [hook.Entry("R", "toolu_root", "README.md", now, now)]
+    verdict = hook.run_pass(hook.ROOT_SCAN, batch, time.time() + 120)  # the whole tree, read while it was clean
+    assert verdict is not None and verdict.records[0].authoritative and not verdict.records[0].reds
+    found = session_edit(root, "ui/a.js", HAZARD, "C")
+    assert found.returncode == 2 and yours(found) == "yours: purity ui/a.js | a home directory path"
+    with hook.state_lock():
+        hook.settle_batch(hook.ROOT_SCAN.name, verdict.records, batch, verdict.began, verdict.read, create=True)
+    assert "purity ui/a.js | a home directory path" in red(root)
+    again = session_edit(root, "ui/a.js", HAZARD + "more\n", "C")
+    assert again.returncode == 2 and "purity ui/a.js | a home directory path" in yours(again)
+
+
+def test_a_deletion_keeps_the_time_it_was_first_seen(root, monkeypatch):
+    add_rack_project(root)
+    warm(root)
+    (root / "ui" / "e.js").unlink()
+    assert run_hook(root, as_session(bash(), "D", duration_ms=300)).returncode == 0  # D's `rm`: its own claim
+    tested = runs(root)
+    time.sleep(1.5)
+    (root / "ui" / "notes.txt").write_text("x\n")  # anything made beside it moves the directory's ctime
+    bystander = run_hook(root, as_session(bash(), "F", duration_ms=100))
+    assert bystander.returncode == 0 and runs(root) == tested, "F's command changed nothing: nothing to test"
+    assert json.loads(load_hook(root, monkeypatch).OWNERS.read_text())["ui/e.js"]["session"] == "D"
+
+
+@pytest.mark.parametrize("change", ["an Edit", "a shell write", "a shell delete"])
+def test_a_sessions_own_next_call_never_wakes_it_twice_for_one_change(root, change):
+    add_rack_project(root, gate=True)
+    warm(root)
+    if change == "an Edit":
+        first = session_edit(root, "ui/a.js", "BROKEN\n", "A")
+    else:
+        if change == "a shell write":
+            (root / "ui" / "a.js").write_text("BROKEN\n")
+        else:
+            (root / "ui" / "gate.txt").unlink()  # each.test.js reads it at load: gone, no test file loads
+        first = run_hook(root, as_session(bash(), "A", duration_ms=300))
+    assert first.returncode == 2
+    tested = runs(root)
+    time.sleep(0.2)
+    second = run_hook(root, as_session(bash(), "A", duration_ms=150))  # the `git diff` sent in the same message
+    assert second.returncode == 0, second.stderr
+    assert runs(root) == tested
+
+
+def test_a_red_no_complete_run_ever_saw_green_is_told_once_and_never_nags(root):
+    add_rack_project(root)
+    add_rack_project(root, directory="lib", broken=("a.js",))  # red before any pass, and never by B
+    warm(root)  # ui only: lib has no green run to hold a change against
+    first = session_edit(root, "lib/c.js", "y\n", "B")
+    assert first.returncode == 2 and "tests lib (node) | each.test.js > clean a.js" in yours(first)  # it may be B's
+    for content in ("z\n", "w\n"):
+        assert session_edit(root, "lib/c.js", content, "B").returncode == 0, "told once"
+    assert "owners: - (unowned), B;" in red(root)
+
+
+def test_a_red_a_head_move_brought_is_never_pinned_on_the_next_session(root):
+    add_rack_project(root)
+    add_rack_project(root, directory="lib")
+    warm(root)
+    assert session_edit(root, "lib/d.js", "x\n", "W").returncode == 0  # lib has a green run too
+    (root / "lib" / "b.js").write_text("BROKEN\n")
+    commit(root, "a merged change")  # a pull: the tree moves with HEAD, and no hook sees it happen
+    first = session_edit(root, "lib/c.js", "y\n", "B")
+    assert first.returncode == 2 and "tests lib (node) | each.test.js > clean b.js" in yours(first)  # it may be B's
+    for content in ("z\n", "w\n"):
+        assert session_edit(root, "lib/c.js", content, "B").returncode == 0, "told once"
+    assert "owners: - (unowned), B;" in red(root)
+
+
+def test_a_bash_window_ends_when_the_hook_starts(root, monkeypatch):
+    hook = load_hook(root, monkeypatch)
+    # The CLI starts the hook after the command ends: nothing the command wrote is newer than that.
+    assert hook.bash_window({"duration_ms": 40}, "F", 100.0) == (100.0 - 40 / 1000 - 1, 100.0)
+    assert hook.bash_window({}, hook.NOBODY, 100.0) == (99.0, 100.0)
+    (hook.SEEN).mkdir(parents=True, exist_ok=True)
+    (hook.SEEN / "F").write_text("90.0")
+    assert hook.bash_window({}, "F", 100.0) == (89.0, 100.0)
+
+
+@pytest.mark.parametrize("broken", ["BROKEN\n", HAZARD])  # a project's test, and a purity hazard
+def test_a_shell_revert_is_tested_so_the_next_break_wakes_its_culprit(root, broken):
+    add_rack_project(root)
+    warm(root)
+    assert session_edit(root, "ui/a.js", broken, "A").returncode == 2
+    git(root, "checkout", "--", "ui/a.js")  # A's command reverts it
+    assert run_hook(root, as_session(bash(), "A", duration_ms=300)).returncode == 0
+    assert "0 red signature(s)" in red(root), "the revert is a change: it was tested, and the failure cleared"
+    again = session_edit(root, "ui/a.js", broken, "C")
+    assert again.returncode == 2, "C broke it again, and hears it"
+    assert "owners: C;" in red(root)
+
+
+def test_a_late_claim_that_joins_an_incomplete_verdict_stays_a_suspect(root):
+    add_rack_project(root, gate=True)
+    warm(root)
+    (root / "ui" / "gate.txt").write_text("BROKEN\n")  # the operator: no test file loads
+    time.sleep(1.2)
+    assert run_hook(root, as_session(bash(), "X", duration_ms=100)).returncode == 0  # queued unowned, and run
+    time.sleep(1.5)  # B's command, its window's second before it included, starts after that pass
+    started = time.time()
+    (root / "ui" / "b.js").write_text("BROKEN\n")  # early in B's long command
+    time.sleep(1.2)
+    assert run_hook(root, as_session(bash(), "Y", duration_ms=100)).returncode == 0  # not Y's; Y's call runs that pass
+    assert run_hook(root, bash_since(started, "B")).returncode == 0  # B's command ends: that pass already saw b.js
+    (root / "ui" / "gate.txt").write_text("ok\n")  # the operator again: now every test runs
+    time.sleep(1.2)
+    assert run_hook(root, as_session(bash(), "Z", duration_ms=100)).returncode == 0
+    revealed = next_call(root, "B")
+    assert revealed.returncode == 2 and red_test("b.js") in yours(revealed)
+
+
+def test_no_process_a_test_left_outlives_its_run(root):
+    (root / "ui").mkdir()
+    (root / "ui" / "package.json").write_text("{}")
+    (root / "ui" / "a.js").write_text("x\n")
+    (root / "ui" / "leak.test.js").write_text(
+        "const left = require('child_process').spawn('sleep', ['60'], { stdio: 'ignore' });\n"
+        "left.unref();\n"
+        "require('fs').writeFileSync(process.env.MARKERS + '/LEFT', String(left.pid));\n"
+        "require('node:test')('passes', () => {});\n"
+    )
+    commit(root, "ui")
+    (root / "ui" / "a.js").write_text("changed\n")
+    assert call_hook(root, as_session(bash(), "A", duration_ms=500)) == 0
+    left = int(marker(root, "LEFT").read_text())
+    try:
+        for _ in range(50):
+            try:
+                os.kill(left, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("a server the test forgot kept running after its run passed")
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(left, signal.SIGKILL)
+
+
+@pytest.mark.parametrize("stop", [signal.SIGTERM, signal.SIGKILL])  # Claude Code's abort, and its hook timeout
+def test_no_test_outlives_the_hook_that_started_it(root, stop):
+    (root / "ui").mkdir()
+    (root / "ui" / "package.json").write_text("{}")
+    (root / "ui" / "a.js").write_text("x\n")
+    (root / "ui" / "slow.test.js").write_text(
+        "require('fs').writeFileSync(process.env.MARKERS + '/TESTPID', String(process.pid));\n"
+        "require('node:test')('slow', () => new Promise((done) => setTimeout(done, 60000)));\n"
+    )
+    commit(root, "ui")
+    (root / "ui" / "a.js").write_text("changed\n")
+    hook = subprocess.Popen(  # its own process group, as Claude Code starts a hook: that group is what it kills
+        hook_command(root),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=hook_env(root),
+        start_new_session=True,
+    )
+    hook.stdin.write(json.dumps(as_session(bash(), "A", duration_ms=500)).encode())
+    hook.stdin.close()
+    started = marker(root, "TESTPID")
+    for _ in range(300):
+        if started.exists() and started.read_text():
+            break
+        time.sleep(0.1)
+    test = int(started.read_text())
+    try:
+        os.killpg(hook.pid, stop)
+        hook.wait(timeout=10)
+        for _ in range(50):
+            try:
+                os.kill(test, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("the test kept running after its hook was killed")
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(test, signal.SIGKILL)
