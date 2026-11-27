@@ -10,7 +10,8 @@ then serves it via `ttyd -I <path>`.
 Every failure degrades gracefully to ttyd's stock page: the terminal still works,
 you only lose the live font size, the Shift+Enter newline, the hidden
 scrollbar (see the style sheet in INJECTED_SCRIPT), copy-on-select, image attachments, ◧ DRAW,
-◇ SKILLS, ⟳ SYNC, ⇡ DEPS, ✓ CHECKS, ⤒ TOP and the work-persona MODE selector.
+◇ SKILLS, the buttons mounted plugins declare (pane_buttons.py), ⟳ SYNC, ⇡ DEPS, ✓ CHECKS, ⤒ TOP
+and the work-persona MODE selector.
 
 Copy-on-select: a tmux copy reaches this page only as an OSC 52 escape, which
 ttyd's xterm.js drops. The script handles it. Why, and the read-refusal rule:
@@ -284,6 +285,25 @@ INJECTED_SCRIPT = r"""
         return url.href;
     }
 
+    /* The pane's terminal when a draft can be typed into it; else null, with the reason shown. */
+    function writable_term() {
+        var term = window.term;
+        if (!term || typeof term.paste !== 'function' || term.options.disableStdin) {
+            image_result('Terminal is not writable');
+            return null;
+        }
+        return term;
+    }
+
+    /* Puts `text` in the draft of the terminal the press started on, without Enter. A slow answer
+       (an upload, a plugin, a file picker) may land after the pane changed: that types nothing. */
+    function paste_into(term, text, again) {
+        if (term !== window.term || term.options.disableStdin) {
+            throw new Error('Terminal changed; ' + again);
+        }
+        term.paste(text);
+    }
+
     function upload_image(file, term) {
         return new Promise(function (resolve, reject) {
             if (!file.size || file.size > 8 * 1024 * 1024) {
@@ -302,10 +322,7 @@ INJECTED_SCRIPT = r"""
                     return response.json().then(function (result) {
                         if (!response.ok) throw new Error(result.error || 'Image upload failed');
                         if (typeof result.paste !== 'string') throw new Error('Bridge returned no image path');
-                        if (term !== window.term || term.options.disableStdin) {
-                            throw new Error('Terminal changed; paste the image again');
-                        }
-                        term.paste(result.paste);
+                        paste_into(term, result.paste, 'paste the image again');
                         resolve();
                     });
                 }).catch(reject);
@@ -315,11 +332,8 @@ INJECTED_SCRIPT = r"""
     }
 
     function attach_images(files) {
-        var term = window.term;
-        if (!term || typeof term.paste !== 'function' || term.options.disableStdin) {
-            image_result('Terminal is not writable');
-            return;
-        }
+        var term = writable_term();
+        if (!term) return;
         if (image_busy) { image_result('Wait for the current image upload'); return; }
         image_busy = true;
         image_button.disabled = true;
@@ -349,11 +363,8 @@ INJECTED_SCRIPT = r"""
 
     /* ◧ DRAW: why it pastes, and what, is owned by plugins/agent-canvas/agent_canvas/draw.py. */
     function request_drawing(button) {
-        var term = window.term;
-        if (!term || typeof term.paste !== 'function' || term.options.disableStdin) {
-            image_result('Terminal is not writable');
-            return;
-        }
+        var term = writable_term();
+        if (!term) return;
         var session = arg_session();
         if (!session) { image_result('No session named in this pane'); return; }
         button.disabled = true;
@@ -363,15 +374,67 @@ INJECTED_SCRIPT = r"""
             return response.json().then(function (result) {
                 if (!response.ok) throw new Error(result.error || 'Canvas plugin not answering');
                 if (typeof result.paste !== 'string') throw new Error('Bridge returned no canvas request');
-                if (term !== window.term || term.options.disableStdin) {
-                    throw new Error('Terminal changed; press DRAW again');
-                }
-                term.paste(result.paste);
+                paste_into(term, result.paste, 'press DRAW again');
                 image_result('Canvas request added to prompt');
                 term.focus();
             });
         }).catch(function (error) { image_result(error.message); })
             .finally(function () { button.disabled = false; });
+    }
+
+    /* A button a mounted plugin declared. What a plugin may and may not do with one is owned by
+       tldrack/pane_buttons.py — see the note there. One of its rules is enforced here, because the
+       plugin's answer never passes through the bridge's own code: a paste holding a control
+       character is refused, so a plugin button fills the draft and can never send it. */
+    var PLUGIN_PRESS_MS = 125000;  // a press may open a dialog that waits on the operator
+    function press_plugin_button(button, entry) {
+        var term = window.term;
+        button.disabled = true;
+        image_result(entry.label + '…');
+        fetch(attachment_url(entry.route), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session: arg_session() }),
+            signal: AbortSignal.timeout(PLUGIN_PRESS_MS)
+        }).then(function (response) {
+            return response.json().then(function (result) {
+                if (!response.ok) throw new Error(result.error || entry.label + ' failed');
+                var notice = typeof result.notice === 'string' ? result.notice.slice(0, 120) : '';
+                if (result.cancelled === true || typeof result.paste !== 'string') {
+                    image_result(notice);
+                    return;
+                }
+                if (/[\x00-\x1f\x7f-\x9f]/.test(result.paste)) {
+                    throw new Error(entry.label + ' answered with a control character');
+                }
+                if (!term || typeof term.paste !== 'function' || term.options.disableStdin) {
+                    throw new Error('Terminal is not writable');
+                }
+                paste_into(term, result.paste, 'press ' + entry.label + ' again');
+                image_result(notice || 'Added to prompt');
+                term.focus();
+            });
+        }).catch(function (error) { image_result(error.message); })
+            .finally(function () { button.disabled = false; });
+    }
+
+    /* GET /pane-buttons: drawn in the pane's own row, ahead of `before`. No answer: no buttons. */
+    function draw_plugin_buttons(row, before, css) {
+        fetch(attachment_url('/pane-buttons'), { signal: AbortSignal.timeout(10000) })
+            .then(function (response) { return response.ok ? response.json() : {}; })
+            .then(function (state) {
+                (Array.isArray(state.buttons) ? state.buttons : []).forEach(function (entry) {
+                    if (!entry || typeof entry.label !== 'string' || typeof entry.route !== 'string') return;
+                    var button = document.createElement('button');
+                    button.textContent = entry.label;
+                    var title = typeof entry.title === 'string' && entry.title ? entry.title : entry.label;
+                    button.title = title;
+                    button.setAttribute('aria-label', title);
+                    button.style.cssText = css;
+                    button.addEventListener('click', function () { press_plugin_button(button, entry); });
+                    row.insertBefore(button, before);
+                });
+            }).catch(function () {});
     }
 
     /* ◇ SKILLS: flips THIS pane's agent canvas to the skills audit and back. Nothing is typed.
@@ -639,6 +702,7 @@ INJECTED_SCRIPT = r"""
         controls.appendChild(pane_row);
         controls.appendChild(picker);
         document.body.appendChild(controls);
+        draw_plugin_buttons(pane_row, draw_button, image_button.style.cssText);
         draw_runnable(controls, agent_row, picker,
             [['sync-main', sync_button], ['deps-update', deps_button], ['ci-sweep', checks_button]]);
         window.addEventListener('paste', function (event) {

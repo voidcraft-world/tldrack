@@ -11,8 +11,13 @@ HARNESS = r"""
 const config = JSON.parse(process.argv[1]);
 const listeners = {}, uploads = [], pasted = [], typed = [], elements = [];
 function element() {
-    const node = {style:{}, attrs:{}, listeners:{}, appendChild(child){ child.parent = this; },
-        insertBefore(child){ child.parent = this; }, setAttribute(k, v){this.attrs[k] = v;},
+    const node = {style:{}, attrs:{}, listeners:{}, children:[],
+        appendChild(child){ child.parent = this; this.children.push(child); },
+        insertBefore(child, before){
+            child.parent = this;
+            const at = this.children.indexOf(before);
+            this.children.splice(at === -1 ? this.children.length : at, 0, child);
+        }, setAttribute(k, v){this.attrs[k] = v;},
         addEventListener(type, fn){this.listeners[type] = fn;}};
     elements.push(node); return node;
 }
@@ -34,6 +39,11 @@ global.fetch = async (url, options) => {
     if (String(url).endsWith('/plugin/claude-skills/state')) {
         if (config.no_skills_plugin) throw new Error('connection refused');
         return {ok:true, json:async()=>({runnable:(config.runnable || []).map(key=>({key, skill:key, session:key}))})};
+    }
+    // What mounted plugins declared (index_patch.py `draw_plugin_buttons`): also a read.
+    if (String(url).endsWith('/pane-buttons')) {
+        if (config.no_pane_buttons) throw new Error('connection refused');
+        return {ok:true, json:async()=>({buttons:config.pane_buttons || [], refused:[]})};
     }
     uploads.push({url, body:options.body === undefined ? null : JSON.parse(options.body)});
     if (config.changed) window.term = {};
@@ -60,6 +70,10 @@ else if (config.top) {
     const button = elements.find(e=>e.textContent === '⤒ TOP');
     for (let press = 0; press < config.top; press++) button.listeners.click();
 }
+else if (config.press) {
+    // A plugin's button exists only once GET /pane-buttons has answered.
+    setTimeout(()=>elements.find(e=>e.textContent === config.press).listeners.click(), 5);
+}
 else if (config.deps) elements.find(e=>e.textContent === '⇡ DEPS').listeners.click();
 else if (config.checks) elements.find(e=>e.textContent === '✓ CHECKS').listeners.click();
 else if (config.persona !== undefined) {
@@ -82,6 +96,8 @@ const on_page = (node) => { while (node.parent) node = node.parent; return node 
 setTimeout(()=>process.stdout.write(JSON.stringify({claimed,stopped,uploads,pasted,typed,
     font_size:window.term?.options?.fontSize ?? null,
     drawn:elements.filter(e=>e.textContent && on_page(e)).map(e=>e.textContent),
+    pane_row:(elements.find(e=>e.textContent === '+ IMAGE').parent?.children || [])
+        .filter(e=>e.listeners.click).map(e=>({text:e.textContent, title:e.title, label:e.attrs['aria-label']})),
     notices:elements.map(e=>e.textContent).filter(Boolean),
     checked:elements.filter(e=>e.attrs['aria-checked'] === 'true').map(e=>e.attrs['aria-label'])})), 20);
 """
@@ -361,3 +377,50 @@ def test_top_on_a_read_only_pane_says_so_and_stays_top():
     result = run_paste(top=1, readonly=True)
     assert result["typed"] == [] and "⤒ TOP" in result["drawn"]
     assert "Terminal is not writable" in result["notices"]
+
+
+# What a mounted plugin declared, as GET /pane-buttons serves it (pane_buttons.py owns the contract).
+SAMPLE = {"plugin": "sample", "label": "+ SAMPLE", "title": "Attach a sample", "route": "/plugin/sample/pick"}
+
+
+def test_a_plugins_button_is_drawn_after_image_and_before_draw():
+    row = run_paste(text=True, pane_buttons=[SAMPLE])["pane_row"]
+    assert [button["text"] for button in row] == ["+ IMAGE", "+ SAMPLE", "◧ DRAW", "◇ SKILLS"]
+    assert row[1]["title"] == row[1]["label"] == "Attach a sample"
+
+
+@pytest.mark.parametrize("config", [{}, {"no_pane_buttons": True}, {"pane_buttons": [{"label": 7}, None, {"label": "x"}]}])
+def test_no_declared_button_draws_none_and_the_pane_still_works(config):
+    result = run_paste(**config)
+    assert [button["text"] for button in result["pane_row"]] == ["+ IMAGE", "◧ DRAW", "◇ SKILLS"]
+    assert result["pasted"] == ["/tmp/image.png "]
+
+
+@pytest.mark.parametrize("url", ["http://localhost:7681/?arg=codex", "http://localhost:7681/?arg=attach:codex"])
+def test_a_plugin_button_posts_this_panes_session_to_its_route_and_pastes_without_enter(url):
+    reply = {"paste": "'/tmp/a file' ", "notice": "Sample added"}
+    result = run_paste(press="+ SAMPLE", pane_buttons=[SAMPLE], url=url, reply=reply)
+    assert result["uploads"] == [{"url": "http://localhost:7792/plugin/sample/pick", "body": {"session": "codex"}}]
+    assert result["pasted"] == ["'/tmp/a file' "] and result["typed"] == []
+    assert "Sample added" in result["notices"]
+
+
+@pytest.mark.parametrize(
+    "config,message",
+    [
+        ({"reply": {"cancelled": True}}, None),
+        ({"reply": {"cancelled": True, "paste": "x "}}, None),
+        ({"reply": {"notice": "Nothing to attach"}}, "Nothing to attach"),
+        ({"reply": {"paste": "echo hi\r"}}, "+ SAMPLE answered with a control character"),
+        ({"reply": {"paste": "a\nb"}}, "+ SAMPLE answered with a control character"),
+        ({"reply": {"paste": "\x1b[A"}}, "+ SAMPLE answered with a control character"),
+        ({"reply": {"paste": "x "}, "readonly": True}, "Terminal is not writable"),
+        ({"reply": {"paste": "x "}, "changed": True}, "Terminal changed; press + SAMPLE again"),
+        ({"fail": True}, "Disk full"),
+    ],
+)
+def test_a_plugin_button_never_types_on_a_cancel_a_refusal_or_an_answer_that_could_press_enter(config, message):
+    result = run_paste(press="+ SAMPLE", pane_buttons=[SAMPLE], **config)
+    assert result["pasted"] == [] and result["typed"] == []
+    if message:
+        assert message in result["notices"]

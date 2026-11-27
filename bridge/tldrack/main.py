@@ -125,7 +125,7 @@ from tldrack.open_work import (
     with_request,
 )
 from tldrack.verdicts import SessionVerdictStore, resolve_verdicts_path, restorable
-from tldrack import framing, live_marks, plugin_sources, ttyd_front, ui_static
+from tldrack import framing, live_marks, pane_buttons, plugin_sources, ttyd_front, ui_static
 from tldrack import next_step as next_step_mod
 from tldrack import doctor as doctor_mod
 from tldrack import update as update_mod
@@ -2078,6 +2078,7 @@ def build_status_handler(
             "/profile-launch-settings": "_handle_get_profile_launch_settings",
             "/launch-directories": "_handle_get_launch_directories",
             "/features": "_handle_get_features",
+            "/pane-buttons": "_handle_get_pane_buttons",
             "/update": "_handle_get_update",
             # Shells out (`ps`, `lsof`) on every call, so it also refuses a no-cors browser GET.
             "/doctor": "_route_doctor",
@@ -2487,6 +2488,10 @@ def build_status_handler(
         def _handle_get_features(self) -> None:
             """GET /features: every feature switch, on or off, in the Settings page's words (features.py)."""
             self._send_json(200, switches.view())
+
+        def _handle_get_pane_buttons(self) -> None:
+            """GET /pane-buttons: the buttons mounted plugins put in every terminal pane (pane_buttons.py)."""
+            self._send_json(200, pane_buttons.collect(StatusHandler.plugins))
 
         def _handle_save_features(self) -> None:
             """POST /features `{"set": {key: bool}}`: switch parts of this bridge off or back on.
