@@ -76,63 +76,80 @@ dropped: where the hook cannot tell, it wakes every plausible culprit.
   minutes). It dates the change from the start of that window: a command that wrote
   the file early and again late changed it early. ctime, because a rename or a `cp -p`
   keeps the mtime, and no command can set a ctime back; a deleted file is dated once,
-  by its directory's ctime when it is first seen gone, as that ctime moves with every
-  later file made or removed beside it. Two sessions whose commands overlap both
-  claim, unless the file is exactly as Edits left it and nothing but Edits changed it
-  inside the window (a run of Edits, by any sessions, counts as one write). A Write
-  never excludes: there is no PreToolUse half for it, and the content it wrote may be
-  built on a read that kept a shell change. A session never claims again a file
-  exactly as its own claim left it: that change is queued already. A dirty file that
-  moved outside the window was changed by someone else (a neighbour mid-command, a
-  background job, the operator's editor): it is queued under the last session that
-  claimed it, or `-`, unowned and never woken. A claim is forgotten once its file is
-  clean (a Bash call sees that), a commit touched it after the claim, or it is
-  PRUNE_S old, so a change that landed never names an owner for a later one.
+  when it is first seen gone, by its directory's ctime capped at the end of that
+  call's window (a neighbour's save beside it after the call started cannot push it
+  out), since that ctime moves with every later file made or removed beside it. Two
+  sessions whose commands overlap both claim, unless the file is exactly as another
+  session's tools left it and the command can have written none of it: a run of Edits,
+  by any sessions, that began from a state older than the window, or a Write, which
+  chose every byte (Claude Code writes only a file it has read, so what a Write kept
+  of a shell change it chose, and its session hears for all of it). Claims of one
+  state join: the session whose tool wrote it first, then each command that overlapped
+  it, so none of them claims it twice (the `git diff` after an Edit). A dirty file
+  that moved outside the window was changed by someone else (a neighbour mid-command,
+  a background job, the operator's editor): it is queued under the first claimant of
+  the file's last claim, and under `-`, since it may be nobody's. A claim is forgotten
+  once its file is clean (a Bash call sees that; a claim made while its git ran
+  stands), a commit touched it after the claim, or it is PRUNE_S old, so a change
+  that landed never names an owner for a later one.
 - A HEAD move (a pull, a checkout, a reset) rewrites files no session claims: each
-  one rewritten since HEAD was last seen makes `-` a SUSPECT (below) of its project's
-  tests. No pass runs for it.
+  one rewritten since the latest look at the old HEAD makes `-` a SUSPECT (below) of
+  its project's tests. No pass runs for it.
 - Each change is queued for each runner that checks it. A pass reads one batch; a
   change a finished pass already read (it was there before the pass began, in a file
-  the pass covers) joins that pass's verdict instead of running it again. A call is
-  done with a runner only once every change it queued there has been judged.
-- A failure has a SIGNATURE, stable across runs (`purity <file> | <rule>`,
-  `tests <project> | <test>`), and the RED LEDGER records each red one with its
-  owners, the time it first turned red and the time it was last seen red. A change is
-  plausible for a signature when it could have made it red: it came after the last
-  pass that ran completely and saw the signature green (tests only: a purity hit is
-  one file's bytes, and only changes to that file count), and, for a signature
-  already red, before it first turned red. A new signature is owned by the plausible
-  owners among those whose changes the check saw (per file for purity, the whole
-  batch for a project's tests); one already red gains only plausible sessions, so a
-  change made after it turned red is a bystander's. `-` is plausible like a session
-  (a change no session made, a HEAD move), and so is the unknown past of a project's
-  tests that no complete run has seen green: a red can arrive with no session behind
-  it. A session is woken for a signature when it becomes an owner, and again whenever
-  a batch holds a change of its while the failure stands, so the culprit hears again
-  on its next change, unless `-` co-owns it: a failure that may be nobody's is told
-  once to each session that may have caused it, and never pinned on one.
+  the pass covers) joins that pass's verdict instead of running it again, and the
+  changed files' scan keeps each file's latest scan for that. A call is done with a
+  runner only once every change it queued there has been judged.
+- A failure has a SIGNATURE, stable across runs (`tests <project> | <test>`, and
+  `purity <file> | <rule> | <digest>`, the digest of the hit's masked line, so two
+  hits in one file are two failures), and the RED LEDGER records each red one with
+  its owners, the time it first turned red, the time it was last seen red and how
+  many of it there were. A change is plausible for a signature when it could have
+  made it red: it came after the last pass that ran what the signature names and saw
+  it green (tests only: a purity hit is one file's bytes, and only changes to that
+  file count), and, for a signature already red, before it first turned red, or in a
+  batch that finds more of it (one more private word, a copied line). A new signature
+  is owned by the plausible owners among those whose changes the check saw (per file
+  for purity, the whole batch for a project's tests); one already red gains only
+  plausible owners, so a change made after it turned red is a bystander's. `-` is
+  plausible like a session (a change no session made, a HEAD move), and so is the
+  unknown past of a project's tests that no run has seen green: a red can arrive with
+  no session behind it. A session is woken for a signature when it becomes an owner,
+  and again whenever a batch holds a change its own call claimed while the failure
+  stands (one queued under it only as a file's last claimant is a guess), so the
+  culprit hears again on its next change, unless `-` or another session co-owns it:
+  a failure that may be nobody's, or one of several sessions', is told once to each
+  session that may have caused it, and never pinned on one. A signature that names
+  no single failure (a test file that failed to load, a run that names no test) can
+  hide a second one: when a batch with an owner's change finds it still red, every
+  change since its last green run that no complete run has checked (the SUSPECTS
+  below, and this batch's) may be what stands, so their sessions become owners with
+  `-`, each told once.
 - A run that reports test by test (or passes) is complete: it clears every signature
   of its own that it no longer sees and that was last seen red before it began to
   read the tree, so a slower runner never clears what a faster one found after it
-  read. A run that cannot vouch for everything (a test file that failed to load, an
-  interrupted or timed-out run, a failure that names no test, a skipped project, a
-  scan that crashed) clears nothing, and keeps its batch's owners as SUSPECTS of that
-  check, a change that joins its verdict late included: a signature that turns up new
-  there, once the run can see it, counts them as plausible too, until a complete run
-  spends them. A pass whose every change was made before the ledger existed (the
-  first ever, wherever its runner sorts) records what is already red in a project's
-  tests as unowned, and wakes nobody for it; a pass with any later change attributes,
-  so a project first touched long after still tells its culprit. Purity needs no
-  seed: only the sessions that changed the file a hit is about are ever woken for it.
+  read. A run whose only gap is test files that failed to load does the same for
+  every other test file, and saw those green from when it began; any other run that
+  cannot vouch for everything (an interrupted or timed-out run, a failure that names
+  no test, a skipped project, a scan that crashed) clears nothing. Both keep their
+  batch's owners as SUSPECTS of that check, a change that joins their verdict late
+  included: a signature that turns up new there, once a run can see it, counts them
+  as plausible too, until a complete run that began after their changes spends them.
+  A pass whose every change was made before the ledger existed (the first ever,
+  wherever its runner sorts) records what is already red in a project's tests as
+  unowned, and wakes nobody for it; a pass with any later change attributes, so a
+  project first touched long after still tells its culprit. Purity needs no seed:
+  only the sessions that changed the file a hit is about are ever woken for it.
 - A call that queued a change of its own waits for each runner it queued into,
-  taking over any whose lock frees (or outlives LOCK_STALE_S, whatever its pid names
-  now), until DEADLINE_S: 285 s after it started, under
+  taking over any whose lock frees, until DEADLINE_S: 285 s after it started, under
   the 300 s kill in `.claude/settings.json`, with room for the interpreter and the
   report. A pass that cannot finish by then is stopped and left in flight; so is the
   batch of a runner killed mid-pass, and the next runner to take its lock runs it. A
-  report is mail in the session's mailbox: every call of a session prints and clears
-  that session's mail, so a report that missed its waiter reaches the next call, and
-  one delivery shows a check's block once.
+  runner's lock is a flock the kernel frees when its process ends, so a machine that
+  sleeps through a pass keeps its runner. A report is mail in the session's
+  mailbox: every call of a session prints and clears that session's mail, so a
+  report that missed its waiter reaches the next call unless a complete run has seen
+  its failures fixed meanwhile, and one delivery shows a check's block once.
 - `python3 .claude/hooks/affected_tests.py --red` prints the ledger: each red
   signature, its owners and its age, the unowned ones too, and each check's suspects.
 """
@@ -195,7 +212,7 @@ DURATIONS = WOKEN / "durations.json"
 STATE_LOCK = WOKEN / "state.lock"
 NOBODY = "-"
 DEADLINE_S = 285
-LOCK_STALE_S = 330  # past the 300 s kill in `.claude/settings.json`: no runner, of any version, holds a lock longer
+LOCK_STALE_S = 330  # the previous version's pid file: past the 300 s kill in `.claude/settings.json`, its runner is gone
 SLACK_S = 10
 MIN_PASS_S = 10
 POLL_S = 0.25
@@ -378,25 +395,29 @@ def wrote_whole(payload: dict, path: Path, authored: dict) -> bool:
     return before == authored.get(rel(path)) or before == index_sha(rel(path))
 
 
-def claim_base(payload: dict, before: dict, owner: object, now: float) -> int | None:
-    """The ctime the file had before the run of Edits this one continues; None when unknown.
-    Who gets woken: the WHO GETS WOKEN note."""
+def claim_base(payload: dict, before: dict, owner: object, now: float, written: bool) -> tuple[int | None, bool]:
+    """(base, whole) of the run of tool writes this one ends: the ctime the file had before it (None when
+    unknown), and whether it began with a Write, which chose every byte (`written`: the file still holds
+    them). Who gets woken: the WHO GETS WOKEN note."""
     if payload.get("tool_name") == "Write":
-        return None
+        return None, written
     ctime, taken = before.get("ctime"), before.get("at")
     if not (isinstance(ctime, int) and isinstance(taken, (int, float)) and 0 <= now - taken <= PRE_FRESH_S):
-        return None
-    if isinstance(owner, dict) and owner.get("ctime") == ctime and isinstance(owner.get("base"), int):
-        return int(owner["base"])  # exactly as the previous Edit left it: the same run of Edits
-    return ctime
+        return None, False
+    if isinstance(owner, dict) and owner.get("ctime") == ctime:  # exactly as the previous tool write left it
+        if owner.get("whole") is True:
+            return None, True
+        if isinstance(owner.get("base"), int):
+            return int(owner["base"]), False  # the same run of Edits
+    return ctime, False
 
 
-def record_edits(payload: dict, paths: list[Path], now: float, owners: dict) -> dict[str, int | None]:
+def record_edits(payload: dict, paths: list[Path], now: float, owners: dict) -> dict[str, tuple[int | None, bool]]:
     """Move each file's stamp so Bash skips it, and keep its hash only if the agent wrote it whole.
 
     Returns each file's `claim_base`."""
     stamps, authored = read_json(STAMPS), read_json(AUTHORED)
-    bases: dict[str, int | None] = {}
+    bases: dict[str, tuple[int | None, bool]] = {}
     for path in paths:
         try:
             stamps[rel(path)] = path.lstat().st_mtime_ns
@@ -404,11 +425,12 @@ def record_edits(payload: dict, paths: list[Path], now: float, owners: dict) -> 
             continue
         before = read_json(pre_record(path))  # read before wrote_whole consumes it
         digest = sha256_of(path)
-        if digest and wrote_whole(payload, path, authored):
+        whole = bool(digest) and wrote_whole(payload, path, authored)
+        if whole and digest:
             authored[rel(path)] = digest
         else:
             authored.pop(rel(path), None)
-        bases[rel(path)] = claim_base(payload, before, owners.get(rel(path)), now)
+        bases[rel(path)] = claim_base(payload, before, owners.get(rel(path)), now, whole)
     write_json(STAMPS, stamps)
     write_json(AUTHORED, authored)
     return bases
@@ -781,32 +803,51 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def holder_alive(lock: Path) -> bool:
-    """A live process holds the lock, and has for less time than any hook may live: past LOCK_STALE_S
-    the pid names a stranger (a reboot or a pid wrap gave the dead runner's away), and the lock is free."""
+HELD: dict[str, int] = {}  # runner name -> the descriptor whose flock this process holds while it runs it
+
+
+def previous_version_holds(lock: Path, ours: str) -> bool:
+    """`<name>.lock` names a live runner of the previous version, which knows no flock: a pid written by
+    anything but our own last runner (`ours`, which the flock says is gone), alive, and younger than any
+    hook of that version lives (past LOCK_STALE_S a reboot or a pid wrap gave the dead runner's pid away)."""
     try:
-        return pid_alive(int(lock.read_text() or "0")) and time.time() - lock.stat().st_mtime < LOCK_STALE_S
+        pid = lock.read_text().strip()
+        return pid != ours and pid_alive(int(pid or "0")) and time.time() - lock.stat().st_mtime < LOCK_STALE_S
     except (OSError, ValueError):
         return False
 
 
 def try_lock(name: str) -> bool:
-    """True when this call is now the runner for `name`; a dead runner's lock is taken over."""
+    """True when this call is now the runner for `name`; a dead runner's lock, and its batch, are taken over.
+
+    A runner holds a flock on `<name>.flock` for as long as it runs: the kernel frees it the moment that
+    process ends, however it ends, so no sleep of the machine, pid reuse or reboot can make a live runner
+    look dead, or a dead one alive. `<name>.lock` is the previous version's pid file, still taken, so a
+    runner of either version keeps the other out of its snapshot during the rollout."""
+    STATE.mkdir(parents=True, exist_ok=True)
+    fd = os.open(STATE / f"{name}.flock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return False  # a live runner holds it: the common case
+    ours = os.read(fd, 32).decode(errors="replace").strip()  # the pid our last runner here wrote
     lock = STATE / f"{name}.lock"
-    if lock.exists() and holder_alive(lock):
-        return False  # the common case, answered without the state lock
-    with state_lock():
-        for _ in range(2):
-            try:
-                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                if holder_alive(lock):
-                    return False
-                lock.unlink(missing_ok=True)  # its runner died at the hook timeout: its batch is still in flight
-                continue
-            os.write(fd, str(os.getpid()).encode())
-            os.close(fd)
-            return True
+    for _ in range(2):
+        try:
+            pid_file = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if previous_version_holds(lock, ours):
+                break
+            lock.unlink(missing_ok=True)  # its runner died (at the hook timeout, say): its batch is still in flight
+            continue
+        os.write(pid_file, str(os.getpid()).encode())
+        os.close(pid_file)
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, str(os.getpid()).encode(), 0)
+        HELD[name] = fd
+        return True
+    os.close(fd)  # frees the flock
     return False
 
 
@@ -814,7 +855,9 @@ def release(name: str) -> None:
     lock = STATE / f"{name}.lock"
     with contextlib.suppress(OSError, ValueError):
         if int(lock.read_text() or "0") == os.getpid():
-            lock.unlink()
+            lock.unlink()  # before the flock goes, so the next runner of either version finds it free
+    if (fd := HELD.pop(name, None)) is not None:
+        os.close(fd)
 
 
 def is_done(call: str, name: str) -> bool:
@@ -858,19 +901,47 @@ def bash_window(payload: dict, session: str, now: float) -> tuple[float, float]:
     return now - 1, now
 
 
+def claimants(owner: object) -> list[str]:
+    """The sessions that claimed a file exactly as it is: the first (its last owner), then each one whose
+    command overlapped that change."""
+    if not isinstance(owner, dict):
+        return []
+    joined = owner.get("with")
+    named = [owner.get("session"), *(joined if isinstance(joined, list) else [])]
+    return [s for s in dict.fromkeys(named) if isinstance(s, str) and s and safe_id(s) == s]
+
+
+def note_claim(
+    owners: dict, name: str, session: str, ctime: int | None, now: float, tool: tuple[int | None, bool] | None
+) -> None:
+    """Record `session`'s claim of the file as it is now; `tool`: (base, whole) of the Edit or Write that wrote it.
+    A claim of the very state another claim holds (the same ctime) joins it: one change, claimed by its
+    tool's session and by each command that overlapped it, so none of them claims it twice and a later
+    change no session made goes to the first claimant, not to the latest reader."""
+    held = owners.get(name)
+    claimed = claimants(held) if isinstance(held, dict) and held.get("ctime") == ctime else []
+    if claimed and tool is None and isinstance(held, dict):
+        joined = list(dict.fromkeys([*claimed, session]))
+        owners[name] = {**held, "session": joined[0], "with": joined[1:], "at": max(number(held.get("at"), now), now)}
+        return
+    base, whole = tool or (None, False)  # a tool claim leads: its session wrote this state
+    others = [s for s in claimed if s != session]
+    owners[name] = {"session": session, "ctime": ctime, "base": base, "whole": whole, "with": others, "at": now}
+
+
 def left_by_another_tool(owner: object, session: str, ctime: int | None, start: float) -> bool:
-    """The file is exactly as another session's Edit left it, and nothing but Edits changed it inside
-    this window (the run's `base` is older): this command did not touch it."""
-    if not isinstance(owner, dict) or owner.get("session") in (session, None) or ctime is None:
+    """The file is exactly as another session's tools left it, and this command can have written none of it:
+    a Write, which chose every byte, or a run of Edits whose `base` is older than this window."""
+    if not isinstance(owner, dict) or session in claimants(owner) or not claimants(owner) or ctime is None:
         return False
     base = owner.get("base")
-    return owner.get("ctime") == ctime and isinstance(base, int) and base / 1e9 < start
+    return owner.get("ctime") == ctime and (owner.get("whole") is True or (isinstance(base, int) and base / 1e9 < start))
 
 
 def claimed_already(owner: object, session: str, ctime: int | None, at: float) -> bool:
-    """This session's own claim holds the file exactly as it is (a deletion: one no newer than that claim).
+    """This session's claim holds the file exactly as it is (a deletion: one no newer than that claim).
     Its change is queued under it already; a second claim (the `git diff` after an Edit) would only wake it twice."""
-    if not isinstance(owner, dict) or owner.get("session") != session or owner.get("ctime") != ctime:
+    if not isinstance(owner, dict) or session not in claimants(owner) or owner.get("ctime") != ctime:
         return False
     claimed = owner.get("at")
     return isinstance(claimed, (int, float)) and at <= claimed
@@ -886,9 +957,10 @@ def git_head() -> str | None:
 
 
 def rewritten_by_git(last: dict, head: str | None, now: float) -> list[tuple[str, float, str]]:
-    """(tests namespace, change time, file) of each file a HEAD move since the last call rewrote (a pull,
-    a checkout, a reset): in the move's diff and changed after HEAD was last seen. A commit rewrites
-    nothing, so its files keep their ctime and are not here."""
+    """(tests namespace, change time, file) of each file in the diff of a HEAD move since HEAD was last seen
+    (a pull, a checkout, a reset) whose ctime is after that look: one git rewrote, or one a command wrote
+    and committed before any hook call saw it. A commit of a change a call already saw rewrites nothing:
+    its files keep their ctime, which is older than that call's look."""
     old, seen_at = last.get("head"), last.get("at")
     if head is None or not isinstance(old, str) or old == head or not SHA.fullmatch(old) or not isinstance(seen_at, (int, float)):
         return []  # never seen, unchanged, or state that is not a commit id (it reaches git's arguments)
@@ -940,16 +1012,18 @@ def landed_since_claimed(owners: dict, names: list[str]) -> dict[str, float]:
     return landed
 
 
-def current_claims(owners: dict, dirty: set[str] | None, now: float) -> dict:
+def current_claims(owners: dict, dirty: set[str] | None, now: float, looked: float) -> dict:
     """The claims still worth an owner: younger than PRUNE_S and, when a Bash call knows the dirty set,
-    on a file that is still dirty. A committed or reverted change names no owner for the next one."""
+    on a file that is still dirty. A committed or reverted change names no owner for the next one. A claim
+    made after `looked`, when git began to read the tree, is of a change that set may predate: it stands
+    (a change is claimed only by a call that starts after it, and `at` is when that call started)."""
     return {
         name: owner
         for name, owner in owners.items()
         if isinstance(owner, dict)
         and isinstance(owner.get("at"), (int, float))
         and now - owner["at"] < PRUNE_S
-        and (dirty is None or name in dirty)
+        and (dirty is None or name in dirty or owner["at"] >= looked)
     }
 
 
@@ -957,9 +1031,11 @@ def claim(payload: dict, session: str, call: str, now: float, deadline: float) -
     """Queue every change under its owner; the runners this call's own changes went to."""
     bash = payload.get("tool_name") == "Bash"
     start, end = bash_window(payload, session, now) if bash else (now, now)
+    # Read before git looks: whatever moves after this, another call moved while git ran (kept below).
+    stamped, gone_before = (read_json(STAMPS), read_json(GONE)) if bash else ({}, {})
+    looked = time.time()
     dirty = dirty_files() if bash else None  # outside the lock: git is the slow part
     seen = {path: file_times(path, now) for path in dirty or []}
-    stamped = read_json(STAMPS) if bash else {}  # read again under the lock; here only to pick what to look at
     reverted = reverts(stamped, seen, now) if dirty is not None else {}
     outside = [rel(p) for p, (mtime, _, at) in seen.items() if not start <= at <= end and stamped.get(rel(p)) != mtime]
     landed = landed_since_claimed(read_json(OWNERS), outside)
@@ -968,11 +1044,14 @@ def claim(payload: dict, session: str, call: str, now: float, deadline: float) -
     mine = call if session != NOBODY else NOBODY
     queued: list[Entry] = []
     with state_lock():
-        owners = current_claims(read_json(OWNERS), None if dirty is None else {rel(p) for p in dirty}, now)
+        owners = current_claims(read_json(OWNERS), None if dirty is None else {rel(p) for p in dirty}, now, looked)
         if head is not None:
-            if read_json(HEAD_SEEN).get("head") == last_head.get("head"):  # no other call took this move first
+            held_head = read_json(HEAD_SEEN)
+            if held_head.get("head") == last_head.get("head"):  # no other call took this move first
                 note_rewritten(rewritten)
-            write_json(HEAD_SEEN, {"head": head, "at": now})
+            # Its latest look at this HEAD: a call that started earlier and locks later never sets it back.
+            since = max(number(held_head.get("at"), now), now) if held_head.get("head") == head else now
+            write_json(HEAD_SEEN, {"head": head, "at": since})
         if bash and dirty is not None:
             stamps, gone = read_json(STAMPS), read_json(GONE)
             fresh: dict[str, int] = {}
@@ -981,19 +1060,25 @@ def claim(payload: dict, session: str, call: str, now: float, deadline: float) -
                 name = rel(path)
                 if path in seen:  # the stamps hold what is dirty; a revert leaves them
                     fresh[name] = mtime
-                    if mtime == -1:
-                        at = still_gone[name] = deleted_at(name, at, stamps, gone)
+                    if mtime == -1:  # first seen gone now: no later than this call's own window can end
+                        at = still_gone[name] = deleted_at(name, min(at, end), stamps, gone)
                 if not in_repo(path) or claimed_already(owners.get(name), session, ctime, at):
                     continue
                 if start <= at <= end and not left_by_another_tool(owners.get(name), session, ctime, start):
                     if path in seen:  # a revert is queued as the caller's too, but leaves its file clean: no claim to keep
-                        owners[name] = {"session": session, "ctime": ctime, "base": None, "at": now}
+                        note_claim(owners, name, session, ctime, now, None)
                     # From the window's start: a command that wrote the file early and again late changed it early.
                     queued.append(Entry(session, mine, name, start, at, os.getpid(), deadline))
                 elif stamps.get(name) != mtime and (path in seen or name in stamps):  # no other call queued it yet
                     if name in landed and owners.get(name, {}).get("at") == landed[name]:
                         del owners[name]  # the claim git judged, and it has landed: this change is someone else's
-                    queued.append(Entry(last_owner(owners, name), NOBODY, name, at, at))
+                    owner = last_owner(owners, name)
+                    queued.append(Entry(owner, NOBODY, name, at, at))
+                    if owner != NOBODY:  # and maybe nobody's: told once, never pinned on that session
+                        queued.append(Entry(NOBODY, NOBODY, name, at, at))
+            # What another call stamped while git ran: a change our look may predate.
+            fresh.update({n: v for n, v in stamps.items() if n not in fresh and stamped.get(n) != v})
+            still_gone.update({n: v for n, v in gone.items() if n not in still_gone and gone_before.get(n) != v})
             write_json(STAMPS, fresh)
             write_json(GONE, still_gone)
         elif not bash:
@@ -1002,7 +1087,7 @@ def claim(payload: dict, session: str, call: str, now: float, deadline: float) -
             ready = time.time()  # AUTHORED now holds what this call vouched for
             for path in changed:
                 _, ctime, at = file_times(path, now)
-                owners[rel(path)] = {"session": session, "ctime": ctime, "base": bases.get(rel(path)), "at": now}
+                note_claim(owners, rel(path), session, ctime, now, bases.get(rel(path), (None, False)))
                 queued.append(Entry(session, mine, rel(path), at, ready, os.getpid(), deadline))
         write_json(OWNERS, owners)
         enqueue(queued)
@@ -1017,7 +1102,8 @@ def claim(payload: dict, session: str, call: str, now: float, deadline: float) -
 
 @dataclass
 class Record:
-    """One check's verdict on one batch."""
+    """One check's verdict on one batch. Only what a late change that joins it needs is kept on disk; the
+    rest serves the pass that made it."""
 
     title: str  # the report block's first line
     check: str  # `tests <project>`, also its namespace, or which purity scan
@@ -1025,6 +1111,9 @@ class Record:
     authoritative: bool  # it ran completely enough that what it does not report is green
     lines: list[str]  # what the report shows; purity lines are filtered per session
     scope: frozenset[str] = field(default_factory=frozenset)  # the namespaces it speaks for
+    counts: dict[str, int] = field(default_factory=dict)  # signature -> how many of it (1 when absent)
+    hides: frozenset[str] = frozenset()  # its signatures that name no single failure: others can stand behind them
+    unloaded: frozenset[str] | None = None  # complete but for these test files, which failed to load
 
     def to_json(self) -> dict:
         return {
@@ -1033,7 +1122,6 @@ class Record:
             "reds": self.reds,
             "authoritative": self.authoritative,  # a late change that joins this verdict is a suspect when it is not
             "lines": self.lines,
-            "scope": sorted(self.scope),
         }
 
     @staticmethod
@@ -1044,31 +1132,45 @@ class Record:
         if not (isinstance(title, str) and isinstance(check, str) and isinstance(reds, dict) and isinstance(lines, list)):
             return None
         kept = {s: a for s, a in reds.items() if isinstance(s, str) and (a is None or isinstance(a, str))}
-        scope = data.get("scope")
         return Record(
             title,
             check,
             kept,
             data.get("authoritative") is True,  # absent or odd: it vouched for nothing, toward keeping suspects
             [line for line in lines if isinstance(line, str)],
-            frozenset(s for s in scope if isinstance(s, str)) if isinstance(scope, list) else frozenset(),
         )
+
+    def speaks_for(self, signature: str) -> bool:
+        """It ran what `signature` names: all of it when complete, else every test file but those that failed to load."""
+        if self.authoritative:
+            return namespace(signature) in self.scope
+        file = file_of(signature)
+        return self.unloaded is not None and namespace(signature) in self.scope and file is not None and file not in self.unloaded
+
+    def only(self, files: set[str]) -> Record:
+        """This purity verdict as it speaks of `files` alone: their signatures, and their hit lines."""
+        reds: dict[str, str | None] = {s: a for s, a in self.reds.items() if a in files}
+        lines = [line for line in self.lines if (hit := purity_hit(line)) is not None and hit[0] in files]
+        return Record(self.title, self.check, reds, self.authoritative, lines)
 
 
 def namespace(signature: str) -> str:
     return signature.split(" | ", 1)[0]
 
 
-PURITY_HAZARD = re.compile(r"^HAZARD (?P<path>.+?)(?::\d+)?: (?P<what>[^:]+?)(?:: |:?$)")
-PURITY_RATCHET = re.compile(r"^RATCHET (?P<path>.+?): \d+ private word")
+PURITY_HAZARD = re.compile(r"^HAZARD (?P<path>.+?)(?::\d+)?: (?P<what>[^:]+?)(?::(?: (?P<text>.*))?)?$")
+PURITY_RATCHET = re.compile(r"^RATCHET (?P<path>.+?): (?P<count>\d+) private word")
 
 
-def purity_hit(line: str) -> tuple[str, str] | None:
-    """(file, rule) of a purity report line (`tests/test_purity.py` prints a Hit as `path[:line]: rule: text`)."""
+def purity_hit(line: str) -> tuple[str, str, int] | None:
+    """(file, what, how many) of a purity report line. `tests/test_purity.py` prints a Hit as
+    `path[:line]: rule: text`, its secret masked: one file can hold two hits of a rule, so a hit is its
+    rule and a digest of that masked line, which moves with no line number. Private words come as a count."""
     if found := PURITY_HAZARD.match(line):
-        return found["path"], found["what"]
+        text = found["text"] or ""
+        return found["path"], f"{found['what']} | {hashlib.sha256(text.encode()).hexdigest()[:8]}", 1
     if found := PURITY_RATCHET.match(line):
-        return found["path"], "private words"
+        return found["path"], "private words", int(found["count"])
     return None
 
 
@@ -1077,16 +1179,23 @@ def catch_all(ran: Ran) -> str:
 
 
 def purity_record(ran: Ran, title: str, check: str, scope: frozenset[str]) -> Record:
-    """`purity <file> | <rule>` per hit; a failure that names no file is `purity | exit N`."""
+    """`purity <file> | <rule> | <digest>` per hit, `purity <file> | private words` per file with too many;
+    a failure that names no file is `purity | exit N`."""
     lines = ran.lines()
     reds: dict[str, str | None] = {}
+    counts: dict[str, int] = {}
     for line in lines:
         if hit := purity_hit(line):
-            reds[f"purity {hit[0]} | {hit[1]}"] = hit[0]
+            signature = f"purity {hit[0]} | {hit[1]}"
+            reds[signature] = hit[0]
+            counts[signature] = counts.get(signature, 0) + hit[2]
     complete = ran.rc == 0 or (ran.rc == 1 and bool(reds))
+    hides: frozenset[str] = frozenset()
     if not ran.ok and not complete:
-        reds[f"purity | {catch_all(ran)}"] = None
-    return Record(title, check, reds, complete, lines, scope)
+        hidden = f"purity | {catch_all(ran)}"
+        reds[hidden] = None
+        hides = frozenset({hidden})
+    return Record(title, check, reds, complete, lines, scope, counts, hides)
 
 
 PYTEST_FAILED = re.compile(r"^(?:FAILED|ERROR) (?P<id>\S.*?)(?: - .*)?$")
@@ -1122,18 +1231,33 @@ def whole_file(name: str) -> bool:
     return "::" not in name and any(fnmatch.fnmatch(base, p) for p in patterns)  # pytest `ERROR f.py`, TAP
 
 
+def file_of(signature: str) -> str | None:
+    """The test file a tests signature names (`file > test`, `file::test`, or a whole file); None when none."""
+    rest = signature.split(" | ", 1)[1] if " | " in signature else ""
+    for mark in (" > ", "::"):
+        if mark in rest:
+            return rest.split(mark, 1)[0]
+    return rest if rest and whole_file(rest) else None
+
+
 def tests_record(project: ProjectT, ran: Ran) -> Record:
-    """`tests <project> | <test>` per failed test; a failure that names none is `tests <project> | exit N`."""
+    """`tests <project> | <test>` per failed test; a failure that names none is `tests <project> | exit N`.
+    A test file that failed to load hides its own tests, and every other file still speaks for its own."""
     lines = ran.lines()
     where = f"tests {label(project)}"
     names = [] if ran.ok or ran.timed_out else list(dict.fromkeys(failed_tests(lines)))
     interrupted = any(line.startswith("!") and "Interrupted:" in line for line in lines)
     reds: dict[str, str | None] = {f"{where} | {name}": None for name in names}
-    complete = ran.rc == 0 or (bool(names) and not interrupted and not any(map(whole_file, names)))
+    hides = {f"{where} | {name}" for name in names if whole_file(name)}
+    complete = ran.rc == 0 or (bool(names) and not interrupted and not hides)
+    unloaded = None
+    if hides and not interrupted:
+        unloaded = frozenset(file for file in map(file_of, hides) if file is not None)
     if not ran.ok and not names:
         reds[f"{where} | {catch_all(ran)}"] = None
+        hides.add(f"{where} | {catch_all(ran)}")
     title = f"{project.kind} tests ({rel(project.path)}) FAILED"
-    return Record(title, where, reds, complete, lines[-TAIL_LINES:], frozenset({where}))
+    return Record(title, where, reds, complete, lines[-TAIL_LINES:], frozenset({where}), {}, frozenset(hides), unloaded)
 
 
 def skipped_record(project: ProjectT) -> Record:
@@ -1152,11 +1276,17 @@ class Verdict:
     records: list[Record]
     began: float  # the pass began reading the tree: a change before this is in what it saw...
     read: float  # ...and one after it finished reading is not
-    covers: list[str] | None  # the files it read; None: its whole project, or the whole tree
+    covers: dict[str, float] | None  # the files it read, each with when its scan began; None: a whole project, or tree
     seconds: float = 0.0
 
     def saw(self, entry: Entry) -> bool:
-        return entry.ready <= self.began and (self.covers is None or entry.path in self.covers)
+        if self.covers is None:
+            return entry.ready <= self.began
+        return entry.path in self.covers and entry.ready <= self.covers[entry.path]
+
+    def joined(self, entries: list[Entry]) -> list[Record]:
+        """The records late changes join: a scan of files speaks of theirs alone."""
+        return self.records if self.covers is None else [r.only({e.path for e in entries}) for r in self.records]
 
     def to_json(self) -> dict:
         return {"began": self.began, "read": self.read, "covers": self.covers, "records": [r.to_json() for r in self.records]}
@@ -1166,9 +1296,36 @@ class Verdict:
         began, read, covers, records = data.get("began"), data.get("read"), data.get("covers"), data.get("records")
         if not (isinstance(began, (int, float)) and isinstance(read, (int, float)) and isinstance(records, list)):
             return None
-        if covers is not None and not (isinstance(covers, list) and all(isinstance(c, str) for c in covers)):
+        if covers is not None and not (
+            isinstance(covers, dict) and all(isinstance(t, (int, float)) and not isinstance(t, bool) for t in covers.values())
+        ):
             return None
         return Verdict([r for r in map(Record.parse, records) if r is not None], float(began), float(read), covers)
+
+
+def remembered(last: Verdict | None, verdict: Verdict) -> Verdict:
+    """What a late change joins from now on. A runner that reads a whole project or the tree keeps its last
+    pass. The changed files' scan keeps each file's latest complete scan, so a late claim of a file any
+    recent pass read joins that pass instead of scanning it again (I3); a scan that crashed adds nothing."""
+    if verdict.covers is None:
+        return verdict
+    cutoff = time.time() - PRUNE_S
+    old = last if last is not None and last.covers is not None else None
+    covers = {f: t for f, t in (old.covers.items() if old and old.covers else []) if t > cutoff}
+    parts = [old.records[0].only(set(covers))] if old and old.records else []
+    if verdict.records and verdict.records[0].authoritative:
+        covers.update(verdict.covers)
+        parts = [part.only(set(covers) - set(verdict.covers)) for part in parts] + [verdict.records[0].only(set(verdict.covers))]
+    if not parts:
+        return Verdict([], verdict.began, verdict.read, covers)
+    merged = Record(
+        parts[-1].title,
+        parts[-1].check,
+        {s: a for p in parts for s, a in p.reds.items()},
+        True,
+        [x for p in parts for x in p.lines],
+    )
+    return Verdict([merged], verdict.began, verdict.read, covers)
 
 
 def run_pass(runner: Runner, batch: list[Entry], deadline: float) -> Verdict | None:
@@ -1185,7 +1342,7 @@ def run_pass(runner: Runner, batch: list[Entry], deadline: float) -> Verdict | N
             return Verdict([skipped_record(runner.project)], began, read, None, time.time() - began)
         records = [tests_record(runner.project, ran)]  # a green record too: it is what clears its namespace
     elif runner.check == "files" and not files:
-        return Verdict([], began, began, [])
+        return Verdict([], began, began, {})
     else:
         root = runner.check == "root"
         shipped = git_paths("ls-files", "-z", "--cached", "--others", "--exclude-standard") if root else files
@@ -1196,7 +1353,7 @@ def run_pass(runner: Runner, batch: list[Entry], deadline: float) -> Verdict | N
         records = [purity_record(ran, title, "purity (root)" if root else "purity --files", scope)]
     if ran.timed_out and timeout < RUN_TIMEOUT_S:
         return None
-    return Verdict(records, began, read, None if runner.check != "files" else files, time.time() - began)
+    return Verdict(records, began, read, None if runner.check != "files" else dict.fromkeys(files, began), time.time() - began)
 
 
 def changes(entries: list[Entry], about: str | None) -> list[tuple[str, float, float]]:
@@ -1205,8 +1362,25 @@ def changes(entries: list[Entry], about: str | None) -> list[tuple[str, float, f
     return [(e.owner, e.t, e.ready) for e in entries if about is None or e.path == about]
 
 
+def made(entries: list[Entry], about: str | None) -> set[str]:
+    """The sessions whose own calls claimed a change a signature is about. One queued under a session only as
+    its file's last claimant (a change made outside every window) is a guess: it can make that session an
+    owner, and so tell it once, but never tells an owner again."""
+    return {e.owner for e in entries if e.call != NOBODY and (about is None or e.path == about)}
+
+
 def suspect_namespace(record: Record, entry: Entry) -> str:
     return record.check if record.check.startswith("tests ") else f"purity {entry.path}"
+
+
+def vouched_for(ledger: dict, signature: str) -> float | None:
+    """When the latest run that saw what `signature` names report began: a complete one, or one whose only
+    gap was other test files that failed to load. None: no such run yet."""
+    ns = namespace(signature)
+    full, partial, file = ledger["vouched"].get(ns), ledger["partial"].get(ns), file_of(signature)
+    if partial is not None and file is not None and file not in partial["unloaded"]:
+        return max(full or 0.0, partial["began"])
+    return full
 
 
 def judge(ledger: dict, record: Record, entries: list[Entry], began: float, read: float, create: bool) -> dict[str, list[str]]:
@@ -1218,32 +1392,45 @@ def judge(ledger: dict, record: Record, entries: list[Entry], began: float, read
     for signature, about in record.reds.items():
         found = changes(entries, about)
         known = reds.get(signature)
+        held = ledger["suspects"].get(namespace(signature), {})
+        candidates = found + [(owner, s["ready"], s["ready"]) for owner, s in held.items()]
+        count = record.counts.get(signature, 1)
         if known is None:
             if not create:
                 continue
-            ns = namespace(signature)
-            after = ledger["vouched"].get(ns, 0.0)
-            held = ledger["suspects"].get(ns, {})
-            candidates = found + [(owner, s["ready"], s["ready"]) for owner, s in held.items()]
+            vouched = vouched_for(ledger, signature)
+            after = vouched or 0.0
             owners = set() if seeding else {o for o, _, ready in candidates if ready > after}
-            if ns.startswith("tests ") and ns not in ledger["vouched"]:
-                owners.add(NOBODY)  # no complete run ever saw it green: it may be older than every change here
-            reds[signature] = {"owners": sorted(owners or {NOBODY}), "first_red_end": read, "last_red": read, "after": after}
+            if signature.startswith("tests ") and vouched is None:
+                owners.add(NOBODY)  # no run ever saw it green: it may be older than every change here
+            reds[signature] = {
+                "owners": sorted(owners or {NOBODY}),
+                "first_red_end": read,
+                "last_red": read,
+                "after": after,
+                "count": count,
+            }
             wake = owners
         else:
             had = set(known["owners"])
-            plausible = {o for o, t, ready in found if o != NOBODY and t <= known["first_red_end"] and ready > known["after"]}
-            known["owners"] = sorted(had | plausible)
+            plausible = {o for o, t, ready in found if t <= known["first_red_end"] and ready > known["after"]}
             if create:
+                if count > known.get("count", 1):  # one more of it: this batch's changes there made it
+                    plausible |= {o for o, _, ready in found if ready > known["after"]}
+                elif signature in record.hides and had & made(entries, about):
+                    # An owner's change left it red: what stands may be a later change's, hidden behind it.
+                    if hidden := {o for o, _, ready in candidates if ready > known["after"]} - had:
+                        plausible |= hidden | {NOBODY}
                 known["last_red"] = max(known["last_red"], read)
-            # Told on becoming an owner; told again on a later change only while no unowned change may have done it.
-            wake = (plausible - had) | (set() if NOBODY in had else {o for o, _, _ in found} & had)
+                known["count"] = count
+            known["owners"] = sorted(had | plausible)
+            # Told on becoming an owner; told again on a later change only while it is the one plausible culprit.
+            again = made(entries, about) & had if NOBODY not in had and len(had) == 1 else set()
+            wake = (plausible - had) | again
         for session in sorted(wake - {NOBODY}):
             woken.setdefault(session, []).append(signature)
-    if create and record.authoritative:
-        for signature in [
-            s for s, e in reds.items() if s not in record.reds and namespace(s) in record.scope and e["last_red"] < began
-        ]:
+    if create:
+        for signature in [s for s, e in reds.items() if s not in record.reds and record.speaks_for(s) and e["last_red"] < began]:
             del reds[signature]
     return woken
 
@@ -1267,16 +1454,23 @@ def vouch(ledger: dict, record: Record, entries: list[Entry], began: float, crea
             return
         if record.check.startswith("tests "):
             ledger["vouched"][record.check] = began
-        for spent in [ns for ns in suspects if ns in record.scope]:
-            del suspects[spent]
+            ledger["partial"].pop(record.check, None)
+        for ns in [ns for ns in suspects if ns in record.scope]:
+            # Only what it could see: a change ready after it began reading (a pull mid-pass) is not in its copy.
+            if unseen := {owner: s for owner, s in suspects[ns].items() if s["ready"] > began}:
+                suspects[ns] = unseen
+            else:
+                del suspects[ns]
         return
+    if create and record.unloaded is not None:  # it saw every test file but these: each other one vouches from here
+        ledger["partial"][record.check] = {"began": began, "unloaded": sorted(record.unloaded)}
     for entry in entries:
         suspect(ledger, suspect_namespace(record, entry), entry.owner, entry.ready, entry.path)
 
 
 def new_ledger() -> dict:
     """An empty red ledger. A batch of changes all made before `created` seeds it (the WHO GETS WOKEN note)."""
-    return {"created": time.time(), "reds": {}, "vouched": {}, "suspects": {}}
+    return {"created": time.time(), "reds": {}, "vouched": {}, "partial": {}, "suspects": {}}
 
 
 def number(value: object, default: float) -> float:
@@ -1288,7 +1482,7 @@ def load_ledger() -> dict:
     if not LEDGER.exists():
         return new_ledger()
     data = read_json(LEDGER)
-    ledger: dict = {"created": number(data.get("created"), 0.0), "reds": {}, "vouched": {}, "suspects": {}}
+    ledger: dict = {"created": number(data.get("created"), 0.0), "reds": {}, "vouched": {}, "partial": {}, "suspects": {}}
     raw = data.get("reds")
     for signature, entry in (raw if isinstance(raw, dict) else {}).items():
         if not isinstance(entry, dict) or not isinstance(entry.get("owners"), list):
@@ -1300,11 +1494,17 @@ def load_ledger() -> dict:
                 "first_red_end": float(first),
                 "last_red": number(entry.get("last_red"), float(first)),
                 "after": number(entry.get("after"), 0.0),
+                "count": int(number(entry.get("count"), 1.0)),
             }
     vouched = data.get("vouched")
     for ns, began in (vouched if isinstance(vouched, dict) else {}).items():
         if isinstance(began, (int, float)):
             ledger["vouched"][ns] = float(began)
+    partial = data.get("partial")
+    for ns, seen in (partial if isinstance(partial, dict) else {}).items():
+        unloaded = seen.get("unloaded") if isinstance(seen, dict) else None
+        if isinstance(seen, dict) and isinstance(seen.get("began"), (int, float)) and isinstance(unloaded, list):
+            ledger["partial"][ns] = {"began": float(seen["began"]), "unloaded": [f for f in unloaded if isinstance(f, str)]}
     cutoff = time.time() - PRUNE_S
     suspects = data.get("suspects")
     for ns, held in (suspects if isinstance(suspects, dict) else {}).items():
@@ -1405,7 +1605,7 @@ def drain(name: str, call: str, deadline: float) -> None:
                 fresh = [e for e in entries if not (last and last.saw(e))]
                 if last and seen:
                     hold = frozenset(e.call for e in fresh)  # a call is done once ALL its changes here are judged
-                    settle_batch(name, last.records, seen, last.began, last.read, create=False, hold=hold)
+                    settle_batch(name, last.joined(seen), seen, last.began, last.read, create=False, hold=hold)
                 write_entries(inflight, fresh)
             if not fresh and not rerun:
                 return
@@ -1425,7 +1625,7 @@ def drain(name: str, call: str, deadline: float) -> None:
                     note_duration(name, time.time() - started, at_least=True)  # a floor: the next runner allows more
                     return  # cut short by the deadline: stays in flight for the next runner
                 settle_batch(name, verdict.records, fresh, verdict.began, verdict.read, create=True)
-                write_json(VERDICTS / f"{name}.json", verdict.to_json())
+                write_json(VERDICTS / f"{name}.json", remembered(last, verdict).to_json())
                 note_duration(name, verdict.seconds, at_least=False)
                 inflight.unlink(missing_ok=True)
                 prune()
@@ -1455,12 +1655,16 @@ def settle(waiting: set[str], call: str, deadline: float) -> None:
 
 def deliver(session: str) -> int:
     """Print and clear this session's mail; exit 2 wakes it. No mail, exit 0. A check's block shows once:
-    one that a later block of the same check repeats (a fold and a pass can both report it) is dropped."""
+    one that a later block of the same check repeats (a fold and a pass can both report it) is dropped,
+    and so is one whose every failure a complete run has seen fixed since (it waited for this call)."""
     if session == NOBODY:
         return 0
+    posted = sorted((MAIL / session).glob("*.json"))  # by name: oldest first
+    # Listed before the ledger is read: a report is posted after its ledger write, so this read sees its reds.
+    standing = set(load_ledger()["reds"]) if LEDGER.exists() else None
     files: list[str] = []
     blocks: list[tuple[str, set[str], str]] = []
-    for path in sorted((MAIL / session).glob("*.json")):  # by name: oldest first
+    for path in posted:
         taken = path.with_name(f".{path.stem}.{os.getpid()}.taken")
         try:
             os.rename(path, taken)  # one call of the session takes each report, once
@@ -1469,11 +1673,15 @@ def deliver(session: str) -> int:
         mail = read_json(taken)
         taken.unlink(missing_ok=True)
         named, written = mail.get("files"), mail.get("blocks")
-        files += [f for f in named if isinstance(f, str)] if isinstance(named, list) else []
+        kept = False
         for block in written if isinstance(written, list) else []:
             title, mine, text = (block.get(k) for k in ("title", "mine", "text")) if isinstance(block, dict) else (None,) * 3
             if isinstance(title, str) and isinstance(mine, list) and isinstance(text, str):
-                blocks.append((title, {m for m in mine if isinstance(m, str)}, text))
+                signatures = {m for m in mine if isinstance(m, str)}
+                if standing is None or signatures & standing:
+                    blocks.append((title, signatures, text))
+                    kept = True
+        files += [f for f in named if isinstance(f, str)] if kept and isinstance(named, list) else []
     shown = [
         text for i, (title, mine, text) in enumerate(blocks) if not any(t == title and mine <= m for t, m, _ in blocks[i + 1 :])
     ]

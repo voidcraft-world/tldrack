@@ -428,10 +428,22 @@ def test_a_configured_fsmonitor_never_runs_from_the_hook(root):
 
 # ---------------------------------------------------------------- who gets woken
 
-# A home path, built at run time so this file never holds one: the purity scan of the fixture refuses it.
+# Home paths, built at run time so this file never holds one: the purity scan of the fixture refuses it.
 HAZARD = "/" + "Users" + "/zed/notes\n"
+OTHER_HAZARD = "/" + "Users" + "/kim/plans\n"
 FILES = ("a.js", "b.js", "c.js", "d.js", "e.js")
 UI = "node--ui"  # the ui project's runner: its lock and queue name
+
+
+def hazard(name: str) -> str:
+    """A home-path hit's signature in `name`, up to the digest of its masked line (`purity <file> | <rule> | <digest>`)."""
+    return f"purity {name} | a home directory path | "
+
+
+def only_hazard(done: subprocess.CompletedProcess[str], name: str) -> bool:
+    """The call was woken for exactly one home-path hit, in `name`."""
+    found = yours(done)
+    return found.startswith(f"yours: {hazard(name)}") and len(found) == len(f"yours: {hazard(name)}") + 8
 
 
 def each_file_test() -> str:
@@ -548,11 +560,11 @@ def test_a_bash_call_claims_only_its_own_window(root):
     time.sleep(2.2)
     (root / "ui" / "a.js").write_text(HAZARD)  # B's own command
     mine = run_hook(root, as_session(bash(), "B", duration_ms=300))
-    assert mine.returncode == 2 and yours(mine) == "yours: purity ui/a.js | a home directory path"  # (d)
+    assert mine.returncode == 2 and only_hazard(mine, "ui/a.js")  # (d)
     assert "ui/b.js" not in mine.stderr and "ui/e.js" not in mine.stderr
     last_owner = next_call(root, "C")
-    assert last_owner.returncode == 2 and yours(last_owner) == "yours: purity ui/b.js | a home directory path"
-    unowned = red(root).split("purity ui/e.js | a home directory path\n", 1)[1].splitlines()[0]
+    assert last_owner.returncode == 2 and only_hazard(last_owner, "ui/b.js")
+    unowned = red(root).split(hazard("ui/e.js"), 1)[1].splitlines()[1]
     assert "owners: - (unowned)" in unowned  # (e) recorded, and nobody woken for it
     assert next_call(root, "B").returncode == 0 and next_call(root, "W").returncode == 0
 
@@ -608,7 +620,14 @@ def test_a_waiter_takes_over_when_the_runner_lock_frees(root, monkeypatch):
     assert not lock.exists()
 
 
-@pytest.mark.parametrize("holder", ["a dead pid", "a live stranger's pid"])
+@pytest.mark.parametrize(
+    "holder",
+    [
+        "a dead pid",  # the previous version's pid file, its runner killed at the hook timeout, mid-pass
+        "a live stranger's pid",  # the previous version's, and a reboot gave the dead runner's pid away
+        "a dead runner of this version",  # its flock went with it, whatever process its pid names now
+    ],
+)
 def test_a_dead_runners_batch_runs_again(root, monkeypatch, holder):
     add_rack_project(root)
     warm(root)
@@ -617,11 +636,14 @@ def test_a_dead_runners_batch_runs_again(root, monkeypatch, holder):
     if holder == "a dead pid":
         gone = subprocess.Popen(["true"])
         gone.wait()
-        lock.write_text(str(gone.pid))  # killed at the hook timeout, mid-pass
-    else:
-        lock.write_text(str(os.getpid()))  # alive, and no runner: a reboot gave the dead runner's pid away
+        lock.write_text(str(gone.pid))
+    elif holder == "a live stranger's pid":
+        lock.write_text(str(os.getpid()))
         old = time.time() - hook.LOCK_STALE_S - 1
-        os.utime(lock, (old, old))  # older than any hook lives
+        os.utime(lock, (old, old))  # older than any hook of that version lives
+    else:
+        lock.write_text(str(os.getpid()))  # alive, and fresh: only the free flock says its runner is gone
+        (hook.STATE / f"{UI}.flock").write_text(str(os.getpid()))
     (root / "ui" / "a.js").write_text("BROKEN\n")
     now = time.time()
     hook.write_entries(hook.INFLIGHT / f"{UI}.jsonl", [hook.Entry("A", "toolu_gone", "ui/a.js", now, now)])
@@ -683,11 +705,19 @@ def test_signatures_name_the_failure_never_the_run(root, monkeypatch):
     whole = ["b.test.js > b.test.js", "tests/test_a.py", "a.test.js"]  # node at load, pytest at collection, TAP
     assert all(map(hook.whole_file, whole))
     assert not any(map(hook.whole_file, ["tests/unit/a.test.ts > fails here", "tests/test_a.py::test_bad", "fails here"]))
-    hit = "HAZARD ui/a.js:3: a home directory path: ‹masked›"
+    hit = "HAZARD ui/a.js:3: a home directory path: x ‹masked›/notes"
+    moved = "HAZARD ui/a.js:9: a home directory path: x ‹masked›/notes"  # the same line, further down: the same hit
+    other = "HAZARD ui/a.js:4: a home directory path: y ‹masked›/plans"  # a second one in that file: its own
     words = "RATCHET ui/b.js: 2 private word(s), baseline 0"
-    record = hook.purity_record(hook.Ran(1, f"{hit}\n{words}\npurity: 1 hazards"), "t", "purity --files", frozenset())
+    record = hook.purity_record(hook.Ran(1, f"{hit}\n{other}\n{words}\npurity: 2 hazards"), "t", "purity --files", frozenset())
     assert record.authoritative
-    assert record.reds == {"purity ui/a.js | a home directory path": "ui/a.js", "purity ui/b.js | private words": "ui/b.js"}
+    hits = sorted(s for s in record.reds if s.startswith("purity ui/a.js | a home directory path | "))
+    assert len(hits) == 2 and all(len(s) == len("purity ui/a.js | a home directory path | ") + 8 for s in hits)
+    assert {s: a for s, a in record.reds.items() if s not in hits} == {"purity ui/b.js | private words": "ui/b.js"}
+    assert record.counts["purity ui/b.js | private words"] == 2, "a count, so one more word is a new one"
+    one = hook.purity_record(hook.Ran(1, hit), "t", "purity --files", frozenset())
+    again = hook.purity_record(hook.Ran(1, f"{moved}\n{moved}"), "t", "purity --files", frozenset())
+    assert list(again.reds) == list(one.reds) and again.counts[next(iter(one.reds))] == 2
     crashed = hook.purity_record(hook.Ran(1, "Traceback (most recent call last):"), "t", "purity --files", frozenset())
     assert not crashed.authoritative and list(crashed.reds) == ["purity | exit 1"]
 
@@ -697,16 +727,18 @@ def bash_since(started: float, session: str) -> dict:
     return as_session(bash(), session, duration_ms=round((time.time() - started + 0.3) * 1000))
 
 
-def test_a_write_that_kept_a_shell_change_leaves_the_command_its_claim(root):
+@pytest.mark.parametrize("command", ["read-only", "wrote the file before the Write"])
+def test_a_write_sets_every_byte_so_a_command_it_overlapped_is_not_its_author(root, command):
     add_rack_project(root)
     warm(root)
+    time.sleep(1.5)  # nothing before this changes inside S's window
     started = time.time()
-    (root / "ui" / "a.js").write_text("BROKEN\n")  # early in C's long command
-    kept = (root / "ui" / "a.js").read_text() + "// A's comment\n"  # A read the file and Writes it back whole
-    assert run_hook(root, as_session(write(root, "ui/a.js", kept), "A")).returncode == 2
-    command = run_hook(root, bash_since(started, "C"))
-    assert command.returncode == 2 and red_test("a.js") in yours(command)  # a Write says nothing of what it kept
-    assert "owners: A, C;" in red(root)
+    if command != "read-only":
+        (root / "ui" / "a.js").write_text("BROKEN\n")  # early in S's command; C reads it and Writes it back whole
+    assert run_hook(root, as_session(write(root, "ui/a.js", "BROKEN\n// C's comment\n"), "C")).returncode == 2
+    reader = run_hook(root, bash_since(started, "S"))  # S's command (a test run, `gh pr checks`) ran across C's Write
+    assert reader.returncode == 0, reader.stderr
+    assert "owners: C;" in red(root)  # C chose every byte, BROKEN included, and C hears
 
 
 def test_a_command_that_wrote_again_after_its_break_turned_red_still_owns_it(root):
@@ -733,7 +765,7 @@ def test_a_failure_a_load_error_hid_reaches_its_culprit_once_revealed(root):
     assert revealed.returncode == 2 and red_test("b.js") in yours(revealed)
     assert "After editing ui/b.js:" in revealed.stderr
     again = session_edit(root, "ui/c.js", "y\n", "B")
-    assert again.returncode == 2 and red_test("b.js") in yours(again)  # (b) and now it is B's like any other
+    assert again.returncode == 0, again.stderr  # A co-owns it: told once to each, never pinned on B
     listed = red(root)
     assert "owners: A, B;" in listed and "each.test.js > each.test.js" not in listed and "suspects" not in listed
 
@@ -768,7 +800,7 @@ def test_a_claim_that_ended_names_no_owner_for_a_later_change(root, monkeypatch,
     assert "owners: - (unowned)" in red(root)
     hook = load_hook(root, monkeypatch)
     old = {"ui/b.js": {"session": "A", "ctime": 1, "base": None, "at": time.time() - hook.PRUNE_S - 1}}
-    assert hook.current_claims(old, None, time.time()) == {}, "and a claim older than PRUNE_S names nobody either"
+    assert hook.current_claims(old, None, time.time(), time.time()) == {}, "and a claim older than PRUNE_S names nobody either"
 
 
 def test_an_old_change_git_brings_back_owns_nothing_new(root):
@@ -832,12 +864,12 @@ def test_a_slower_scan_never_clears_what_a_faster_one_found_after_it_read(root, 
     verdict = hook.run_pass(hook.ROOT_SCAN, batch, time.time() + 120)  # the whole tree, read while it was clean
     assert verdict is not None and verdict.records[0].authoritative and not verdict.records[0].reds
     found = session_edit(root, "ui/a.js", HAZARD, "C")
-    assert found.returncode == 2 and yours(found) == "yours: purity ui/a.js | a home directory path"
+    assert found.returncode == 2 and only_hazard(found, "ui/a.js")
     with hook.state_lock():
         hook.settle_batch(hook.ROOT_SCAN.name, verdict.records, batch, verdict.began, verdict.read, create=True)
-    assert "purity ui/a.js | a home directory path" in red(root)
+    assert hazard("ui/a.js") in red(root)
     again = session_edit(root, "ui/a.js", HAZARD + "more\n", "C")
-    assert again.returncode == 2 and "purity ui/a.js | a home directory path" in yours(again)
+    assert again.returncode == 2 and hazard("ui/a.js") in yours(again)
 
 
 def test_a_deletion_keeps_the_time_it_was_first_seen(root, monkeypatch):
@@ -884,13 +916,26 @@ def test_a_red_no_complete_run_ever_saw_green_is_told_once_and_never_nags(root):
     assert "owners: - (unowned), B;" in red(root)
 
 
+def fast_forward(repo: Path, name: str, content: str) -> None:
+    """A pull of a merged change: a commit made elsewhere that rewrites `name`, then `git merge --ff-only` to it."""
+    index = {**os.environ, "GIT_INDEX_FILE": str(repo.parent / "pulled.index")}
+
+    def plumbing(*args: str, data: str | None = None) -> str:
+        done = subprocess.run(["git", "-C", str(repo), *args], input=data, env=index, check=True, capture_output=True, text=True)
+        return done.stdout.strip()
+
+    plumbing("read-tree", "HEAD")
+    plumbing("update-index", "--cacheinfo", f"100644,{plumbing('hash-object', '-w', '--stdin', data=content)},{name}")
+    merged = plumbing("commit-tree", plumbing("write-tree"), "-p", "HEAD", "-m", "a merged change")
+    git(repo, "merge", "-q", "--ff-only", merged)
+
+
 def test_a_red_a_head_move_brought_is_never_pinned_on_the_next_session(root):
     add_rack_project(root)
     add_rack_project(root, directory="lib")
     warm(root)
     assert session_edit(root, "lib/d.js", "x\n", "W").returncode == 0  # lib has a green run too
-    (root / "lib" / "b.js").write_text("BROKEN\n")
-    commit(root, "a merged change")  # a pull: the tree moves with HEAD, and no hook sees it happen
+    fast_forward(root, "lib/b.js", "BROKEN\n")  # the tree moves with HEAD, and no hook sees it happen
     first = session_edit(root, "lib/c.js", "y\n", "B")
     assert first.returncode == 2 and "tests lib (node) | each.test.js > clean b.js" in yours(first)  # it may be B's
     for content in ("z\n", "w\n"):
@@ -938,6 +983,316 @@ def test_a_late_claim_that_joins_an_incomplete_verdict_stays_a_suspect(root):
     assert run_hook(root, as_session(bash(), "Z", duration_ms=100)).returncode == 0
     revealed = next_call(root, "B")
     assert revealed.returncode == 2 and red_test("b.js") in yours(revealed)
+
+
+def test_a_complete_run_spends_only_the_suspects_it_could_see(root, monkeypatch):
+    hook = load_hook(root, monkeypatch)
+    ns, signature = "tests lib (node)", "tests lib (node) | each.test.js > clean b.js"
+    ledger = {**hook.new_ledger(), "created": 0.0, "vouched": {ns: 10.0}}
+    hook.suspect(ledger, ns, hook.NOBODY, 60.0, "lib/b.js")  # a pull at 60...
+    green = hook.tests_record(hook.Project("node", root / "lib"), hook.Ran(0, "ok"))
+    hook.vouch(ledger, green, [], 50.0, True)  # ...while a pass that began reading at 50 ran: it passed on its copy
+    assert hook.NOBODY in ledger["suspects"][ns], "that pass never saw the pull"
+    pulled = hook.Record("node tests (lib) FAILED", ns, {signature: None}, True, [], frozenset({ns}))
+
+    def change(at: float) -> object:
+        return hook.Entry("B", f"toolu_b{int(at)}", "lib/c.js", at, at)
+
+    assert hook.judge(ledger, pulled, [change(70.0)], 80.0, 90.0, True) == {"B": [signature]}  # it may be B's
+    assert ledger["reds"][signature]["owners"] == ["-", "B"]
+    assert hook.judge(ledger, pulled, [change(100.0)], 110.0, 120.0, True) == {}, "told once, never pinned"
+
+
+@pytest.mark.parametrize("first", ["an Edit", "a command"])
+def test_a_claim_an_overlapping_command_joins_keeps_its_first_claimant_from_a_second_wake(root, monkeypatch, first):
+    add_rack_project(root)
+    warm(root)
+    time.sleep(1.5)  # nothing before this changes inside B's window
+    started = time.time()
+    (root / "ui" / "a.js").write_text("y\n")  # B's long command writes a.js...
+    if first == "an Edit":
+        broke = session_edit(root, "ui/a.js", "BROKEN\n", "A")  # ...and A Edits what it wrote, while it still runs
+    else:
+        (root / "ui" / "a.js").write_text("BROKEN\n")  # ...or A's command, which overlapped B's, wrote it again
+        broke = run_hook(root, bash_since(started, "A"))
+    assert broke.returncode == 2
+    overlapping = run_hook(root, bash_since(started, "B"))
+    assert overlapping.returncode == 2, "A's change may keep what B's command wrote: both are told"
+    diff = run_hook(root, bash_since(started, "A"))  # A's `git diff`, sent in the same message as its change
+    assert diff.returncode == 0, diff.stderr
+    assert json.loads(load_hook(root, monkeypatch).OWNERS.read_text())["ui/a.js"]["session"] == "A", "still its last owner"
+
+
+def test_a_deletion_first_seen_after_a_neighbour_touched_its_directory_stays_its_deleters(root, monkeypatch):
+    add_rack_project(root)
+    warm(root)
+    hook = load_hook(root, monkeypatch)
+    (root / "ui" / "e.js").unlink()  # D's `rm`
+    started = time.time()  # D's hook starts...
+    time.sleep(0.05)
+    (root / "ui" / "scratch.tmp").write_text("x\n")  # ...and a neighbour's save lands beside it before D's hook looks
+    payload = as_session(bash(), "D", duration_ms=300)
+    hook.claim(payload, "D", payload["tool_use_id"], started, started + 60)
+    queued = hook.read_entries(hook.QUEUE / f"{UI}.jsonl")
+    assert [(e.owner, e.call) for e in queued if e.path == "ui/e.js"] == [("D", payload["tool_use_id"])]
+
+
+def test_mail_whose_failure_was_fixed_meanwhile_is_not_delivered(root, monkeypatch, capsys):
+    hook = load_hook(root, monkeypatch)
+    ledger = hook.new_ledger()
+    ledger["reds"][red_test("a.js")] = {"owners": ["A"], "first_red_end": 1.0, "last_red": 1.0, "after": 0.0}
+    hook.write_json(hook.LEDGER, ledger)
+    title = "node tests (ui) FAILED"
+    fixed = {"title": title, "mine": [red_test("b.js")], "text": f"{title}\nb.js, fixed since"}
+    hook.post_mail("A", UI, ["ui/b.js"], [fixed])  # left for A's next call, and b.js went green before it came
+    assert hook.deliver("A") == 0
+    hook.post_mail("A", UI, ["ui/b.js"], [fixed])
+    hook.post_mail("A", "purity-files", ["ui/a.js"], [{"title": "p", "mine": [red_test("a.js")], "text": "a.js, still red"}])
+    assert hook.deliver("A") == 2
+    shown = capsys.readouterr().err
+    assert "still red" in shown and "fixed since" not in shown and shown.startswith("After editing ui/a.js:")
+
+
+def test_a_change_made_outside_every_window_tells_the_files_last_claimant_once(root):
+    add_rack_project(root)
+    warm(root)
+    assert session_edit(root, "ui/b.js", "y\n", "B").returncode == 0  # B claims b.js
+    time.sleep(1.2)
+    (root / "ui" / "b.js").write_text("BROKEN\n")  # later, and no session's: a background job, the operator's editor
+    time.sleep(1.5)
+    assert run_hook(root, as_session(bash(), "E", duration_ms=100)).returncode == 0  # E's `git status` sees it
+    told = next_call(root, "B")
+    assert told.returncode == 2 and red_test("b.js") in yours(told)  # it may be B's: B hears
+    for name in ("c.js", "e.js"):
+        assert session_edit(root, f"ui/{name}", "y\n", "B").returncode == 0, "once: it may be nobody's"
+    assert "owners: - (unowned), B;" in red(root)
+
+
+def test_a_change_queued_under_an_owner_only_as_its_files_last_claimant_never_tells_it_again(root):
+    add_rack_project(root)
+    warm(root)
+    assert session_edit(root, "ui/b.js", "BROKEN\n", "C").returncode == 2  # C broke it, and heard
+    time.sleep(1.2)
+    (root / "ui" / "b.js").write_text("BROKEN\n// saved by the operator's editor\n")  # outside every window
+    time.sleep(1.5)
+    assert run_hook(root, as_session(bash(), "E", duration_ms=100)).returncode == 0
+    assert next_call(root, "C").returncode == 0, "queued under C as b.js's last claimant: a guess, not C's change"
+    again = session_edit(root, "ui/c.js", "y\n", "C")
+    assert again.returncode == 2 and red_test("b.js") in yours(again)  # C's own next change: still its red
+
+
+def test_a_late_claim_of_a_file_an_earlier_scan_read_joins_that_scan(root, monkeypatch):
+    add_rack_project(root)
+    warm(root)
+    time.sleep(1.5)  # nothing before this changes inside E's window
+    started = time.time()
+    (root / "ui" / "a.js").write_text("y\n")  # written while both D's and E's commands ran
+    assert run_hook(root, bash_since(started, "D")).returncode == 0  # D's call scans a.js...
+    assert session_edit(root, "ui/b.js", "y\n", "B").returncode == 0  # ...and B's scans only b.js, after it
+    hook = load_hook(root, monkeypatch)
+    ran: list[str] = []
+    real = hook.run_pass
+    monkeypatch.setattr(
+        hook, "run_pass", lambda runner, batch, deadline: ran.append(runner.name) or real(runner, batch, deadline)
+    )
+    payload = bash_since(started, "E")  # E's command overlapped a.js's write too: it claims it, late
+    now = time.time()
+    waiting = hook.claim(payload, "E", payload["tool_use_id"], now, now + 120)
+    assert waiting == {"purity-files", UI}
+    hook.settle(waiting, payload["tool_use_id"], now + 120)
+    assert ran == [], "both checks already read that a.js: E joins their verdicts"
+    kept = json.loads((hook.VERDICTS / "purity-files.json").read_text())
+    assert {"ui/a.js", "ui/b.js"} <= set(kept["covers"]) and "scope" not in kept["records"][0]
+
+
+def test_a_head_move_is_measured_from_the_latest_look_at_head(root, monkeypatch):
+    add_rack_project(root)
+    warm(root)
+    hook = load_hook(root, monkeypatch)
+    early = time.time()
+    time.sleep(0.2)
+    assert session_edit(root, "ui/a.js", "y\n", "A").returncode == 0
+    late = time.time()
+
+    def call(session: str, started: float) -> None:
+        payload = as_session(edit(root, "../elsewhere.txt"), session)
+        hook.claim(payload, session, payload["tool_use_id"], started, started + 60)
+
+    call("C", late)
+    call("B", early)  # a call that started before A's Edit, and took the state lock after C
+    assert json.loads(hook.HEAD_SEEN.read_text())["at"] == late
+    commit(root, "A's edit lands")
+    call("X", time.time())
+    assert not hook.load_ledger()["suspects"], "a commit of A's own Edit rewrote nothing"
+
+
+def test_a_second_hit_in_a_file_already_red_is_its_own_writers(root):
+    add_rack_project(root)
+    warm(root)
+    assert session_edit(root, "ui/a.js", HAZARD, "A").returncode == 2
+    second = session_edit(root, "ui/a.js", HAZARD + OTHER_HAZARD, "B")  # B writes one more home path there
+    assert second.returncode == 2 and only_hazard(second, "ui/a.js"), "the moment it is written"
+    assert session_edit(root, "ui/a.js", OTHER_HAZARD, "A").returncode == 0, "A took its own out: what is left is B's"
+    copied = session_edit(root, "ui/a.js", OTHER_HAZARD * 2, "D")  # D copies B's line: one more of the same hit
+    assert copied.returncode == 2 and only_hazard(copied, "ui/a.js")
+    assert "owners: B, D;" in red(root)
+
+
+def test_a_second_failure_behind_a_red_that_names_no_test_reaches_its_culprit(root):
+    (root / "lib").mkdir()
+    (root / "lib" / "package.json").write_text(json.dumps({"scripts": {"test": "node check.js"}}))
+    for name in FILES:
+        (root / "lib" / name).write_text("x\n")
+    (root / "lib" / "check.js").write_text(  # a test that exits 1 and names nothing: a crash, a loader, a hang
+        "const fs = require('fs');\n"
+        "const bad = fs.readdirSync(__dirname).some((n) => n.endsWith('.js') && "
+        "fs.readFileSync(__dirname + '/' + n, 'utf8').includes('BRO' + 'KEN'));\n"
+        "process.exitCode = bad ? 1 : 0;\n"
+    )
+    commit(root, "lib")
+    assert session_edit(root, "lib/d.js", "x\n", "W").returncode == 0  # a green run
+    broke = session_edit(root, "lib/a.js", "BROKEN\n", "A")
+    assert broke.returncode == 2 and yours(broke) == "yours: tests lib (node) | exit 1"
+    assert session_edit(root, "lib/b.js", "BROKEN\n", "C").returncode == 0  # hidden behind A's red: nothing to tell yet
+    still = session_edit(root, "lib/a.js", "x\n", "A")
+    assert still.returncode == 2, "A's fix left it red: A hears that"
+    told = next_call(root, "C")
+    assert told.returncode == 2 and yours(told) == "yours: tests lib (node) | exit 1"  # what is left may be C's
+    assert session_edit(root, "lib/c.js", "y\n", "A").returncode == 0, "and nobody is told it twice"
+
+
+def test_a_test_seen_passing_clears_while_another_file_fails_to_load(root):
+    add_rack_project(root, directory="lib")
+    (root / "lib" / "gate.txt").write_text("ok\n")
+    (root / "lib" / "other.test.js").write_text(  # throws at load while gate.txt holds BROKEN; each.test.js still runs
+        "const fs = require('fs'), path = require('path');\n"
+        "if (fs.readFileSync(path.join(__dirname, 'gate.txt'), 'utf8').includes('BROKEN')) throw new Error('gate');\n"
+        "require('node:test')('other', () => {});\n"
+    )
+    commit(root, "a second test file")
+    assert session_edit(root, "lib/d.js", "x\n", "W").returncode == 0  # a green run
+    assert session_edit(root, "lib/a.js", "BROKEN\n", "A").returncode == 2
+    assert session_edit(root, "lib/gate.txt", "BROKEN\n", "X").returncode == 2  # a neighbour's WIP: other.test.js won't load
+    assert session_edit(root, "lib/a.js", "x\n", "A").returncode == 0  # each.test.js ran, and passed
+    again = session_edit(root, "lib/a.js", "BROKEN\n", "C")
+    assert again.returncode == 2 and yours(again) == "yours: tests lib (node) | each.test.js > clean a.js"
+    assert next_call(root, "A").returncode == 0 and next_call(root, "X").returncode == 0, "both changes were seen green"
+
+
+def test_a_bash_call_whose_git_ran_across_an_edit_keeps_that_edits_claim(root, monkeypatch):
+    add_rack_project(root)
+    warm(root)
+    time.sleep(1.5)  # nothing before this changes inside L's window
+    hook = load_hook(root, monkeypatch)
+    real = hook.dirty_files
+    edited: list[float] = []
+
+    def status_then_an_edit() -> object:
+        found = real()
+        edited.append(time.time())
+        assert session_edit(root, "ui/a.js", "BROKEN\n", "A").returncode == 2  # after git looked, before Q's lock
+        return found
+
+    monkeypatch.setattr(hook, "dirty_files", status_then_an_edit)
+    payload = as_session(bash(), "Q", duration_ms=100)
+    now = time.time()
+    hook.claim(payload, "Q", payload["tool_use_id"], now, now + 60)
+    assert json.loads(hook.OWNERS.read_text())["ui/a.js"]["session"] == "A"
+    assert "ui/a.js" in json.loads(hook.STAMPS.read_text())
+    long_command = run_hook(root, bash_since(edited[0], "L"))  # it ran across A's Edit, and wrote nothing
+    assert long_command.returncode == 0, long_command.stderr
+
+
+def test_a_live_runner_keeps_its_lock_however_long_the_wall_clock_says_it_held_it(root, monkeypatch):
+    add_rack_project(root)
+    warm(root)
+    hook = load_hook(root, monkeypatch)
+    assert hook.try_lock(UI)  # this test is the project's runner now
+    try:
+        old = time.time() - hook.LOCK_STALE_S - 60
+        os.utime(hook.STATE / f"{UI}.lock", (old, old))  # the laptop slept mid-pass: the wall clock jumped
+        (root / "ui" / "a.js").write_text("BROKEN\n")
+        now = time.time()
+        hook.write_entries(hook.INFLIGHT / f"{UI}.jsonl", [hook.Entry("A", "toolu_held", "ui/a.js", now, now)])
+        tested = runs(root)
+        assert next_call(root, "B").returncode == 0
+        assert runs(root) == tested, "a live runner's batch stays its own"
+    finally:
+        hook.release(UI)
+    assert next_call(root, "B").returncode == 0 and runs(root) == tested + 1
+
+
+def test_an_unowned_change_co_owns_a_red_however_it_reaches_the_ledger(root, monkeypatch):
+    hook = load_hook(root, monkeypatch)
+    signature = red_test("a.js")
+    record = hook.Record("node tests (ui) FAILED", "tests ui (node)", {signature: None}, True, [], frozenset({"tests ui (node)"}))
+
+    def change(owner: str, at: float) -> object:
+        return hook.Entry(owner, f"toolu_{int(at)}", "ui/a.js", at, at)
+
+    for late in (False, True):
+        ledger = {**hook.new_ledger(), "created": 0.0, "vouched": {"tests ui (node)": 8.0}}
+        if late:  # an editor's save the pass saw, queued after it by a later call
+            hook.judge(ledger, record, [change("A", 10.0)], 50.0, 100.0, True)
+            hook.judge(ledger, record, [change(hook.NOBODY, 20.0)], 50.0, 100.0, False)
+        else:
+            hook.judge(ledger, record, [change("A", 10.0), change(hook.NOBODY, 20.0)], 50.0, 100.0, True)
+        assert ledger["reds"][signature]["owners"] == ["-", "A"], late
+        assert hook.judge(ledger, record, [change("A", 150.0)], 160.0, 200.0, True) == {}, "told once"
+
+
+def test_a_red_two_sessions_co_own_is_told_once_to_each_and_never_pinned_on_one(root, monkeypatch):
+    hook = load_hook(root, monkeypatch)
+    signature = red_test("a.js")
+    record = hook.Record("node tests (ui) FAILED", "tests ui (node)", {signature: None}, True, [], frozenset({"tests ui (node)"}))
+    ledger = {**hook.new_ledger(), "created": 0.0, "vouched": {"tests ui (node)": 8.0}}
+
+    def change(owner: str, name: str, at: float) -> object:
+        return hook.Entry(owner, f"toolu_{owner}{int(at)}", f"ui/{name}", at, at)
+
+    # A broke a.js and B made a harmless edit to b.js in the same batch: the pass cannot tell them apart.
+    assert hook.judge(ledger, record, [change("A", "a.js", 10.0), change("B", "b.js", 12.0)], 50.0, 100.0, True) == {
+        "A": [signature],
+        "B": [signature],
+    }
+    for at in (150.0, 250.0):  # B keeps editing b.js while A's failure stands: told once, so never again
+        assert hook.judge(ledger, record, [change("B", "b.js", at)], at + 10, at + 50, True) == {}
+    assert hook.judge(ledger, record, [change("A", "c.js", 350.0)], 360.0, 400.0, True) == {}
+    assert ledger["reds"][signature]["owners"] == ["A", "B"]
+
+
+def test_a_bystander_whose_command_spanned_a_break_is_told_once(root):
+    add_rack_project(root)
+    warm(root)
+    (root / "ui" / "a.js").write_text("BROKEN\n")  # A's command wrote it; B's read-only command ran across it
+    assert run_hook(root, as_session(bash(), "A", duration_ms=2000)).returncode == 2
+    assert run_hook(root, as_session(bash(), "B", duration_ms=60_000)).returncode == 2  # the accepted ambiguity
+    for content in ("y\n", "z\n"):
+        later = session_edit(root, "ui/b.js", content, "B")
+        assert later.returncode == 0, later.stderr  # and never again while A's failure stands
+    assert "A, B" in red(root)
+
+
+def test_mail_posted_while_a_delivery_reads_the_ledger_is_kept(root, monkeypatch, capsys):
+    hook = load_hook(root, monkeypatch)
+    signature = red_test("a.js")
+    hook.write_json(hook.LEDGER, hook.new_ledger())
+    title = "node tests (ui) FAILED"
+    read = hook.load_ledger
+
+    def a_runner_settles_meanwhile() -> dict:
+        seen = read()
+        ledger = read()  # a runner writes its new red, then mails its owner, right after this read
+        ledger["reds"][signature] = {"owners": ["A"], "first_red_end": 1.0, "last_red": 1.0, "after": 0.0}
+        hook.write_json(hook.LEDGER, ledger)
+        hook.post_mail("A", UI, ["ui/a.js"], [{"title": title, "mine": [signature], "text": f"{title}\na.js"}])
+        return seen
+
+    monkeypatch.setattr(hook, "load_ledger", a_runner_settles_meanwhile)
+    first = hook.deliver("A")
+    monkeypatch.setattr(hook, "load_ledger", read)
+    assert first == 2 or hook.deliver("A") == 2, "the report reaches A, now or on its next call"
+    assert "a.js" in capsys.readouterr().err
 
 
 def test_no_process_a_test_left_outlives_its_run(root):
