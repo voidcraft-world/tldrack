@@ -41,6 +41,8 @@ import {
     OPEN_WORK_WAITING_TITLE,
     STUCK_BADGE,
     TERMINAL_STATUS_FLAGS,
+    answer_read_shown,
+    answer_read_title,
     answer_to_read_shown,
     answer_to_read_title,
     display_state_color_css,
@@ -489,8 +491,15 @@ function dot_title(row: RackRow): string {
     }
     if (row.exited) return row.exited.code === 0 ? 'finished job' : 'failed job';
     if (shows_service_mark(row.session, row.state)) return 'service';
-    if (answer_to_read_shown(row.state, row.work_done, row.dim)) return answer_to_read_title(row.work_done?.p);
-    if (work_done_shown(row.state, row.work_done ? true : null, row.dim)) return work_done_title(row.state, row.work_done?.p);
+    if (answer_to_read_shown(row.state, row.work_done, row.dim)) {
+        return answer_to_read_title(row.work_done?.p, row.work_done?.labelled === true);
+    }
+    if (answer_read_shown(row.state, row.work_done, row.dim)) {
+        return answer_read_title(row.state, row.work_done?.p, row.work_done?.labelled === true);
+    }
+    if (work_done_shown(row.state, row.work_done ? true : null, row.dim)) {
+        return work_done_title(row.state, row.work_done?.p, row.work_done?.labelled === true);
+    }
     const label = state_label(row.state ?? 'unknown');
     return (label === '—' ? 'no status' : label.toLowerCase()) + seen;
 }
@@ -2260,8 +2269,8 @@ onUnmounted(() => {
                             v-if="row.session && shows_open_work(row)"
                             type="button"
                             class="mark__open-work"
-                            :title="open_work_badge_title(row.open_work?.p, row.open_work?.graded)"
-                            :aria-label="open_work_badge_title(row.open_work?.p, row.open_work?.graded)"
+                            :title="open_work_badge_title(row.open_work?.p, row.open_work?.graded, row.open_work?.labelled)"
+                            :aria-label="open_work_badge_title(row.open_work?.p, row.open_work?.graded, row.open_work?.labelled)"
                             :aria-expanded="open_work_menu === row.session"
                             :disabled="frozen"
                             @click.stop="toggle_open_work_menu(row)"

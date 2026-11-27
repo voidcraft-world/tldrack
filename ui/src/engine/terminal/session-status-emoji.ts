@@ -1,6 +1,6 @@
 import {
-    ANSWER_TO_READ_EMOJI, DEAD_SESSION_EMOJI, FRESH_SESSION_EMOJI, STOP_FAILURE_EMOJI, WORK_DONE_EMOJI,
-    answer_to_read_shown, display_state_emoji, fresh_session_shown, stop_failure_phase, stop_failure_shown, work_done_shown,
+    ANSWER_READ_EMOJI, ANSWER_TO_READ_EMOJI, DEAD_SESSION_EMOJI, FRESH_SESSION_EMOJI, STOP_FAILURE_EMOJI, WORK_DONE_EMOJI,
+    answer_read_shown, answer_to_read_shown, display_state_emoji, fresh_session_shown, stop_failure_phase, stop_failure_shown, work_done_shown,
 } from '../../config/terminal-status-flags.ts';
 import { SERVICE_SESSION_EMOJI, shows_service_mark } from './service-sessions.ts';
 import type { RackRow } from './multi-terminal-layout.ts';
@@ -20,6 +20,7 @@ export function session_status_emoji(
     if (fresh_session_shown(row.state, row.fresh, dead)) return FRESH_SESSION_EMOJI;
     if (row.exited || shows_service_mark(row.session, row.state)) return SERVICE_SESSION_EMOJI;
     if (answer_to_read_shown(row.state, row.work_done, dead)) return ANSWER_TO_READ_EMOJI;
+    if (answer_read_shown(row.state, row.work_done, dead)) return ANSWER_READ_EMOJI[row.state];
     if (work_done_shown(row.state, row.work_done ? true : null, dead)) return WORK_DONE_EMOJI[row.state];
     return display_state_emoji(row.state ?? 'unknown');
 }
@@ -27,7 +28,7 @@ export function session_status_emoji(
 const STATUS_EMOJIS = new Set([
     ...(['attention', 'done', 'free', 'background', 'busy', 'unknown'] as const).map(display_state_emoji),
     DEAD_SESSION_EMOJI, FRESH_SESSION_EMOJI, SERVICE_SESSION_EMOJI, ANSWER_TO_READ_EMOJI,
-    ...Object.values(STOP_FAILURE_EMOJI), ...Object.values(WORK_DONE_EMOJI),
+    ...Object.values(STOP_FAILURE_EMOJI), ...Object.values(WORK_DONE_EMOJI), ...Object.values(ANSWER_READ_EMOJI),
 ]);
 
 /** Only status glyphs, never arbitrary relayed label text. */

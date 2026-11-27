@@ -342,3 +342,82 @@ def test_the_door_counts_cards_the_phones_recent_list_can_grade(tree):
     assert door == {"waiting": 4, "min": review_data.DOOR_MIN} and review_data.DOOR_MIN == 5
     operator(tree, rows.state_key(near[0]), stratum="uncertain")
     assert review_data.stats(snap(tree), tree.base)["door"]["waiting"] == 3
+
+
+# -- what a label write tells the agent rack (`review.label_changes`) ------------------------------------------------
+
+
+def told(**fields):
+    return {"surface": SURFACE, "needs": None, **fields}
+
+
+@pytest.fixture
+def deck(tree):
+    tree.path("data/x")  # where the deck writes its answers
+    return tree
+
+
+def test_an_answer_tells_the_rack_what_now_stands_for_every_decision_of_the_text(deck):
+    text = plain("told", 1)[0]
+    key = rows.state_key(text)
+    first, second = record(deck, text, 0.9), record(deck, text, 0.95)  # one text, judged twice
+    heard = []
+    body = {"surface": SURFACE, "key": key, "answer": "flip", "reference_open": True, "needs": "read"}
+    assert review.answer(deck.base, body, on_labels=heard.append)[0] == 200
+    assert sorted(heard[0], key=lambda change: change["decision_id"]) == [
+        told(decision_id=first, open=False, needs="read"),
+        told(decision_id=second, open=False, needs="read"),
+    ]
+
+
+def test_a_skip_and_an_undo_tell_the_rack_no_label_stands(deck):
+    text = plain("unsaid", 1)[0]
+    key = rows.state_key(text)
+    decision_id = record(deck, text, 0.9)
+    heard = []
+    status, body = review.answer(
+        deck.base, {"surface": SURFACE, "key": key, "answer": "skip", "reference_open": True}, on_labels=heard.append
+    )
+    assert status == 200 and heard == [[told(decision_id=decision_id, open=None)]]
+    assert review.undo(deck.base, {"surface": SURFACE, "answer_id": body["answer"]["answer_id"]})[0] == 200
+    status, body = review.answer(
+        deck.base, {"surface": SURFACE, "key": key, "answer": "agree", "reference_open": True}, on_labels=heard.append
+    )
+    assert heard[-1] == [told(decision_id=decision_id, open=True)]
+    assert (
+        review.undo(deck.base, {"surface": SURFACE, "answer_id": body["answer"]["answer_id"]}, on_labels=heard.append)[0] == 200
+    )
+    assert heard[-1] == [told(decision_id=decision_id, open=None)]
+
+
+def test_a_refused_press_tells_the_rack_nothing(deck):
+    text = plain("refused", 1)[0]
+    record(deck, text, 0.9)
+    heard = []
+    body = {"surface": SURFACE, "key": rows.state_key(text), "answer": "agree", "reference_open": False}
+    assert review.answer(deck.base, body, on_labels=heard.append)[1]["code"] == "reference_changed"
+    assert heard == []
+
+
+def test_the_plugin_hands_every_label_write_to_its_watchers_and_a_raising_one_costs_nothing(tree, plugin):
+    """The bridge's door (`watch_labels`): the deck's answer and undo, and the rack's own grade."""
+    text = plain("watched", 1)[0]
+    key = rows.state_key(text)
+    decision_id = record(tree, text, 0.9)
+    heard = []
+
+    def exploding(changes):
+        raise RuntimeError("listener on fire")
+
+    plugin.watch_labels(exploding)
+    plugin.watch_labels(heard.append)
+    answer = {"surface": SURFACE, "key": key, "answer": "flip", "reference_open": True}
+    status, body = plugin.handle_request("POST", "/review/answer", {}, answer, RACK_HEADERS)
+    assert status == 200 and body["ok"], "a listener's bug never costs the operator the label"
+    assert heard == [[told(decision_id=decision_id, open=False)]]
+    undo = {"surface": SURFACE, "answer_id": body["answer"]["answer_id"]}
+    assert plugin.handle_request("POST", "/review/undo", {}, undo, RACK_HEADERS)[0] == 200
+    assert heard[-1] == [told(decision_id=decision_id, open=None)]
+    assert rack(plugin, decision_id, True)[0] == 200
+    assert heard[-1] == [told(decision_id=decision_id, open=True)]
+    assert len(heard) == 3

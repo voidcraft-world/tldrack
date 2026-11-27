@@ -36,6 +36,8 @@ export interface OpenWorkMark {
     children?: number;
     /** A ✓ STILL OPEN press left this turn graded: the ⚠️ stays, its menu drops the ✓. */
     graded?: true;
+    /** The operator's label drew it, not Laya's p (`open_work_labelled`): its title says so. */
+    labelled?: true;
 }
 
 /** Laya's done verdict as a row carries it (`RackSession.work_done`). */
@@ -44,6 +46,10 @@ export interface WorkDoneMark {
     /** A question opened the turn and its pane has not been opened since: 📖 in the ✅'s place
      *  (`answer_to_read_shown`). Owned by `bridge/tldrack/open_work.py` — see § An answer to read there. */
     answer?: true;
+    /** That answer was read: ✅📖 / ☑️📖, the 📖 kept beside the check (`answer_read_shown`). */
+    read?: true;
+    /** The operator's label drew it, not Laya's p (`open_work_labelled`): its title says so. */
+    labelled?: true;
 }
 import { SERVICES_COHORT_LABEL, is_service_session, type ServiceReadout } from './service-sessions.ts';
 import { COMPLETE_COHORT_LABEL, is_complete_session } from './complete-sessions.ts';

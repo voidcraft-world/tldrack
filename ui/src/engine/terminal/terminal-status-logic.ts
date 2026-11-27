@@ -139,6 +139,9 @@ export interface SessionStatus {
      *  answer to read. Owned by `bridge/tldrack/open_work.py` — see § An answer to read there.
      *  Absent on older bridges. */
     answer_to_read?: boolean | null;
+    /** The same answer once its pane was opened: the 📖 stays beside the check (☑️📖). Owned by
+     *  `bridge/tldrack/open_work.py` — see § An answer to read there. Absent on older bridges. */
+    answer_read?: boolean | null;
     /** The operator starred this session to come back to it (`POST /session-star`). On EVERY row of a
      *  bridge that keeps stars and absent on an older one, which is how the rack knows whether to
      *  draw the control. Owned by `bridge/tldrack/stars.py` — see the note there. */
@@ -155,6 +158,9 @@ export interface SessionStatus {
      *  press's, or one the text already had): the menu offers no second ✓. Absent otherwise and on
      *  older bridges. */
     open_work_graded?: boolean;
+    /** The row's ⚠️ / ✅ / 📖 is the operator's own label from LAYA REVIEW, not Laya's band: owned by
+     *  `bridge/tldrack/open_work.py` — see § The operator's label there. Absent otherwise and on older bridges. */
+    open_work_labelled?: boolean;
     /** A busy row circling (the same command failed again) or silent (no progress).
      *  Owner: `tldrack/stuck.py`. Validated by `parse_stuck`. */
     stuck?: StuckReading | null;
@@ -265,6 +271,7 @@ export function parse_session_row(value: unknown): SessionStatus | null {
     if (raw.open_work !== undefined) row.open_work = typeof raw.open_work === 'boolean' ? raw.open_work : null;
     if (raw.work_done !== undefined) row.work_done = typeof raw.work_done === 'boolean' ? raw.work_done : null;
     if (raw.answer_to_read !== undefined) row.answer_to_read = typeof raw.answer_to_read === 'boolean' ? raw.answer_to_read : null;
+    if (raw.answer_read !== undefined) row.answer_read = typeof raw.answer_read === 'boolean' ? raw.answer_read : null;
     if (raw.starred !== undefined && typeof raw.starred !== 'boolean') delete row.starred;
     if (raw.open_work_p !== undefined) {
         const p = raw.open_work_p;
@@ -298,6 +305,7 @@ export function parse_session_row(value: unknown): SessionStatus | null {
     if (raw.open_work_seen !== undefined) row.open_work_seen = raw.open_work_seen === true;
     if (raw.open_work_repeat !== undefined) row.open_work_repeat = raw.open_work_repeat === true;
     if (raw.open_work_graded !== undefined) row.open_work_graded = raw.open_work_graded === true;
+    if (raw.open_work_labelled !== undefined) row.open_work_labelled = raw.open_work_labelled === true;
     if (raw.stuck !== undefined) row.stuck = parse_stuck(raw.stuck);
     delete row.exited;
     delete row.exit_code;

@@ -110,6 +110,7 @@ from tldrack.open_work import (
     OpenWorkReactions,
     decide_state,
     grade_verdict,
+    label_change,
     landing_body,
     ledger_judged,
     plugin_caller,
@@ -118,6 +119,7 @@ from tldrack.open_work import (
     turn_facts,
     turn_request,
     verdict_row_fields,
+    watch_operator_labels,
     with_request,
 )
 from tldrack.verdicts import SessionVerdictStore, resolve_verdicts_path, restorable
@@ -708,22 +710,57 @@ class StatusStore:
             entry["open_work"] = {**verdict, "graded": True}
             return True
 
-    def mark_answer_read(self, session: str) -> bool:
-        """The operator opened the pane of an answer to read (open_work.py § An answer to read): stamp
-        the verdict on the row `read`, so `answer_to_read` drops and the ✅ stays. False when the row
-        holds no unread answer: no verdict, a turn that asked nothing, or one already read."""
+    def label_open_work(self, decision_id: str, label: dict | None) -> list[str]:
+        """The operator labelled the text of `decision_id` elsewhere (open_work.py § The operator's label):
+        every row whose verdict IS that decision takes `label` as its `operator`, which also grades it
+        (`graded_open_work`). None takes the label back, and a ✓ STILL OPEN's `graded` with it: that grade
+        was a label too, and none stands now. Compare-and-set on the decision id, so a newer turn's verdict
+        is never repainted. Returns the sessions whose verdict changed."""
+        changed = []
+        with self._lock:
+            for session, entry in self._sessions.items():
+                verdict = entry.get("open_work")
+                if not verdict or verdict.get("decision_id") != decision_id:
+                    continue
+                relabelled = {key: value for key, value in verdict.items() if key not in ("operator", "graded")}
+                if label is not None:
+                    relabelled["operator"] = dict(label)
+                if relabelled != verdict:
+                    entry["open_work"] = relabelled
+                    changed.append(session)
+        return changed
+
+    def mark_answer_read(self, session: str) -> tuple[bool, bool]:
+        """The operator opened the pane of a turn-over row (open_work.py § An answer to read): stamp its verdict
+        `read`, so `answer_to_read` drops and the ✅ stays. `(stamped, shown)`: whether the verdict was unread,
+        and whether it drew a 📖 (the 📖 rule, an operator's READ label included, is `verdict_row_fields`'s
+        alone). Any unread verdict is stamped, 📖 or not: a READ label given after the pane was opened asks for
+        a read the operator already gave."""
         with self._lock:
             entry = self._sessions.get(session)
             verdict = entry.get("open_work") if entry is not None else None
-            if not verdict or verdict.get("asked") is not True or verdict.get("read") is True:
-                return False
+            if not verdict or verdict.get("read") is True:
+                return False, False
             entry["open_work"] = {**verdict, "read": True}
-            return True
+            return True, bool(verdict_row_fields(verdict)["answer_to_read"])
 
-    def graded_open_work(self) -> set[str]:
-        """The sessions whose ⚠️ the operator already answered ✓: the snapshot's `open_work_graded`."""
+    def graded_open_work(self) -> frozenset[str]:
+        """The sessions whose ⚠️ the operator already answered, by ✓ or by a label given elsewhere (open_work.py
+        § The operator's label): the snapshot's `open_work_graded`."""
         with self._lock:
-            return {session for session, entry in self._sessions.items() if (entry.get("open_work") or {}).get("graded")}
+            return frozenset(
+                session
+                for session, entry in self._sessions.items()
+                if (verdict := entry.get("open_work") or {}).get("graded") or verdict.get("operator")
+            )
+
+    def labelled_open_work(self) -> frozenset[str]:
+        """The sessions whose mark is the operator's label, not Laya's band: the snapshot's `open_work_labelled`.
+        (A `frozenset`, as `graded_open_work`: inside this class `set` names the method.)"""
+        with self._lock:
+            return frozenset(
+                session for session, entry in self._sessions.items() if (entry.get("open_work") or {}).get("operator")
+            )
 
     def void_open_work(self, session: str) -> None:
         """The session is gone (`/kill-session`): clear its verdict and void any judgement
@@ -1177,14 +1214,18 @@ def build_status_handler(
         children = children_now(sessions)
         parked = loops.parked() if loops is not None else set()
         classes = loops.last_class() if loops is not None else {}
-        graded = store.graded_open_work()
+        graded, labelled = store.graded_open_work(), store.labelled_open_work()
         for row in sessions:
             if not row.get("live"):
                 continue
             row.update(attention_row_fields(row, children=children, parked=parked, classes=classes))
-            # Additive `open_work_graded: true`: a ✓ STILL OPEN left this ⚠️'s turn graded (`/open-work/confirm`).
+            # Additive `open_work_graded: true`: a ✓ STILL OPEN, or a label, left this ⚠️'s turn graded.
             if row.get("open_work") is True and row["session"] in graded:
                 row["open_work_graded"] = True
+            # Additive `open_work_labelled: true`: the row's ⚠️ / ✅ / 📖 is the operator's label (open_work.py
+            # § The operator's label), so its title reads as theirs, not as Laya's p.
+            if row["session"] in labelled:
+                row["open_work_labelled"] = True
             if (reading := stuck_of(row)) is not None:
                 row["stuck"] = reading
             if lead_service is not None:  # `lead` on a lead row, `worker` on a worker row (lead/service.py)
@@ -1565,6 +1606,27 @@ def build_status_handler(
         open_work_reactions.cleared(session, action)
         if verdicts is not None:
             verdicts.forget(session)
+
+    def on_operator_labels(changes: object) -> None:
+        """The laya plugin wrote operator labels (open_work.py § The operator's label): each row still holding
+        a labelled decision repaints from the label, its kept copy follows, and a DONE closes the row's open
+        loop as ✗ NOT OPEN does (attention.py § 3). Runs on the plugin's request thread, after its write."""
+        repainted = []
+        for change in changes if isinstance(changes, list) else ():
+            found = label_change(change)
+            if found is None:
+                continue
+            decision_id, label = found
+            for session in store.label_open_work(decision_id, label):
+                if verdicts is not None:
+                    verdicts.label(session, decision_id, label)
+                if label is not None and not label["open"] and loops is not None:
+                    loops.forget(session)
+                word = "unlabelled" if label is None else ("open" if label["open"] else "done")
+                click.echo(f"  open-work: {session}: operator label → {word}")
+                repainted.append(session)
+        if repainted:
+            notify_snapshot()
 
     def recover_turn_end(session: str) -> None:
         """A row the index just rebuilt after a restart: its kept verdict comes back when it is
@@ -3533,15 +3595,15 @@ def build_status_handler(
             """POST /open-work/read {"session": <name>} — the operator opened this session's pane, so its
             answer to read is read (open_work.py § An answer to read). The ✅ stays; only
             `answer_to_read` drops, on the row and in the kept copy. Not a grade: Laya hears nothing.
-            `cleared` false: the row held no unread answer, and nothing changed."""
+            `cleared` false: the row drew no 📖 (its verdict is still stamped read: `mark_answer_read`)."""
             body = self._session_body()
             if body is None:
                 return
             _, session = body
-            cleared = store.mark_answer_read(session)
+            stamped, cleared = store.mark_answer_read(session)
+            if stamped and verdicts is not None:
+                verdicts.mark_read(session)
             if cleared:
-                if verdicts is not None:
-                    verdicts.mark_read(session)
                 notify_snapshot()
             self._send_json(200, {"ok": True, "session": session, "cleared": cleared})
 
@@ -4080,6 +4142,8 @@ def build_status_handler(
     # Set after the class body: inside it, `plugins = plugins` would look the
     # right-hand name up in the class namespace and never reach this closure.
     StatusHandler.plugins = plugins if plugins is not None else {}
+    # A label given on LAYA REVIEW repaints the row it overrules (open_work.py § The operator's label).
+    watch_operator_labels(capability("laya"), on_operator_labels)
     StatusHandler.arbiter = arbiter
     StatusHandler.public_status = public_status
     # The LEAD service: started by start_status_server only (its watcher types into panes), driven

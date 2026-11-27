@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+    ANSWER_READ_EMOJI,
     ANSWER_TO_READ_EMOJI,
     DEAD_SESSION_EMOJI,
     FRESH_SESSION_EMOJI,
@@ -26,6 +27,7 @@ test('every mark the rack can draw has a row in the README legend', () => {
     const marks = [
         ...STATES.map(display_state_emoji),
         ...Object.values(WORK_DONE_EMOJI),
+        ...Object.values(ANSWER_READ_EMOJI),
         ...Object.values(STOP_FAILURE_EMOJI),
         ANSWER_TO_READ_EMOJI, DEAD_SESSION_EMOJI, FRESH_SESSION_EMOJI, SERVICE_SESSION_EMOJI,
         OPEN_WORK_BADGE, OPEN_WORK_WAITING_BADGE, STUCK_BADGE,
