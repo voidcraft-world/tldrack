@@ -83,8 +83,7 @@ The rack is for one operator on one machine and has no login; see [SECURITY.md](
 
 </details>
 
-<details>
-<summary><b>Reading the rack · status icons</b></summary>
+## Reading the rack
 
 Hover a row’s mark for its meaning.
 
@@ -117,8 +116,6 @@ A row can carry one badge beside its mark:
 
 ✅, ☑️ and 📖 never carry ⚠️: one closing message is either done or open. 🙋 and 💀 never carry a badge. A ⚠️ you
 parked with ⏸ draws nothing until you next prompt that session.
-
-</details>
 
 ## Local review
 
