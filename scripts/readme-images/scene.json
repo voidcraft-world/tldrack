@@ -7,7 +7,7 @@
   "sessions": [
     {
       "session": "demo-lead",
-      "auto_name": "LEAD \u00b7 Search update",
+      "auto_name": "Search update",
       "state": "busy",
       "profile": "claude",
       "model": "claude-opus-4-6",
