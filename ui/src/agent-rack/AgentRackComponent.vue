@@ -81,7 +81,7 @@ import {
     type ProfileInfo,
     type StopFailure,
 } from '../engine/terminal/terminal-status-logic.ts';
-import { create_step_view, worktree_button_view, worktree_for_session } from '../engine/terminal/rack-view.ts';
+import { create_step_view, repo_for_directory, worktree_button_view, worktree_for_session } from '../engine/terminal/rack-view.ts';
 import type { CreateStepView, WorktreeButtonKind, WorktreeButtonView, WorktreeRow } from '../engine/terminal/rack-view.ts';
 import type { DeviceRow } from '../engine/terminal/device-readout.ts';
 // Copy only: `local-network-gate.ts` is dependency-free, so importing it costs
@@ -688,7 +688,22 @@ watch(directory_state, (state) => {
     }
 });
 const repository_launch = computed(() => !launch_directory.value || launch_directory.value.path === directory_state.value?.bridge_path);
-const repository_hint = computed(() => `Worktrees and LEAD use ${directory_state.value?.bridge_path ?? 'the bridge repository'}. Select that project to use them.`);
+const repository_hint = computed(() => `LEAD uses ${directory_state.value?.bridge_path ?? 'the bridge repository'}. Select that project to use it.`);
+/** The served repository 🏝 starts a tree in: the launch directory's (`rack-view.ts` `repo_for_directory`). Null
+ *  with no launch directory (MAIN: the plugin's default), or one inside no served repository. */
+const island_repo = computed(() =>
+    launch_directory.value ? repo_for_directory(launch_directory.value.path, payload.value?.worktree_repos) : null);
+/** May 🏝 start here? MAIN always (the default repository); a launch directory inside any repository the plugin
+ *  serves; and, from a plugin that lists none, the bridge's own repository as before. */
+const island_launch = computed(() => !launch_directory.value || island_repo.value !== null
+    || (!payload.value?.worktree_repos && repository_launch.value));
+const island_hint = computed(() => {
+    const served = (payload.value?.worktree_repos ?? []).map((repo) => repo.path);
+    const where = served.length ? served.join(', ') : (directory_state.value?.bridge_path ?? 'the bridge repository');
+    return `Worktrees start in the repositories the worktree plugin serves: ${where}. Select one of those projects, or add this one to settings.json plugins.worktree.repos.`;
+});
+/** The note under the launch row: why 🏝, then why LEAD, is off here. */
+const launch_note = computed(() => !island_launch.value ? island_hint.value : !repository_launch.value ? repository_hint.value : null);
 function directory_open(path: string): boolean {
     return launch_open.value && launch_directory.value?.path === path;
 }
@@ -814,13 +829,14 @@ function launch_main(chip: LaunchChip): void {
  */
 function launch_island(chip: LaunchChip): void {
     close_fork();
-    if (frozen.value || !repository_launch.value) return;
+    if (frozen.value || !island_launch.value) return;
     const branch = auto_branch('', chip.label ?? '', new Date(), known_branches.value);
     // One JSON string, because `RackAction`'s argument is one optional string by
     // design — it crosses a postMessage boundary AND a BroadcastChannel, and
     // every hop re-validates `typeof === 'string'`.
     const request: Record<string, string> = { branch };
     if (chip.id) request.profile = chip.id;
+    if (island_repo.value) request.repo = island_repo.value.key;
     send('worktree', undefined, JSON.stringify(request));
 }
 
@@ -932,7 +948,7 @@ function main_title(chip: LaunchChip): string {
 }
 
 function island_title(chip: LaunchChip): string {
-    if (!repository_launch.value) return repository_hint.value;
+    if (!island_launch.value) return island_hint.value;
     return `Start ${chip_what(chip)} in its own worktree, on a new branch — its edits land there, not in main`;
 }
 
@@ -1264,10 +1280,13 @@ function create_failure(session: string | null | undefined): string | undefined 
     return session ? create_error_by_session.value.get(session) : undefined;
 }
 
-/** The branches the plugin manages — what `auto_branch` must not hand out twice. */
-const known_branches = computed<ReadonlySet<string>>(
-    () => new Set((payload.value?.worktrees ?? []).map((row) => row.branch)),
-);
+/** The branches the plugin manages in the repository 🏝 would start in — what `auto_branch` must not hand out
+ *  twice. Every repository's when 🏝 names none (a row from an older plugin carries no key either). */
+const known_branches = computed<ReadonlySet<string>>(() => {
+    const key = island_repo.value?.key;
+    const rows = (payload.value?.worktrees ?? []).filter((row) => !key || !row.repo || row.repo === key);
+    return new Set(rows.map((row) => row.branch));
+});
 
 // The worktree button: PR, or CLEAN once the branch has landed
 // (`rack-view.ts::worktree_button_kind` owns which). Both arm twice, in the same
@@ -2148,7 +2167,7 @@ onUnmounted(() => {
                         v-if="worktrees_available"
                         type="button"
                         class="rack__fork-btn rack__fork-island"
-                        :disabled="frozen || !repository_launch"
+                        :disabled="frozen || !island_launch"
                         :title="island_title(chip)"
                         :aria-label="island_title(chip)"
                         @click="launch_island(chip)"
@@ -2165,7 +2184,7 @@ onUnmounted(() => {
             </span>
         </div>
 
-        <p v-if="!repository_launch && fork_key !== null" class="rack__project-note">{{ repository_hint }}</p>
+        <p v-if="launch_note && fork_key !== null" class="rack__project-note">{{ launch_note }}</p>
         </div>
         </section>
 

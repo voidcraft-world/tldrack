@@ -60,9 +60,28 @@ import { device_rows, type DeviceRow, type DevicesState } from './device-readout
  * the type back out — a type-only import, so nothing crosses at runtime and
  * `node --test`'s strip-only mode erases it entirely.
  */
+/** A repository the worktree plugin serves, as `GET /plugin/worktree/repos` lists it (read by
+ *  `worktree-client.ts` `fetch_worktree_repos`). `path` is its main checkout, `~`-collapsed. */
+export interface WorktreeRepo {
+    key: string;
+    label: string;
+    path: string;
+    default: boolean;
+}
+
+/** The served repository a launch directory belongs to, or null: its main checkout or anything under it.
+ *  Longest path wins, for a repository nested in another. What 🏝 starts a tree in. */
+export function repo_for_directory(directory: string, repos: readonly WorktreeRepo[] | undefined): WorktreeRepo | null {
+    const root = repos && repos.length > 0 ? longest_containing_root(directory, repos.map((repo) => repo.path)) : null;
+    return root === null ? null : repos!.find((repo) => repo.path === root) ?? null;
+}
+
 export interface WorktreeRow {
     branch: string;
     path: string;
+    /** The plugin repository key it belongs to (`/state.repo_key`), stamped by the client so an action on
+     *  this row reaches ITS repository (`worktree-client.ts` `repo_base_url`). Absent from an older plugin. */
+    repo?: string;
     /** Derived by the plugin from the branch — the join key against a snapshot
      *  row. The plugin deliberately does not ask tmux whether this is live;
      *  every caller already polls the snapshot that knows. */
@@ -132,6 +151,8 @@ export interface WorktreeIsland {
     /** `~`-collapsed, as every plugin GET path is (`path-containment.ts`). */
     path: string;
     branch?: string | null;
+    /** The plugin repository key that listed it, as on `WorktreeRow.repo`. */
+    repo?: string;
     /**
      * The branch's pull request, from the plugin's PR index and the PR button (`/state.worktree_trees[].pr`):
      * `none` when the index knows of none. ABSENT is unknown (an older plugin, or an index never fetched),
@@ -363,6 +384,9 @@ export interface RackPayload {
      */
     worktrees?: WorktreeRow[];
     task_groups?: TaskGroup[];
+    /** The repositories the worktree plugin serves (`GET /plugin/worktree/repos`): where 🏝 may start a tree.
+     *  Absent where no plugin answered, or one predating the route (🏝 then keeps to the bridge's repository). */
+    worktree_repos?: WorktreeRepo[];
     /** Open missions (`GET /missions`). Absent on a bridge that predates them: no section. */
     missions?: Mission[];
     /**
@@ -680,6 +704,8 @@ export interface RackViewInput {
     /** Omit where no `worktree` plugin answered. */
     worktrees?: WorktreeRow[];
     task_groups?: TaskGroup[];
+    /** Omit where no plugin listed its repositories — see `RackPayload.worktree_repos`. */
+    worktree_repos?: WorktreeRepo[];
     /** Omit where the bridge did not answer — see `RackPayload.missions`. */
     missions?: Mission[];
     /** Omit where no plugin shipped `worktree_paths` — see `RackPayload.attach_only`. */
@@ -929,6 +955,7 @@ export function build_rack_payload(input: RackViewInput): RackPayload {
     if (input.in_world !== undefined) payload.in_world = input.in_world;
     if (input.worktrees !== undefined) payload.worktrees = input.worktrees;
     if (input.task_groups !== undefined) payload.task_groups = input.task_groups;
+    if (input.worktree_repos !== undefined) payload.worktree_repos = input.worktree_repos;
     if (input.missions !== undefined) payload.missions = input.missions;
     const attach_only = attach_only_with_profiled(input.attach_only, sessions, input.pending_profiled ?? null);
     if (attach_only !== undefined) payload.attach_only = attach_only;
