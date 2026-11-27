@@ -1,0 +1,261 @@
+{
+  "viewport": {
+    "width": 1920,
+    "height": 1200
+  },
+  "focus": "demo-lead",
+  "sessions": [
+    {
+      "session": "demo-lead",
+      "auto_name": "LEAD \u00b7 Search update",
+      "state": "busy",
+      "profile": "claude",
+      "model": "claude-opus-4-6",
+      "tasks": {
+        "done": 2,
+        "total": 4,
+        "current": "Review the search workers"
+      },
+      "lead": {
+        "run": "demo-search",
+        "open_decisions": 0
+      },
+      "activity": {
+        "zone": "codebase",
+        "tool": "Read",
+        "detail": "Reviewing worker changes"
+      }
+    },
+    {
+      "session": "demo-search-api",
+      "auto_name": "Search API",
+      "state": "busy",
+      "profile": "codex",
+      "model": "gpt-6.2",
+      "parent": "demo-lead",
+      "branch": "feat/search-api",
+      "tasks": {
+        "done": 2,
+        "total": 4,
+        "current": "Test pagination"
+      },
+      "worker": {
+        "run": "demo-search",
+        "step": "api"
+      },
+      "activity": {
+        "zone": "codebase",
+        "tool": "Edit",
+        "detail": "Adding pagination tests"
+      }
+    },
+    {
+      "session": "demo-search-ui",
+      "auto_name": "Search UI",
+      "state": "background",
+      "background_jobs": 1,
+      "profile": "claude",
+      "model": "claude-sonnet-4-6",
+      "parent": "demo-lead",
+      "branch": "feat/search-ui",
+      "tasks": {
+        "done": 3,
+        "total": 4,
+        "current": "Run browser checks"
+      },
+      "worker": {
+        "run": "demo-search",
+        "step": "ui"
+      },
+      "activity": {
+        "zone": "computer",
+        "tool": "Bash",
+        "detail": "Running browser checks"
+      }
+    },
+    {
+      "session": "demo-search-docs",
+      "auto_name": "Search guide",
+      "state": "free",
+      "profile": "claude",
+      "model": "claude-sonnet-4-6",
+      "parent": "demo-lead",
+      "branch": "docs/search-guide",
+      "merged": true,
+      "work_done": true,
+      "tasks": {
+        "done": 4,
+        "total": 4,
+        "current": null
+      },
+      "worker": {
+        "run": "demo-search",
+        "step": "docs"
+      }
+    },
+    {
+      "session": "demo-shortcuts",
+      "auto_name": "Keyboard shortcuts",
+      "state": "busy",
+      "profile": "claude",
+      "model": "claude-sonnet-4-6",
+      "activity": {
+        "zone": "codebase",
+        "tool": "Edit",
+        "detail": "Adding keyboard navigation"
+      }
+    },
+    {
+      "session": "demo-theme",
+      "auto_name": "Theme contrast",
+      "state": "attention",
+      "profile": "codex",
+      "model": "gpt-6.2",
+      "branch": "fix/theme-contrast",
+      "activity": {
+        "zone": "codebase",
+        "tool": "Read",
+        "detail": "Choose the highlight color"
+      }
+    },
+    {
+      "session": "demo-empty",
+      "auto_name": "Empty state",
+      "state": "free",
+      "profile": "claude",
+      "model": "claude-sonnet-4-6",
+      "branch": "fix/empty-state",
+      "merged": true,
+      "work_done": true
+    }
+  ],
+  "terminal": [
+    {
+      "tone": "muted",
+      "text": "DEMO SESSION  /  Claude Code  /  LEAD"
+    },
+    {
+      "tone": "prompt",
+      "text": "\u276f Ship the search update. Split the API, UI and docs into workers."
+    },
+    {
+      "tone": "normal",
+      "text": "I started three workers in isolated worktrees. I\u2019m reviewing their changes as they finish."
+    },
+    {
+      "tone": "heading",
+      "text": "Search update"
+    },
+    {
+      "tone": "success",
+      "text": "\u2713 Plan the API and result states"
+    },
+    {
+      "tone": "success",
+      "text": "\u2713 Merge the search guide"
+    },
+    {
+      "tone": "active",
+      "text": "\u25cf Review API pagination and browser checks"
+    },
+    {
+      "tone": "muted",
+      "text": "\u25cb Merge the remaining changes"
+    },
+    {
+      "tone": "heading",
+      "text": "Workers"
+    },
+    {
+      "tone": "normal",
+      "text": "Build the search API     Codex         working"
+    },
+    {
+      "tone": "normal",
+      "text": "Polish search results    Claude Code   testing"
+    },
+    {
+      "tone": "success",
+      "text": "Document the search API  Claude Code   merged"
+    },
+    {
+      "tone": "heading",
+      "text": "Reviewing the API worker\u2019s patch"
+    },
+    {
+      "tone": "muted",
+      "text": "  search.ts"
+    },
+    {
+      "tone": "removed",
+      "text": "\u2212 return results;"
+    },
+    {
+      "tone": "success",
+      "text": "+ return { items: results, next_cursor };"
+    },
+    {
+      "tone": "normal",
+      "text": "The docs are merged. The API worker is checking pagination; the UI worker is running browser checks."
+    },
+    {
+      "tone": "active",
+      "text": "Working\u2026"
+    }
+  ],
+  "annotations": [
+    {
+      "selector": ".rack__launch",
+      "title": "Launch agents",
+      "text": "Choose a CLI, then start here, in a worktree, or as a LEAD."
+    },
+    {
+      "selector": ".row--family",
+      "title": "LEAD + workers",
+      "text": "One LEAD manages workers; their rows stay grouped together."
+    },
+    {
+      "selector": ".row:has-text(\"Keyboard shortcuts\")",
+      "title": "Independent sessions",
+      "text": "Regular CLI sessions work alongside the LEAD and its workers."
+    },
+    {
+      "selector": ".row--child:has-text(\"Search guide\")",
+      "title": "Worktrees, through merge",
+      "text": "Separate branches carry PR state; the check marks landed work."
+    },
+    {
+      "selector": ".rack-window__term",
+      "title": "Your agent terminal",
+      "text": "Open a session to read its answer, review a diff, or keep working."
+    },
+    {
+      "selector": ".canvas__frame",
+      "title": "Office, files + canvases",
+      "text": "See activity across the rack and open the selected agent\u2019s deliverables."
+    }
+  ],
+  "canvas": {
+    "title": "Search update",
+    "summary": "The guide is merged. API pagination and browser checks are running.",
+    "progress": "2 / 4 steps complete",
+    "rows": [
+      [
+        "Search API",
+        "Working"
+      ],
+      [
+        "Search UI",
+        "Testing"
+      ],
+      [
+        "Search guide",
+        "Merged"
+      ]
+    ],
+    "files": [
+      "search-review.html",
+      "search-api.md"
+    ]
+  }
+}

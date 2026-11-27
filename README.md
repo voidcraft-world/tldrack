@@ -4,26 +4,35 @@ tldrack runs your coding agents side by side in tmux and shows every one of them
 Sessions name themselves from your prompt, so you can find the right task at a glance. A local model
 reads finished turns for you and marks them ✅ done or ⚠️ needs you.
 
+<p align="center">
+  <a href="docs/images/tldrack-infographic-v4.webp"><img src="docs/images/tldrack-infographic-v4.webp" width="832" alt="TLDRack: a LEAD and its workers run alongside independent Claude Code sessions. A local model reviews finished turns and flags what needs you. The overview also illustrates the planned rack-script API."></a>
+</p>
+
+The overview includes the planned rack-script API.
+
 <table>
-  <tr><th>Live rack</th><th>Live rack · a LEAD and a canvas</th><th>Annotated tour</th></tr>
+  <tr><th>TLDRack</th><th>TLDRack · annotated</th></tr>
   <tr>
-    <td align="center"><a href="docs/img/rack.webp"><img src="docs/img/thumbs/rack.webp" width="280" alt="TLDRack with the agent list, selected terminal, 3D office, activity board and artifact files."></a></td>
-    <td align="center"><a href="docs/img/rack-lead.webp"><img src="docs/img/thumbs/rack-lead.webp" width="280" alt="The live rack with a LEAD at work: the agent list with a LEAD row and its six workers, each with a grade emoji; the selected agent's terminal; the 3D office map with each agent's zone tinted blue for a background job or green when done, and labels showing each worker's PR state; the agent's detail panel and files; and its canvas, a flow diagram with a table of what each board row shows."></a></td>
-    <td align="center"><a href="docs/img/rack-annotated-v2.webp"><img src="docs/img/thumbs/rack-annotated-v2.webp" width="280" alt="Annotated TLDRack tour: launch agents or a LEAD/coordinator for big tasks, parallel agents and mixed models; find automatically named sessions, choose a coding mode, use common tools, jump between sessions, manage services, close sessions flagged as finished by a local model, connect compute, review code diffs in a resizable terminal, follow agent activity and open generated files and canvas drawings."></a></td>
-  </tr>
-  <tr><th>Overview</th><th>Laya review · desktop</th><th>Laya review · Android</th></tr>
-  <tr>
-    <td align="center"><a href="docs/images/tldrack-infographic-v2.webp"><img src="docs/img/thumbs/tldrack-infographic-v2.webp" width="280" alt="Run more agents. Read fewer answers. Auto-named tmux sessions. A local model reviews finished turns and flags those that need you."></a></td>
-    <td align="center"><a href="docs/img/laya-review-desktop.webp"><img src="docs/img/thumbs/laya-review-desktop.webp" width="280" alt="Laya review on the desktop: one session's prompt and the closing message of its turn, Laya's score of 0.67 just under the cut, and one button per grade: DONE, READ, RUNNING, NEEDS YOU, SKIP. An annotation reads: I would mark it Done, so Laya gave the wrong answer; the bug is fixed and none of this ending text needed to be read by me."></a></td>
-    <td align="center"><a href="docs/img/laya-review-android.webp"><img src="docs/img/thumbs/laya-review-android.webp" width="124" alt="Laya review on Android: the grade counts, one finished turn with Laya's score, and tap-only grade buttons along the bottom: DONE, READ, RUNNING, NEEDS YOU, SKIP, UNDO."></a></td>
-  </tr>
-  <tr><th colspan="3">Three modes · pick two</th></tr>
-  <tr>
-    <td colspan="3" align="center"><a href="docs/img/modes-triangle.webp"><img src="docs/img/thumbs/modes-triangle.webp" width="420" alt="Pick two for any big task: a good, fast and cheap triangle with the rack's three modes as dots. Individual agent sessions (you manage each one) sit toward cheap: the least money, and the slowest. One agent on a loop (/goal, /loop, ultracode) sits in the middle. A LEAD with workers (coordinator) sits toward fast and a little higher: the quickest route to a good result, and the most expensive. Positions are judgment from running all three, not a measurement."></a></td>
+    <td align="center"><a href="docs/img/readme/rack-demo.webp"><img src="docs/img/readme/rack-demo.webp" width="410" alt="The TLDRack interface with illustrative demo data: one LEAD with three workers, independent Claude Code and Codex sessions, working and merged worktrees, a terminal, the 3D office, generated files and a canvas."></a></td>
+    <td align="center"><a href="docs/img/readme/rack-annotated.webp"><img src="docs/img/readme/rack-annotated.webp" width="410" alt="Annotated TLDRack demo: launch agents, group a LEAD with its workers, run independent sessions, follow worktrees through merge, read the agent terminal, and use the office, files and canvases."></a></td>
   </tr>
 </table>
 
-Click an image to open it at full size.
+Screenshots use the real interface with illustrative demo sessions, PR states and terminal content.
+Click an image to open it at full size. [Refresh these images](.claude/skills/readme-images/SKILL.md).
+
+<details>
+<summary><b>Laya review · desktop and Android</b></summary>
+
+<table>
+  <tr><th>Desktop</th><th>Android</th></tr>
+  <tr>
+    <td align="center"><a href="docs/img/laya-review-desktop.webp"><img src="docs/img/thumbs/laya-review-desktop.webp" width="410" alt="Laya review on the desktop: a session's prompt, closing message, local-model score and tap-only grade buttons."></a></td>
+    <td align="center"><a href="docs/img/laya-review-android.webp"><img src="docs/img/thumbs/laya-review-android.webp" width="124" alt="Laya review on Android: grade counts, a finished turn with its score, and tap-only grade buttons."></a></td>
+  </tr>
+</table>
+
+</details>
 
 ## Quickstart (macOS)
 
