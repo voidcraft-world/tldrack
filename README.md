@@ -1,14 +1,11 @@
 <h1><a href="docs/images/tldrack-lockup.webp"><img src="docs/images/tldrack-lockup.webp" width="200" alt="TLDRack"></a></h1>
 
-tldrack runs your coding agents side by side in tmux and shows every one of them on one local page.
-Sessions name themselves from your prompt, so you can find the right task at a glance. A local model
-reads finished turns for you and marks them ✅ done or ⚠️ needs you.
+Run coding agents side by side in tmux. One browser page shows the rack; a local model marks
+finished turns ✅ done or ⚠️ needs you.
 
 <p align="center">
   <a href="docs/images/tldrack-infographic-v4.webp"><img src="docs/images/tldrack-infographic-v4.webp" width="832" alt="TLDRack: a LEAD and its workers run alongside independent Claude Code sessions. A local model reviews finished turns and flags what needs you. The overview also illustrates the planned rack-script API."></a>
 </p>
-
-The overview includes the planned rack-script API.
 
 <table>
   <tr><th>TLDRack</th><th>TLDRack · annotated</th></tr>
@@ -16,11 +13,18 @@ The overview includes the planned rack-script API.
     <td align="center"><a href="docs/img/readme/rack-demo-edited.webp"><img src="docs/img/readme/rack-demo-edited.webp" width="410" alt="An edited TLDRack screenshot with illustrative sessions: a LEAD and three workers, independent sessions, working and merged worktrees, terminal tools, the 3D office, a canvas diagram, services and device resource meters."></a></td>
     <td align="center"><a href="docs/img/readme/rack-annotated-edited.webp"><img src="docs/img/readme/rack-annotated-edited.webp" width="410" alt="Annotated TLDRack demo: launch agents, group a LEAD with its workers, run independent sessions, follow worktrees through merge, read the agent terminal, use the office, files and canvases, and monitor services and devices."></a></td>
   </tr>
+  <tr><th>THE LOOP</th><th>ROC · local model review</th></tr>
+  <tr>
+    <td align="center"><a href="docs/architecture.svg"><img src="docs/architecture.svg" width="410" alt="The loop: agent hooks report to the bridge, a local model reviews finished turns, and operator grades tune it locally."></a></td>
+    <td align="center"><a href="docs/evals/figures/roc.light.png"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/evals/figures/roc.dark.png">
+      <img src="docs/evals/figures/roc.light.png" width="410" alt="ROC curves on held-out turns, one per voter; the served fine-tune is bold. Most labels were model-written.">
+    </picture></a></td>
+  </tr>
 </table>
 
-Images are edited from an operator-provided screenshot, with illustrative sessions, terminal content
-and a canvas diagram. The capture includes the operator’s configured host controls.
-Click an image to open it at full size. [Refresh these images](.claude/skills/readme-images/SKILL.md).
+Edited screenshots show demo content and configured host controls; rack scripts are planned.
+[Image workflow](.claude/skills/readme-images/SKILL.md) · [ROC methods and caveats](docs/VERIFIER.md).
 
 <details>
 <summary><b>Laya review · desktop and Android</b></summary>
@@ -37,20 +41,14 @@ Click an image to open it at full size. [Refresh these images](.claude/skills/re
 
 ## Quickstart (macOS)
 
-You need git, tmux, ttyd, Node 22.18 or newer, uv, and one agent CLI (Claude Code or Codex) that you have
-logged in to once.
+You need git, tmux, ttyd, Node 22.18+, uv, and a logged-in Claude Code or Codex CLI.
+macOS is tested; Linux is not yet. Laya needs about 2 GB of disk and is optional.
 
 ```bash
 brew install tmux ttyd node uv
 curl -fsSL https://claude.ai/install.sh | bash   # skip if you already have Claude Code or Codex
 claude                                           # log in once, then /exit
 ```
-
-No Homebrew of your own (or one another account owns)? uv has its own installer:
-`curl -LsSf https://astral.sh/uv/install.sh | sh`. tmux, ttyd and Node come from your package manager, and
-another account's Homebrew reaches your PATH with `eval "$(/opt/homebrew/bin/brew shellenv)"`.
-
-Then, from wherever you keep code. It takes about ten minutes, and most of that is downloads:
 
 ```bash
 git clone https://github.com/voidcraft-world/tldrack
@@ -59,71 +57,36 @@ cd /path/to/your/project                      # new agents start in the director
 tldrack up                                    # builds the page the first time, then opens http://127.0.0.1:7682/
 ```
 
-The page takes it from there. Open **Settings** (the ⚙ at the top of the rack, then **ALL SETTINGS**, or
-`http://127.0.0.1:7682/settings.html`). Its **SETUP** tab lists what this machine has and puts a button
-beside each missing part:
+Open **Settings → SETUP** to install agent hooks and, optionally, Laya. Choose a project, then
+**CLAUDE** or **CODEX → HERE** to start a session. Add projects under **Settings → Directories**.
 
-- **INSTALL** on a hooks line lets that agent CLI report its state to the rack.
-- **INSTALL** on the Laya card downloads Laya's runtime and base model (about 800 MB) and serves it.
+<details>
+<summary><b>Setup, updates and troubleshooting</b></summary>
 
-If your shell says `tldrack: command not found`, run `uv tool update-shell` and open a new terminal. If
-`tldrack up` does not start, `tldrack doctor` prints the same checks in the terminal, each with its fix. A
-port 7681 or 7682 that is taken (another rack on this machine, perhaps another account's) gets its own
-ports in that shell, then carry on: `export TLDRACK_PORT=7781 TLDRACK_STATUS_PORT=7791`.
+No Homebrew of your own (or one another account owns)? uv has its own installer:
+`curl -LsSf https://astral.sh/uv/install.sh | sh`. tmux, ttyd and Node come from your package manager, and
+another account's Homebrew reaches your PATH with `eval "$(/opt/homebrew/bin/brew shellenv)"`.
 
-At the top of the rack, press the button named for the directory to work in, then **CLAUDE** (or **CODEX**), then **HERE**
-(or **MAIN** on an older bridge). A terminal opens with the
-agent in it: give it a task. Its row picks up a readable name from your prompt. When its turn ends,
-the row shows the local model's verdict: ✅ done, or ⚠️ it needs you.
+If `tldrack` is not found, run `uv tool update-shell` and open a new terminal. If startup fails, run
+`tldrack doctor`. For occupied ports, use `export TLDRACK_PORT=7781 TLDRACK_STATUS_PORT=7791`.
 
-Use **Settings → Directories** to add project names and absolute paths (or `~/…`), choose
-one default, and save. Each directory is a button at the top of the rack, and the one you
-press is where the next regular agent starts. These settings belong to the bridge, so
-other devices see the same directories. Worktree and LEAD launches remain tied to the bridge's
-startup repository; their buttons explain when the selected project cannot use them.
-Settings also holds the list/graph view, office, diagram and terminal appearance. **Close finished**
-sits with the finished sessions.
+Settings is also at `http://127.0.0.1:7682/settings.html`. **SETUP** installs missing hooks and Laya;
+**FEATURES → LITE** reduces resource use. **Directories** stores project paths and the default across
+devices. Worktree and LEAD launches use the bridge’s startup repository; their buttons explain limits.
 
-If the rack runs heavy on your machine, **Settings → FEATURES** lists every part with what it costs and
-what you lose without it, and **LITE** switches off the ones that only cost: the 3D office and the
-motion in this browser, and three background loops in the bridge. Any plugin can be left out by name.
+**SETUP → UPDATE** pulls `main`, rebuilds the page and restarts the bridge; agent sessions keep running.
+Optional **Auto-update** checks every five minutes. **Update check** only adds a notification dot.
+Updates require a clean checkout on `main` and only fast-forward.
 
-`tldrack up` is safe to run again at any time: a rack that is already up is left alone. `tldrack kill` stops
-it, and your agent sessions keep running in tmux.
+`tldrack up` leaves a running rack alone. `tldrack kill` stops the rack and keeps tmux sessions alive.
+The rack is for one operator on one machine and has no login; see [SECURITY.md](SECURITY.md).
 
-**Updating.** **Settings → SETUP → UPDATE** asks the repository you cloned whether `main` has moved, then
-pulls the new commits, rebuilds the page and restarts the bridge; your sessions keep running. Nothing
-checks on its own until you switch it on. **Auto-update**, on that card, asks every five minutes and
-updates with no click; **Update check**, under FEATURES, only asks and puts a dot on the ⚙. It only ever
-fast-forwards `main`: a checkout on another branch, or with uncommitted work in it, is left alone and the
-card says why.
+</details>
 
-## The loop
+<details>
+<summary><b>Reading the rack · status icons</b></summary>
 
-<p align="center">
-  <img src="docs/architecture.svg" width="832" alt="The loop: automatically named agent sessions report through hooks to the bridge, a local model reviews finished turns, a done turn stays quiet, a turn that needs you reaches you, and your grades fine-tune the review model on your machine">
-</p>
-
-- **Your agents work.** Each one is a tmux session running Claude Code or Codex. Its own hooks tell the
-  bridge what it is doing: working, waiting on you, or done. Watching the rack costs no tokens.
-- **Sessions name themselves.** New sessions get readable labels from your first prompt, so you can
-  find the right task without opening every terminal. You can rename a session at any time.
-- **A local model reads.** It reads the closing message of a turn and answers one question: is work
-  still open? No cloud call, no API key for this review. The current review model is Laya, a
-  421M-parameter encoder.
-- **You answer the ⚠️.** The rack marks the rows that need you. The rest stay quiet until you want them.
-- **Your grades tune the model.** Grade a verdict with one tap, in the rack, in the review deck or on
-  your phone. Your grades fine-tune the review model on your machine, and a new checkpoint serves only
-  after it beats the one before it.
-
-You start on the public base model. Out of the box it is cautious: it marks most turns ✅ and misses some
-that needed you. Your grades are what fix that. 40 of them, at least 10 of each kind, are enough for a first
-fine-tune, and `tldrack laya status` counts them. The fine-tune is yours: it trains on your turns and never
-leaves your machine.
-
-## Reading the rack
-
-Every row carries one mark. Hover it for the sentence.
+Hover a row’s mark for its meaning.
 
 | Mark | The row | Set by |
 |:---:|---|---|
@@ -155,33 +118,15 @@ A row can carry one badge beside its mark:
 ✅, ☑️ and 📖 never carry ⚠️: one closing message is either done or open. 🙋 and 💀 never carry a badge. A ⚠️ you
 parked with ⏸ draws nothing until you next prompt that session.
 
-## Measured, not promised
+</details>
 
-The same held-out turns, one curve per voter. Up and to the left is better.
+## Local review
 
-Claude Opus 5.5 and Claude Fable 5.2 are on the chart as references: frontier cloud models, asked the same
-question with no training. Most of these held-out labels were written by a Claude model, so their curves
-are partly Claude agreeing with Claude. The two tie with each other (AUC 0.89 and 0.89). On the 43 turns
-the operator had graded by hand at the 2026-11-20 run, both tied with the fine-tune (0.68 and 0.71 against
-0.69, each difference well inside its interval), and each is several times slower per verdict.
+Laya reviews finished turns locally. Your grades tune it on your machine; 40 labels, with at least
+10 of each kind, are enough for a first fine-tune. `tldrack laya status` shows your progress.
 
-LAYA · RETRAIN · Q2 is the next fine-tune: the same base model, retrained on every label since, 42 of them
-the operator's own. It ranks above the served one on both sets: AUC 0.85 against 0.82 on the held-out turns
-(+0.024 [+0.000, +0.049]) and 0.89 against 0.86 on the public golden cases (+0.030 [+0.010, +0.052]). It is
-a challenger: registered, never served until the operator promotes it.
-
-LAYA · 18 QUESTIONS and LAYA · 3 QUESTIONS are experiments, not served models: the same fine-tune asked
-more than its one question of each turn. Eighteen questions, the turn's facts and one fitted line over
-the answers rank below the single question (AUC 0.71 against 0.82) at eleven times the time. Three
-questions with nothing fitted, the most confident answer taken, rank level with it (0.83 against 0.82,
-the difference inside the interval) at three times the time. `lab/README.md` has the breakdown.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/evals/figures/roc.dark.png">
-    <img src="docs/evals/figures/roc.light.png" width="832" alt="ROC curves on the held-out turns, one per voter, the served fine-tune in bold">
-  </picture>
-</p>
+The ROC above compares voters on held-out turns. Most labels were model-written; the operator-graded
+sample is smaller. The turns stay private; the reproducible public suite contains 200 invented cases.
 
 <details>
 <summary><b>What your labels buy</b>: the base model against each fine-tune, metric by metric</summary>
@@ -195,27 +140,8 @@ the difference inside the interval) at three times the time. `lab/README.md` has
 
 </details>
 
-- [`docs/VERIFIER.md`](docs/VERIFIER.md): every number, with its row count, its interval and its caveats.
-- [`docs/REPRODUCE.md`](docs/REPRODUCE.md): one command re-runs the public suite on your machine.
-- [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md): what Laya is for, and what it is not for.
-- [`docs/evals/`](docs/evals/): the whole evals page. Open `docs/evals/index.html` from your clone.
-
-The held-out turns are the operator's own and stay private: only aggregates are in this repository. The
-public suite is 200 invented cases, and anyone can run it.
-
-## What you need
-
-| | |
-|---|---|
-| **macOS** | Linux is not tested yet |
-| **git, tmux, ttyd** | every agent is a tmux session, and ttyd puts its terminal on the page |
-| **Node 22.18 or newer** | builds the page, once |
-| **uv** | installs the `tldrack` command and Laya's runtime |
-| **An agent CLI** | Claude Code or Codex, logged in. One is enough |
-| **About 2 GB of disk** | Laya's runtime and base model. Skip the Laya install and the rack still runs, without verdicts |
-
-tldrack is for one person on their own machine: it has no login. [`SECURITY.md`](SECURITY.md) says what
-it trusts, and what 0.1 does not close yet.
+[Results and caveats](docs/VERIFIER.md) · [Reproduce](docs/REPRODUCE.md) ·
+[Model card](docs/MODEL_CARD.md) · [All evals](docs/evals/)
 
 ## What is optional
 
