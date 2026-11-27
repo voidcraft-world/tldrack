@@ -2047,6 +2047,7 @@ def build_status_handler(
                 git=run_git,
                 start_dir=start_dir,
                 label_lead=label_from_title,
+                label_worker=note_prompt,
                 on_change=notify_snapshot,
                 log=lambda message: click.echo(message, err=True),
             ),

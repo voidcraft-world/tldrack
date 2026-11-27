@@ -7,7 +7,7 @@ then stays `pending` until a topic label lands (`settle_topic`, asked for by
 After that the placeholder is final.
 
 Only GENERATED names qualify (`is_generated`): `+ NEW`'s `vc-N` and a LEAD
-launch's `lead-<profile>-MMDD-HHMM` (`lead/names.py`). Neither says what the
+launch's `lead-<profile>-MMDD-HHMM` and its generated worktree worker names. None says what the
 session is about. An explicit rename suppresses the label, even when the chosen
 name also looks generated. Empty values record that choice.
 
@@ -45,6 +45,7 @@ MAX_NAME = 56
 MAX_TOPIC_ATTEMPTS = 3
 #: `+ NEW`'s names. A LEAD's are `lead/names.py`'s; `is_generated` takes both.
 VC_NAME = re.compile(r"vc-\d+")
+WORKER_NAME = re.compile(r"wt-lead-r\d{4}-[a-f0-9]{4}-[a-z][a-z0-9-]*")
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 NAMES_FILE = "session-names.json"
 
@@ -62,7 +63,7 @@ INTRO = re.compile(
 
 def is_generated(name: object) -> bool:
     """A name the rack minted, which therefore carries no topic: the only kind a label replaces."""
-    return isinstance(name, str) and bool(VC_NAME.fullmatch(name) or LEAD_NAME_RE.fullmatch(name))
+    return isinstance(name, str) and bool(VC_NAME.fullmatch(name) or LEAD_NAME_RE.fullmatch(name) or WORKER_NAME.fullmatch(name))
 
 
 def rack_typed(prompt: object) -> bool:
