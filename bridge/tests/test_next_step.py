@@ -234,6 +234,9 @@ def test_a_row_joins_its_worktree_by_name_then_by_the_longest_containing_root():
     row = {"session": "vc-1", "cwd": f"{home}/worktrees/repo/a/b/src"}
     assert ns.worktree_for(row, trees)["session"] == "wt-ab"
     assert ns.worktree_for({"session": "vc-2", "cwd": f"{home}/worktrees/repo/ab"}, trees) is None
+    # Working in a tree from main (work_trees.py) is no standing in it: a suggested CLEAN would kill the agent.
+    on_main = {"session": "vc-3", "cwd": f"{home}/code/repo", "work_tree": {"path": f"{home}/worktrees/repo/a"}}
+    assert ns.worktree_for(on_main, trees) is None
 
 
 # ── rules ─────────────────────────────────────────────────────────────────────

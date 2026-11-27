@@ -88,6 +88,9 @@ export interface SessionStatus {
      *  "same project" from path text alone. Absent on pre-repo bridges; null
      *  when the session is not inside a git repo. */
     repo?: string | null;
+    /** The linked worktree the session works in, by its cwd or by what its tools did (owned by
+     *  `bridge/tldrack/work_trees.py`). Absent on main and on older bridges; validated by `parse_work_tree`. */
+    work_tree?: WorkTree;
     /** False when the tmux session no longer exists (the bridge keeps killed
      *  sessions' last reported state forever as "store-only" rows). Absent on
      *  pre-2026-07-12 bridges and on the legacy /status fallback path. */
@@ -230,6 +233,34 @@ export function parse_stop_failure(value: unknown): StopFailure | null {
 }
 
 /**
+ * Where a session WORKS, as the bridge resolved it off git's own files: the linked worktree its cwd stands in
+ * (`by: 'cwd'`), or the one its tools act in while it stands elsewhere (`added`, `edited`, `cd`). Owned by
+ * `bridge/tldrack/work_trees.py` — see the note there. Absolute paths; `branch` null for a detached head.
+ */
+export interface WorkTree {
+    path: string;
+    branch: string | null;
+    main: string;
+    by: 'cwd' | 'added' | 'edited' | 'cd';
+}
+
+const WORK_TREE_BY = new Set(['cwd', 'added', 'edited', 'cd']);
+const ABSOLUTE_PATH = /^\/[^\x00-\x1f\x7f]{0,4095}$/;
+
+/** A row's `work_tree`, or null when any field is the wrong shape: an absolute `path` and `main`, a branch
+ *  name or null, and a known `by`. A malformed one draws no island rather than a wrong one. */
+export function parse_work_tree(value: unknown): WorkTree | null {
+    if (typeof value !== 'object' || value === null) return null;
+    const raw = value as Record<string, unknown>;
+    const { path, main, branch, by } = raw;
+    if (typeof path !== 'string' || !ABSOLUTE_PATH.test(path)) return null;
+    if (typeof main !== 'string' || !ABSOLUTE_PATH.test(main)) return null;
+    if (branch !== null && (typeof branch !== 'string' || branch.length === 0 || branch.length > 255 || /[\x00-\x1f\x7f]/.test(branch))) return null;
+    if (typeof by !== 'string' || !WORK_TREE_BY.has(by)) return null;
+    return { path, main, branch, by: by as WorkTree['by'] };
+}
+
+/**
  * One `/snapshot` row (poll, SSE frame, or a legacy `/status` body), checked at
  * the boundary. Null for anything that is not an object with a session name.
  * `state` goes through `as_hook_state`, so nothing downstream ever sees a word
@@ -256,6 +287,11 @@ export function parse_session_row(value: unknown): SessionStatus | null {
         const at = raw.created_at;
         if (typeof at === 'number' && Number.isInteger(at) && at > 0) row.created_at = at;
         else delete row.created_at;
+    }
+    if (raw.work_tree !== undefined) {
+        const tree = parse_work_tree(raw.work_tree);
+        if (tree) row.work_tree = tree;
+        else delete row.work_tree;
     }
     if (raw.background_jobs !== undefined) {
         const jobs = raw.background_jobs;

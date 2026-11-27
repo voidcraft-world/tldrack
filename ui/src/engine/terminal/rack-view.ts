@@ -40,6 +40,7 @@ import {
     type PortSnapshotRow,
     type ProfileInfo,
     type SessionActivity,
+    type WorkTree,
 } from './terminal-status-logic.ts';
 import type { RackSession, SessionIsland } from './multi-terminal-layout.ts';
 import { attach_only_arg } from './session-name.ts';
@@ -142,6 +143,17 @@ export interface WorktreeIsland {
      * base, and through which PR. Null or absent: not landed, or not told.
      */
     landing?: BranchLanding | null;
+    /**
+     * Built from the session's own `work_tree` because the plugin lists no tree holding it (`island_for_session`):
+     * a repository the plugin does not serve. Its title says there is no PR or CLEAN for it here.
+     */
+    unlisted?: true;
+}
+
+/** Where a session works, for the island join: its `work_tree`, else its cwd. Never the PR / CLEAN join, which
+ *  keys on where it STANDS (`worktree_for_session`): CLEAN kills the pressed row's session. */
+export function work_location(session: { cwd?: string | null; work_tree?: WorkTree | null }): string | null {
+    return session.work_tree?.path ?? session.cwd ?? null;
 }
 
 /**
@@ -571,6 +583,8 @@ export function to_rack_session(
         // authoritative (bridge-resolved via git); cwd is the fallback.
         cwd: row.cwd,
         repo: row.repo,
+        // Where it works when that is not where it stands: its island's join (`island_for_session`).
+        ...(row.work_tree ? { work_tree: row.work_tree } : {}),
         ...(profile ? { profile } : {}),
         // Background rows only; validated at ingest (`parse_session_row`).
         ...(row.display === 'background' ? { background_jobs: row.background_jobs ?? null } : {}),
@@ -806,13 +820,20 @@ export function cleaning_sessions(
  * so the move shows on the next hook. Longest root wins, for nested trees.
  */
 export function island_for_session(
-    session: { cwd?: string | null },
+    session: { cwd?: string | null; work_tree?: WorkTree | null },
     islands: readonly WorktreeIsland[] | undefined,
 ): WorktreeIsland | undefined {
-    const cwd = session.cwd;
-    if (!cwd || !islands || islands.length === 0) return undefined;
-    const root = longest_containing_root(cwd, islands.map((island) => island.path));
-    return root === null ? undefined : islands.find((island) => island.path === root);
+    // Where it WORKS (`work_location`): an agent that ran `git worktree add` from main and edits by absolute
+    // path never moves its cwd, and stood on main on the rack until 2026-11-26 (bridge/tldrack/work_trees.py).
+    const where = work_location(session);
+    if (!where) return undefined;
+    const root = islands && islands.length > 0
+        ? longest_containing_root(where, islands.map((island) => island.path)) : null;
+    const listed = root === null ? undefined : islands!.find((island) => island.path === root);
+    if (listed) return listed;
+    // A tree no plugin lists (its repository is not served): the island still draws, from git's own files.
+    const tree = session.work_tree;
+    return tree ? { path: tree.path, branch: tree.branch, unlisted: true } : undefined;
 }
 
 /** Lower-case, every non-alphanumeric run one `-`, dash-fenced — a segment
@@ -857,10 +878,12 @@ export function session_island(
     const number = island.pr?.number == null ? '' : ` #${island.pr.number}`;
     const pr_words = landed ? ` · ${landed_words(landed)}`
         : pr === 'unknown' ? '' : pr === 'handled' ? ` · PR${number} ${island.pr!.state}` : island.pr!.state === 'closed' ? ` · PR${number} closed, none open` : ' · no PR yet';
+    const unlisted = island.unlisted
+        ? ' · its repository is not in the worktree plugin\'s repos, so no PR or CLEAN here' : '';
     return {
         path: island.path,
         label: said ? null : text,
-        title: `Worktree: ${where}${pr_words} — this agent's edits land there, not in the main checkout`,
+        title: `Worktree: ${where}${pr_words}${unlisted} — this agent's edits land there, not in the main checkout`,
         pr,
         ...(landed ? { landed: true as const } : {}),
         // A landed island whose own PR reads none or closed sends only its colour: `island-status.ts` reads an

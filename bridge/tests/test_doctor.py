@@ -123,6 +123,31 @@ def test_plugin_settings_name_what_is_configured_and_what_did_not_mount():
     assert stray.level == WARN and "not mounted: devcies" in stray.detail
 
 
+def test_a_worktree_repo_the_plugin_does_not_serve_is_named_with_its_fix():
+    def check(**over):
+        return {c.name: c for c in doctor.optional_checks(facts(**over))}.get("worktree repos")
+
+    tree = {"path": "/h/worktrees/side/x", "branch": "feat/x", "main": "/h/code/side", "by": "added"}
+    up = {"sessions": [{"session": "vc-1", "live": True, "work_tree": tree}, {"session": "vc-2", "live": True}]}
+    assert check(snapshot=up) is None, "no plugin answered: nothing to compare"
+    assert check(worktree_repos=("/h/code/main",)) is None, "bridge down: nothing to compare"
+    unlisted = check(snapshot=up, worktree_repos=("/h/code/main",))
+    assert unlisted.level == WARN and "/h/code/side" in unlisted.detail
+    assert unlisted.fix == 'add "/h/code/side" to settings.json plugins.worktree.repos, then restart the bridge'
+    served = check(snapshot=up, worktree_repos=("/h/code/main", "/h/code/side"))
+    assert served.level == OK and served.detail == "2 served, 1 in use"
+    gone = {"sessions": [{"session": "vc-1", "live": False, "work_tree": tree}]}
+    assert check(snapshot=gone, worktree_repos=("/h/code/main",)).level == OK, "a gone row works nowhere"
+    assert doctor.verdict(doctor.run_checks(facts(snapshot=up, worktree_repos=())))[0] == 0, "a warning, never a stop"
+
+
+def test_the_served_repos_are_read_off_the_plugins_repos_body():
+    home = str(Path.home())
+    assert doctor.served_worktree_repos({"repos": [{"path": "~/code/a"}, {"path": ""}, "x"]}) == (f"{home}/code/a",)
+    assert doctor.served_worktree_repos({"error": "nope"}) is None
+    assert doctor.served_worktree_repos(None) is None
+
+
 def test_what_is_switched_off_is_listed_not_warned_about():
     def check(**over):
         return {c.name: c for c in doctor.optional_checks(facts(**over))}["switched off"]
