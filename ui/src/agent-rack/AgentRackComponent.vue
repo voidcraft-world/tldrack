@@ -2626,7 +2626,7 @@ onUnmounted(() => {
                     class="row__line2" :readout="fold_readouts.get(row.node_id)!" />
                 <template v-else>
                     <TaskGroupBar v-for="group in groups_for_parent(payload.task_groups, row.node_id)" :key="group.id"
-                        class="row__line2" :group="group" :disabled="frozen"
+                        class="row__group" :group="group" :disabled="frozen"
                         @control="(id, action) => send('group_control', id, action)" />
                 </template>
             </li>
@@ -3053,6 +3053,8 @@ onUnmounted(() => {
     grid-template-columns: auto minmax(0, 1fr) auto;
     /* What "wide enough for the MODEL readout" is measured against. */
     container: rack-list / inline-size;
+    /* A LEAD can grow when its worker details open inside a scrolling list. */
+    grid-auto-rows: max-content;
     align-content: start;
     column-gap: 9px;
     --rack-mark-w: 9px;
@@ -3432,6 +3434,7 @@ onUnmounted(() => {
 .row__rename--bad { border-color: #f8c146; }
 
 /* The second line: under the NAME, out to the row's end. */
+.row__group { grid-column: 2 / -1; white-space: normal; }
 .row__line2 {
     grid-column: 2 / -1;
     min-width: 0;
