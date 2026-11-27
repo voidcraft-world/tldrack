@@ -791,13 +791,16 @@ class OfficeBoard {
     readonly group = new Group();
     private readonly screen_material = new MeshBasicMaterial({ color: 0xffffff });
     private readonly screen = new Mesh(new PlaneGeometry(1, 1), this.screen_material);
+    /** The frame and legs: baked shading, and no selection outline, so the monitor owns its own. */
+    private readonly solid = new MeshBasicMaterial({ vertexColors: true });
     private readonly frame: Mesh;
     private readonly legs: Mesh[];
     private readonly parts: BoxGeometry[];
     private key = '';
     private aspect = 2;
 
-    constructor(solid: MeshBasicMaterial) {
+    constructor() {
+        const solid = this.solid;
         const frame = shaded_box(1, 1, 0.16, PALETTE.monitor);
         const leg = shaded_box(0.16, 1, 0.16, PALETTE.leg);
         this.parts = [frame, leg];
@@ -841,6 +844,7 @@ class OfficeBoard {
         this.screen.geometry.dispose();
         this.screen_material.map?.dispose();
         this.screen_material.dispose();
+        this.solid.dispose();
         for (const part of this.parts) part.dispose();
     }
 }
@@ -888,7 +892,7 @@ export class AgentOfficeScene {
     private hovered: string | null = null;
     private focused: string | null = null;
     private readonly readouts = new Map<string, FloorReadout>();
-    private readonly board = new OfficeBoard(this.shared.solid);
+    private readonly board = new OfficeBoard();
     private last_tick_ms: number | null = null;
     private readonly floating_names: boolean;
 
