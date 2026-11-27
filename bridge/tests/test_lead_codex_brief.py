@@ -26,8 +26,11 @@ def _codex_worker(fake, session, parent, *, identity=None, pane=IDLE_CODEX, stat
 def test_a_fresh_codex_worker_on_unknown_gets_its_brief_once(tmp_path):
     service, fake, _ = build(tmp_path)
     lead, run_id = launch_and_start(service, fake, steps=())
+    names = []
+    service.bridge.label_worker = lambda session, prompt: names.append((session, prompt))
     session = _codex_step(service, fake, lead)
     service.tick()
+    assert names == []
     assert fake.typed == [], "no worker yet: nothing to type into"
     _codex_worker(fake, session, service.runs.run(run_id)["lead_identity"])
     service.tick()
@@ -35,6 +38,7 @@ def test_a_fresh_codex_worker_on_unknown_gets_its_brief_once(tmp_path):
     assert "lead brief" in fake.typed[0][1] and fake.typed[0][1].startswith("<lead-message")
     service.tick()
     assert len(fake.typed) == 1 and service.typist.pending() == []
+    assert names == [(session, "art\nb")]
 
 
 def test_a_working_codex_holds_the_brief_and_status_names_why(tmp_path):

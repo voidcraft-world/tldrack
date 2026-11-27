@@ -100,6 +100,7 @@ class Bridge:
     start_dir: str | None
     # A lead's rack label from its run's title (session_names.py `title`); the label, or None.
     label_lead: Callable[[str, str], str | None] = lambda session, title: None
+    label_worker: Callable[[str, str], None] = lambda session, prompt: None
     on_change: Callable[[], None] = lambda: None
     log: Callable[[str], None] = print
     # profiles.ProfileRegistry.model_refusal: why a profile cannot launch on a model pair, or None.
@@ -1098,6 +1099,8 @@ class LeadService:
                 self.runs.event(run["id"], kind, step["step_id"], detail)
             if updates:
                 self.runs.update_step(run["id"], step["step_id"], **updates)
+            if updates.get("worker_lineage"):
+                self.bridge.label_worker(step["worker_session"], f"{step['title']}\n{step['brief']}")
             changed = True
         return changed
 

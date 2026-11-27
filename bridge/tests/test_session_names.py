@@ -54,6 +54,18 @@ def test_a_first_prompt_writes_the_placeholder_and_owes_a_topic(tmp_path):
     assert names.get_all() == {"vc-1": "docs-voice"}
 
 
+def test_lead_worker_label_uses_the_step_and_survives_reload(tmp_path):
+    path = tmp_path / "names.json"
+    names = SessionNameStore(path)
+    worker = "wt-lead-r1127-5916-s011"
+    assert names.note_prompt(worker, '<lead-message from="lead"/> run the brief') is None
+    epoch = names.note_prompt(worker, "Terminal layout\nKeep expanded worker controls readable")
+    assert names.get_all() == {worker: "Terminal layout"}
+    assert names.settle_topic(worker, epoch, "worker-controls")
+    assert SessionNameStore(path).get_all() == {worker: "worker-controls"}
+    assert names.note_prompt("wt-my-branch", "Another task") is None
+
+
 def test_the_same_prompt_twice_asks_once(tmp_path):
     names = SessionNameStore(tmp_path / "names.json")
     assert names.note_prompt("vc-1", "Rack names") is not None
