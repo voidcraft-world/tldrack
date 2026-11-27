@@ -492,6 +492,30 @@ class TestLaunchProfiles:
         assert profiles.spawned[-1][0] == "codex-b"
         assert plugin._creates.get("feature") is None  # finished cleanly
 
+    @pytest.mark.parametrize(
+        ("problem", "logged", "offers_paste"),
+        [
+            (None, False, False),
+            ("not typed", True, True),
+            # It IS in the input box: pasting it again would double it.
+            ("typed, but not submitted: press Enter in the pane", True, False),
+        ],
+    )
+    def test_the_job_says_what_became_of_the_prompt(self, profiled, monkeypatch, problem, logged, offers_paste):
+        plugin, _profiles = profiled
+        plugin._handle_create({}, {"branch": "feature", "profile": "claude-a", "prompt": "fix the tooltip"})
+        worker = plugin.started[-1]
+        monkeypatch.setattr("worktree.create.add_worktree", lambda *_a, **_k: None)
+        monkeypatch.setattr("worktree.create.run_bootstrap", lambda *_a, **_k: None)
+        monkeypatch.setattr("worktree.create.run_spawn", lambda *_a: (200, {"created": True}))
+        monkeypatch.setattr("worktree.create.send_prompt", lambda *_a: problem)
+        worker.target(*worker.args)
+        lines = [line for line in plugin._context.lines if "prompt" in line]
+        assert bool(lines) is logged
+        assert any("paste: fix the tooltip" in line for line in lines) is offers_paste
+        assert any("press Enter" in line for line in lines) is (logged and not offers_paste)
+        assert plugin._creates.get("feature") is None  # the session is up either way
+
 
 class TestPermissionMode:
     """`POST /create {permission_mode}` — a worker starting in the CLI's automatic-approval mode.
@@ -517,7 +541,7 @@ class TestPermissionMode:
         monkeypatch.setattr("worktree.create.run_bootstrap", lambda *_a, **_k: None)
         monkeypatch.setattr(profiles, "spawn_argv", lambda *a, **kw: seen.update(args=a, kw=kw) or ["tmux"])
         monkeypatch.setattr("worktree.create.run_spawn", lambda *_a: (200, {"created": True}))
-        monkeypatch.setattr("worktree.create.send_prompt", lambda *_a: True)
+        monkeypatch.setattr("worktree.create.send_prompt", lambda *_a: None)
         worker = plugin.started[-1]
         worker.target(*worker.args)
         return seen

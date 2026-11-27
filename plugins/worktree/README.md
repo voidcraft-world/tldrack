@@ -248,6 +248,11 @@ resolution. The cost is a readiness race, and its failure mode is chosen to be
 harmless: if the pane never looks ready we do not send, and say so. A task pasted
 into a bare shell is the outcome worth paying to avoid.
 
+Typed is not sent. The Enter waits until the pane shows the prompt in the input
+box, is pressed only on that screen, and counts only once the prompt has left the
+box; a prompt that stays there is logged as typed but not submitted. Owned by
+`worktree/create.py` § SUBMITTED — see the note there.
+
 ## Settings
 
 `plugins.worktree` in the operator's `settings.json` (the seam: `plugins/README.md`):

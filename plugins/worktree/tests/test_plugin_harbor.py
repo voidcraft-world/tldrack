@@ -1634,7 +1634,7 @@ class TestCreateExisting:
             "worktree.create.spawn_session",
             lambda _cli, name, cwd, _env: spawned.append((name, str(cwd))) or (200, {"created": True}),
         )
-        monkeypatch.setattr("worktree.create.send_prompt", lambda name, prompt: steps.append(prompt) or True)
+        monkeypatch.setattr("worktree.create.send_prompt", lambda name, prompt: steps.append(prompt))
         advance = plugin._creates.advance
         monkeypatch.setattr(plugin._creates, "advance", lambda branch, step: steps.append(step) or advance(branch, step))
         worker.run_now()
