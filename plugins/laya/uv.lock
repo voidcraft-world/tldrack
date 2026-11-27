@@ -180,9 +180,9 @@ wheels = [
 
 [[package]]
 name = "voidcraft-world-bridge"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/51/ce/27232cedfdd8703f0e2ad0d1559fc13f2ec2f87cb33bec471c9177f9039c/voidcraft_world_bridge-0.1.4.tar.gz", hash = "sha256:835e486200da208ca4b740594545c72db0dca6602b16c5c1af904f8b839fd801", size = 56136, upload-time = "2026-11-12T21:56:03.805Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/2f/56d44d5ff40bd0f25463a76e1aff3dfc5ab000a4310584d3ebaa5e2bfc7c/voidcraft_world_bridge-0.1.5.tar.gz", hash = "sha256:2af057dcac0892943d041725391df122ba125c458b1af99f54695762d266dc99", size = 56123, upload-time = "2026-11-27T05:59:28.184Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/8c/c80917db8a9984ba906dba0334e937fafc8bde244a99b78821540e8b9aa0/voidcraft_world_bridge-0.1.4-py3-none-any.whl", hash = "sha256:cbdcb523f0887110275e915360e2d6125f26cd2b9cf3b3f3b3d5fc03f80526ad", size = 67099, upload-time = "2026-11-12T21:56:02.536Z" },
+    { url = "https://files.pythonhosted.org/packages/38/71/2344535794f64ea49b98e2c9383cde9a49f0f6dd08c576fb1831f1632286/voidcraft_world_bridge-0.1.5-py3-none-any.whl", hash = "sha256:251675d0e9b1ba8dce464a55393e2331d3dcb0b634eb5c5e64e9f648a7e4d58d", size = 67116, upload-time = "2026-11-27T05:59:26.921Z" },
 ]
