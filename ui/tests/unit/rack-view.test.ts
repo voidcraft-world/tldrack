@@ -502,6 +502,57 @@ test('build_rack_payload stamps an island on worktree rows only, and rows carry 
         'no plugin, no islands');
 });
 
+// ── where an agent works, when its cwd does not say (bridge/tldrack/work_trees.py) ──
+import { work_location, worktree_for_session as wt_for_session } from '../../src/engine/terminal/rack-view.ts';
+import { parse_session_row, parse_work_tree } from '../../src/engine/terminal/terminal-status-logic.ts';
+
+const ADDED = { path: '/Users/u/worktrees/my-app/fix-nav', branch: 'fix/nav', main: '/Users/u/code/my-app', by: 'added' } as const;
+
+test('an agent standing on main that works in a tree is drawn on that tree\'s island', () => {
+    // The 2026-11-26 report: `git worktree add` from main, every edit by absolute path, cwd never moved.
+    const on_main = { cwd: '/Users/u/code/my-app', work_tree: ADDED };
+    assert.equal(work_location(on_main), ADDED.path);
+    assert.equal(island_for_session(on_main, ISLANDS)?.branch, 'fix/nav', 'the plugin\'s island, with its PR');
+    assert.equal(island_for_session(on_main, ISLANDS)?.unlisted, undefined);
+    assert.equal(work_location({ cwd: '/Users/u/code/my-app' }), '/Users/u/code/my-app');
+    assert.equal(work_location({}), null);
+});
+
+test('a tree no plugin lists still gets its island, saying there is no PR or CLEAN for it', () => {
+    const elsewhere = { path: '/Users/u/worktrees/side/x', branch: null, main: '/Users/u/code/side', by: 'edited' } as const;
+    for (const islands of [ISLANDS, [], undefined]) {
+        const found = island_for_session({ cwd: '/Users/u/code/side', work_tree: elsewhere }, islands);
+        assert.deepEqual(found, { path: elsewhere.path, branch: null, unlisted: true });
+    }
+    const drawn = session_island({ path: elsewhere.path, branch: 'feat/x', unlisted: true }, 'vc-7', 'side');
+    assert.equal(drawn.label, 'feat/x');
+    assert.match(drawn.title, /not in the worktree plugin's repos, so no PR or CLEAN here/);
+    assert.equal(drawn.pr, 'unknown');
+});
+
+test('the PR / CLEAN join stays where a session STANDS: CLEAN kills the pressed row\'s session', () => {
+    const rows = [WT('fix/nav', '/Users/u/worktrees/my-app/fix-nav')];
+    assert.equal(wt_for_session({ session: 'vc-7', cwd: '/Users/u/code/my-app', work_tree: ADDED } as never, rows), undefined);
+});
+
+test('build_rack_payload carries work_tree onto the session and joins its island', () => {
+    const rows = [row({ session: 'vc-7', cwd: '/Users/u/code/my-app', repo: 'my-app', work_tree: ADDED })];
+    const [session] = build_rack_payload({ ...COMMON, rows, focused: null, islands: ISLANDS }).sessions;
+    assert.deepEqual(session.work_tree, ADDED);
+    assert.equal(session.island?.path, '~/worktrees/my-app/fix-nav');
+});
+
+test('parse_work_tree takes only a well-formed tree, and a bad one is dropped from the row', () => {
+    assert.deepEqual(parse_work_tree(ADDED), ADDED);
+    assert.deepEqual(parse_work_tree({ ...ADDED, branch: null, extra: 1 }), { ...ADDED, branch: null });
+    for (const bad of [null, 'x', { ...ADDED, path: 'relative' }, { ...ADDED, main: 5 }, { ...ADDED, by: 'guessed' },
+        { ...ADDED, branch: '' }, { ...ADDED, branch: 'a\nb' }]) {
+        assert.equal(parse_work_tree(bad), null, JSON.stringify(bad));
+    }
+    assert.deepEqual(parse_session_row({ session: 'a', state: 'free', work_tree: ADDED })?.work_tree, ADDED);
+    assert.equal('work_tree' in parse_session_row({ session: 'a', state: 'free', work_tree: { path: 'x' } })!, false);
+});
+
 // ── the worktree button: PR, or CLEAN once the branch has landed ────────────
 import {
     cleaning_sessions,

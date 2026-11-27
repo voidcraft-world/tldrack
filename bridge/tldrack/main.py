@@ -73,6 +73,8 @@ from tldrack.ledger.scheduler import INTERVAL_SECONDS as LEDGER_INTERVAL_SECONDS
 from tldrack.ledger.store import ledger_dir
 from tldrack.icons import ICON_TOKEN_RE, SessionIconStore, resolve_icons_path
 from tldrack.stars import SessionStarStore, resolve_stars_path
+from tldrack.work_trees import SessionWorkTreeStore, TreeResolver, resolve_work_trees_path, row_field
+from tldrack.work_trees import evidence as work_tree_evidence
 from tldrack.models import MODEL_TOKEN_RE, SessionModelStore, current_readings, resolve_models_path
 from tldrack.mission_cli import mission as mission_group
 from tldrack.lead.cli import lead as lead_group
@@ -945,6 +947,7 @@ def build_status_handler(
     activity_log: ActivityLog | None = None,
     topic_ask: Callable[[str, list[str]], TopicResult] | None = None,
     verdicts: SessionVerdictStore | None = None,
+    work_trees: SessionWorkTreeStore | None = None,
     rack_metrics: RackMetrics | None = None,
     next_step_paths: tuple[Path, Path] | None = None,
     next_step_chat: next_step_mod.Chat | None = None,
@@ -1024,6 +1027,20 @@ def build_status_handler(
     stuck = StuckDetector(on_flagged=lambda session, kind: signals.put("stuck_flagged", session, kind))
     # When each row's newest verdict landed (wall s): the digest's "done since the last one".
     verdict_landed: dict[str, float] = {}
+    # Which linked worktree holds a path, read off git's files behind a short cache (work_trees.py).
+    tree_resolver = TreeResolver()
+
+    def served_worktree_repos_now() -> tuple[str, ...] | None:
+        """The mounted worktree plugin's repositories, asked in process (doctor.py `worktree_repos_check`)."""
+        worktree = capability("worktree")
+        handle_get = getattr(worktree, "handle_get", None)
+        if not callable(handle_get):
+            return None
+        try:
+            status, body = handle_get("/repos", {})[:2]
+        except Exception:  # noqa: BLE001 — a plugin bug is a missing doctor line, never a 500
+            return None
+        return doctor_mod.served_worktree_repos(body) if status == 200 else None
 
     def capability(name: str) -> object | None:
         """The mounted plugin that provides `name` (`laya`: turn-end verdicts; `worktree`: checkouts),
@@ -1226,6 +1243,12 @@ def build_status_handler(
             # § The operator's label), so its title reads as theirs, not as Laya's p.
             if row["session"] in labelled:
                 row["open_work_labelled"] = True
+            # Additive `work_tree` `{path, branch, main, by}`: the linked worktree this session works in, by
+            # its cwd or by what its tools did (work_trees.py). Omitted on main, like `stop_failure`.
+            if work_trees is not None:
+                tree = row_field(row.get("cwd"), work_trees.get(row["session"]), tree_resolver)
+                if tree is not None:
+                    row["work_tree"] = tree
             if (reading := stuck_of(row)) is not None:
                 row["stuck"] = reading
             if lead_service is not None:  # `lead` on a lead row, `worker` on a worker row (lead/service.py)
@@ -1846,6 +1869,8 @@ def build_status_handler(
                 missions.forget(session)
             if next_steps is not None:  # held for the press that killed it (next_step.py `forget`)
                 next_steps.forget(session)
+            if work_trees is not None:
+                work_trees.forget(session)
             notify_snapshot()
             return 200, {"ok": True, "killed": True}
         if "can't find session" in stderr or "no server running" in stderr:
@@ -1855,6 +1880,8 @@ def build_status_handler(
                 auto_names.forget(session)
             if stars is not None:
                 stars.forget(session)
+            if work_trees is not None:
+                work_trees.forget(session)
             # Already gone (or no tmux server at all) — the caller's goal
             # state is met, so this is success, just nothing to do.
             return 200, {"ok": True, "killed": False, "detail": "session not found"}
@@ -1928,6 +1955,8 @@ def build_status_handler(
             missions.forget(name)
         if records is not None:
             records.forget(name)
+        if work_trees is not None:
+            work_trees.forget(name)
         cwd = cwd or (start_dir if start_dir and os.path.isdir(start_dir) else str(Path.home()))
         try:
             result = subprocess.run(
@@ -2487,7 +2516,13 @@ def build_status_handler(
                 self._send_json(503, {"error": "this bridge does not know its ports"})
                 return
             try:
-                facts = doctor_facts(bridge_info.get("port") or status_port - 1, status_port, self.snapshot_payload(), switches)
+                facts = doctor_facts(
+                    bridge_info.get("port") or status_port - 1,
+                    status_port,
+                    self.snapshot_payload(),
+                    switches,
+                    worktree_repos=served_worktree_repos_now(),
+                )
             except Exception as exc:  # noqa: BLE001 — a check that cannot run is an error line, never a traceback
                 self._send_json(500, {"error": f"doctor could not read this machine: {type(exc).__name__}"})
                 return
@@ -2574,6 +2609,8 @@ def build_status_handler(
             open_work_reactions.rename(old, new)
             if verdicts is not None:
                 verdicts.rename(old, new)
+            if work_trees is not None:
+                work_trees.rename(old, new)
             if next_steps is not None:
                 next_steps.rename(old, new)
             if loops is not None:
@@ -2693,6 +2730,8 @@ def build_status_handler(
             if plan.resume is None:
                 model_store.forget(name)
                 forget_attention(name)  # a resumed conversation keeps its loop
+                if work_trees is not None:  # and where it worked (work_trees.py)
+                    work_trees.forget(name)
             try:
                 argv = restore_argv(plan, profiles)
                 if lineage:
@@ -3848,6 +3887,11 @@ def build_status_handler(
                     model = payload_model
             if missions is not None and event == "PreToolUse":
                 missions.note_tool(session, payload)
+            # Where the agent works when it is not where it stands (work_trees.py). Main thread only: a
+            # worktree-isolated subagent reports its own checkout. The hook's closing snapshot carries it.
+            if work_trees is not None and event == "PreToolUse" and not is_subagent_hook(payload):
+                found = work_tree_evidence(payload.get("tool_name"), payload.get("tool_input"), payload.get("cwd"))
+                work_trees.observe(session, found)
             # A lead's edit is refused, a worker's AskUserQuestion goes to its lead (lead/service.py).
             # A subagent's call too: a lead delegating an edit to a subagent is still the lead editing.
             lead_answer = (
@@ -3873,8 +3917,13 @@ def build_status_handler(
                 # A human prompt closes the open-work loop; a self-woken turn keeps it (attention.py § 2).
                 if loops is not None:
                     loops.note_prompt(session, payload.get("prompt"))
-            elif event == "SessionStart" and fresh_for_event(event, payload) is True and loops is not None:
-                loops.forget(session)  # a new conversation (startup, /clear) has no loop yet
+            elif event == "SessionStart" and fresh_for_event(event, payload) is True:
+                if loops is not None:
+                    loops.forget(session)  # a new conversation (startup, /clear) has no loop yet
+                if work_trees is not None:
+                    work_trees.forget(session)  # nor anywhere it worked (work_trees.py)
+            elif event == "SessionEnd" and payload.get("reason") in USER_ENDED_REASONS and work_trees is not None:
+                work_trees.forget(session)
             # The work persona and the mission ride back as this hook's answer
             # (personas.py, missions.py).
             hook_contexts: list[str | None] = []
@@ -4210,6 +4259,7 @@ def start_status_server(
         ledger=ledger,
         activity_log=ActivityLog(),
         verdicts=SessionVerdictStore(resolve_verdicts_path()),
+        work_trees=SessionWorkTreeStore(resolve_work_trees_path()),
         topic_labels=TopicLabels(resolve_topic_labels_path(), log=lambda message: click.echo(message, err=True)),
         next_step_paths=(next_step_mod.resolve_state_path(), next_step_mod.resolve_log_path()),
         loops=OpenLoops(resolve_attention_path()),
@@ -5171,7 +5221,8 @@ def doctor_command(port: int, status_port: int | None, as_json: bool) -> None:
     """Check this machine: tmux, ttyd, node, uv, an agent CLI, the hooks, the ports, the directories,
     and which optional parts are on. Changes nothing. Exit 1 when something stops the rack starting."""
     status_port = resolve_status_port(port, status_port)
-    sections = doctor_mod.run_checks(doctor_facts(port, status_port, fetch_snapshot(status_port)))
+    facts = doctor_facts(port, status_port, fetch_snapshot(status_port), worktree_repos=fetch_worktree_repos(status_port))
+    sections = doctor_mod.run_checks(facts)
     code, closing = doctor_mod.verdict(sections)
     if as_json:
         click.echo(json.dumps(doctor_mod.wire(sections), indent=2))
@@ -5184,7 +5235,23 @@ def doctor_command(port: int, status_port: int | None, as_json: bool) -> None:
     sys.exit(code)
 
 
-def doctor_facts(port: int, status_port: int, snapshot: dict | None, features: FeatureSwitches | None = None) -> doctor_mod.Facts:
+def fetch_worktree_repos(status_port: int, timeout: float = 2.0) -> tuple[str, ...] | None:
+    """The running bridge's worktree plugin's served repositories (doctor.py `served_worktree_repos`), or
+    None when no bridge or no plugin answers."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{status_port}/plugin/worktree/repos", timeout=timeout) as resp:
+            return doctor_mod.served_worktree_repos(json.loads(resp.read()))
+    except (OSError, ValueError):
+        return None
+
+
+def doctor_facts(
+    port: int,
+    status_port: int,
+    snapshot: dict | None,
+    features: FeatureSwitches | None = None,
+    worktree_repos: tuple[str, ...] | None = None,
+) -> doctor_mod.Facts:
     """Everything `doctor` reads from this machine (doctor.py `Facts`), for the command and for
     `GET /doctor`. `snapshot` is the running bridge's, or None when none answers; `features` is the
     running bridge's store, or None to read the file. Raises nothing a broken config file causes:
@@ -5234,6 +5301,7 @@ def doctor_facts(port: int, status_port: int, snapshot: dict | None, features: F
         plugin_settings=tuple(settings.plugins) if settings is not None else (),
         features_off=tuple(switches.off_keys()) if switches is not None else (),
         features_error=switches.error if switches is not None else None,
+        worktree_repos=worktree_repos,
     )
 
 

@@ -25,6 +25,7 @@ import {
     type StopFailure,
     type StuckReading,
     type TerminalDisplayState,
+    type WorkTree,
 } from './terminal-status-logic.ts';
 
 /** Laya's open-work verdict as a row carries it (`RackSession.open_work`). */
@@ -111,6 +112,8 @@ export interface RackSession {
     /** The git repo this session is in, resolved by the bridge (worktrees folded
      *  onto their parent). The cohort key when present. */
     repo?: string | null;
+    /** The linked worktree it works in, when its cwd does not say so (`rack-view.ts` `work_location`). */
+    work_tree?: WorkTree;
     /** The launch profile this session runs (`RackPayload.profiles` has its
      *  label). Absent/null on a pre-profile bridge or an unattributed session. */
     profile?: string | null;
