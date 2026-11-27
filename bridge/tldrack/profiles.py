@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from tldrack.profile_availability import ProfileAvailability
+    from tldrack.profile_launch_settings import ProfileLaunchSettings
 
 from tldrack import paths
 from tldrack import antigravity_hooks, headless
@@ -991,6 +992,7 @@ class ProfileRegistry:
         self._profiles = list(profiles)
         self._by_id = {p.id: p for p in self._profiles}
         self._availability: ProfileAvailability | None = None
+        self._launch_settings: ProfileLaunchSettings | None = None
         self.default_id = default_id
         self.source = source  # "file" | "detected" — for the startup echo
         self._home = home
@@ -1038,8 +1040,20 @@ class ProfileRegistry:
                 self._availability = ProfileAvailability(list(self._by_id))
             return self._availability
 
+    @property
+    def launch_settings(self) -> ProfileLaunchSettings:
+        # Live defaults: owned by profile_launch_settings.py — see the note there.
+        with self._lock:
+            if self._launch_settings is None:
+                from tldrack.profile_launch_settings import ProfileLaunchSettings
+
+                self._launch_settings = ProfileLaunchSettings(self._profiles)
+            return self._launch_settings
+
     def launch_refusal(self, profile_id: object) -> str | None:
         profile = self.resolve(profile_id)
+        if profile is not None and profile.kind in ("claude", "codex") and self.launch_settings.error:
+            return self.launch_settings.error
         if profile is not None and self.availability.paused(profile.id):
             return f"Profile '{profile.label}' is paused; resume it in Launch profiles"
         return None
@@ -1185,12 +1199,13 @@ class ProfileRegistry:
             refused = self.permission_refusal(profile.id, permission_mode, cli_bin=binary)
             if refused is not None:
                 raise ValueError(refused)
+        launch_profile = self.launch_settings.apply(profile, explicit_model=model is not None)
         if model is not None or subagent_model is not None:
-            refused = self.model_refusal(profile.id, model, subagent_model, cli_bin=binary)
+            refused = self.model_refusal(profile.id, model, subagent_model, cli_bin=binary, default_profile=launch_profile)
             if refused is not None:
                 raise ValueError(refused)
         argv = spawn_argv(
-            profile,
+            launch_profile,
             session,
             cwd,
             extra_args,
@@ -1240,7 +1255,13 @@ class ProfileRegistry:
         return None
 
     def model_refusal(
-        self, profile_id: object, model: object = None, subagent_model: object = None, cli_bin: str | None = None
+        self,
+        profile_id: object,
+        model: object = None,
+        subagent_model: object = None,
+        cli_bin: str | None = None,
+        *,
+        default_profile: Profile | None = None,
     ) -> str | None:
         """Why `profile_id` cannot launch on `model` with its subagents forced to
         `subagent_model`, or None when it can — the one gate before any spawn names
@@ -1267,7 +1288,10 @@ class ProfileRegistry:
             return f"profile '{profile.id}' pins its own model ({pinned} in its args)"
         if subagent_model is None:
             return None
-        own = model if model is not None else pinned_model(profile)
+        effective = default_profile or self.launch_settings.apply(profile)
+        own = model if model is not None else pinned_model(effective)
+        if own is None and pinned_model_flag(effective):
+            return "cannot rank the configured model to enforce a weaker subagent model"
         if own is not None and model_tier(subagent_model) >= model_tier(own):
             return f"subagent model '{subagent_model}' is not weaker than '{own}'"
         binary = cli_bin or self.cli_path(profile.id)
@@ -1442,7 +1466,7 @@ class ProfileRegistry:
                 # What INSTALL would add (`hooks_missing`), for the OPS row's readout.
                 "hooks_missing": missing,
                 "cli_found": self.cli_found(profile.id),
-                "model_label": profile.model_label,
+                "model_label": self.launch_settings.apply(profile).model_label,
                 "usage": (
                     self._codex_usage.get(profile.config_dir) if profile.kind == "codex" else (usage or {}).get(profile.id)
                 ),
