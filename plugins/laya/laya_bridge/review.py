@@ -166,10 +166,11 @@ def training(base: Path | None, query: Mapping[str, Any] | None) -> Response:
 def queue(
     base: Path | None, query: Mapping[str, Any] | None, *, loaded: Mapping[str, str] | None = None, now: datetime | None = None
 ) -> Response:
-    """GET /review/queue: every surface's stats, and up to `limit` cards of one surface. The mix (no `stratum`)
-    also carries the blind retests that page deals (`review_data.retest_cards`); a narrowed deal is only its lane."""
+    """GET /review/queue: every surface's stats, and up to `limit` cards of one surface. The mix (no `stratum`, no
+    `band`) also carries the blind retests that page deals (`review_data.retest_cards`); a narrowed deal is only its
+    lane, or its band (`review_data.py` THE BAND DEAL). One narrowing at a time: both is refused."""
     try:
-        query = _check_query(query, ("surface", "limit", "stratum"))
+        query = _check_query(query, ("surface", "limit", "stratum", "band"))
         raw_surface = _query_value(query, "surface")
         surface = None if raw_surface is None else _surface(raw_surface, "bad_query")
         raw_limit = _query_value(query, "limit")
@@ -179,6 +180,11 @@ def queue(
         stratum = _query_value(query, "stratum")
         if stratum is not None and stratum not in review_data.STRATA:
             raise bad_request("bad_query", f"stratum must be one of {', '.join(review_data.STRATA)}")
+        band = _query_value(query, "band")
+        if band is not None and band not in review_data.BANDS:
+            raise bad_request("bad_query", f"band must be one of {', '.join(review_data.BANDS)}")
+        if band is not None and stratum is not None:
+            raise bad_request("bad_query", "ask a stratum or a band, not both")
     except Refusal as refusal:
         return refusal_response(refusal)
     if not params_ready(base):
@@ -188,8 +194,8 @@ def queue(
     if surface is None:  # the surface with the most to review; the first on a tie
         surface = max(every, key=lambda entry: entry[2]["to_review"])[0]
     snap = next(snap for name, snap, _stats in every if name == surface)
-    cards = review_data.queue(snap, limit, stratum) if limit else []
-    retests = review_data.retest_cards(snap, limit, now) if stratum is None else []
+    cards = review_data.queue(snap, limit, stratum, band) if limit else []
+    retests = review_data.retest_cards(snap, limit, now) if stratum is None and band is None else []
     head = next(entry_stats for name, _snap, entry_stats in every if name == surface)
     return 200, ok_body(
         f"{head['to_review']} to review",

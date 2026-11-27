@@ -189,6 +189,17 @@ class TestRouter:
         inside = worktree_root_for(self.two) / "feat-x" / "deep"
         assert router.handle_get("/state", {"repo": [str(inside)]})[1]["repo_key"] == key_two
 
+    def test_a_hand_made_tree_outside_the_worktree_root_routes_to_its_repository(self, tmp_path):
+        """`git worktree add` by hand, anywhere (an agent's own `.claude/worktrees/x`): git names its main checkout."""
+        router, _context = self.router(tmp_path, {"repos": [str(tmp_path / "one"), str(tmp_path / "two")]})
+        spike = tmp_path / "elsewhere" / "spike"
+        subprocess.run(["git", "worktree", "add", "-q", "-b", "spike", str(spike)], cwd=self.two, check=True)
+        key_two = repo_key(self.two)
+        assert router.handle_get("/state", {"repo": [str(spike)]})[1]["repo_key"] == key_two
+        assert router.handle_post("/pr", {}, {"repo": str(spike / "a.py"), "branch": "spike"})[1]["repo_key"] == key_two
+        stranger = git_repo(tmp_path / "three")
+        assert router.handle_get("/state", {"repo": [str(stranger)]})[0] == 404, "a repository nobody configured"
+
     def test_an_unknown_repository_is_a_404_that_lists_the_keys(self, tmp_path):
         router, _context = self.router(tmp_path)
         status, body = router.handle_get("/state", {"repo": ["nope"]})

@@ -19,7 +19,7 @@ proofs): the subscription login or nothing.
 
 ── Two arms ─────────────────────────────────────────────────────────────────
 `question`: Laya's own one-line question (`Suite.question`), so the gap between the two is the model.
-`rubric`: the teacher's rubric (`LABEL_SYSTEM_PROMPT`), so it is the model as it would be deployed. The
+`rubric`: the teacher's rubric with the operator's notes (`label_rubric`), so it is the model as it would be deployed. The
 model labels on that rubric are Sonnet's: a rubric vote scored against THEM measures agreement between
 two Claude models, not accuracy. The operator's labels are the reference.
 
@@ -47,7 +47,7 @@ from laya_lab import siblings  # noqa: F401  (puts tldrack and laya_bridge on sy
 from laya_lab.data import jsonl_line, open_private
 from laya_lab.golden import SUITES, Suite
 from laya_lab.metrics import at_cut, auc, fmt_num
-from laya_lab.open_work_data import CALL_BUDGET_USD, CALL_TIMEOUT_SECONDS, LABEL_SYSTEM_PROMPT
+from laya_lab.open_work_data import CALL_BUDGET_USD, CALL_TIMEOUT_SECONDS, LABEL_SYSTEM_PROMPT, label_rubric, require_notes
 from laya_bridge import files, paths, rows
 
 VOTES = "votes:"
@@ -103,14 +103,15 @@ def parse_votes(target: str) -> tuple[str, str]:
     return model, arm
 
 
-def system_prompt(suite: Suite, arm: str) -> str:
+def system_prompt(suite: Suite, arm: str, notes: str = "") -> str:
+    """The arm's system prompt. Only the rubric arm hears the operator's notes: the question arm is Laya's own question."""
     if arm == "rubric":
-        return LABEL_SYSTEM_PROMPT.removesuffix(" Answer for every id given.") + ASK_P
+        return label_rubric(notes, LABEL_SYSTEM_PROMPT.removesuffix(" Answer for every id given.")) + ASK_P
     return QUESTION_PREAMBLE.format(question=suite.question["instructions"]) + ASK_P
 
 
-def prompt_digest(suite: Suite, arm: str) -> str:
-    return hashlib.sha256(system_prompt(suite, arm).encode("utf-8")).hexdigest()[:12]
+def prompt_digest(suite: Suite, arm: str, notes: str = "") -> str:
+    return hashlib.sha256(system_prompt(suite, arm, notes).encode("utf-8")).hexdigest()[:12]
 
 
 def batch_prompt(batch: Sequence[str]) -> str:
@@ -149,7 +150,7 @@ def read_votes(base: Path, suite: Suite, model: str, arm: str) -> dict[str, tupl
         found, _bad = files.read_jsonl_capped(path, VOTES_CAP_BYTES)
     except files.SourceError as error:
         raise SystemExit(f"[laya-lab] refusing: {path} is {error}") from None
-    prompt = prompt_digest(suite, arm)
+    prompt = prompt_digest(suite, arm, require_notes(base).text)
     out: dict[str, tuple[float, float]] = {}
     for row in found:
         p, ms = row.get("p"), row.get("ms")
@@ -271,12 +272,13 @@ def ask(
             f"[laya-lab] refusing: profile {profile or registry.default_id()} bills "
             f"{(auth or {}).get('billing', 'unknown')}, not the subscription"
         )
+    notes = require_notes(base).text
     calls = 0
     with tempfile.TemporaryDirectory() as scratch:
         for arm, states in todo.items():
             if arm not in ARMS:
                 raise SystemExit(f"[laya-lab] refusing: {arm!r} is not an arm")
-            prompt = prompt_digest(suite, arm)
+            prompt = prompt_digest(suite, arm, notes)
             for start in range(0, len(states), batch_size):
                 if calls >= max_calls:
                     print(f"[laya-lab] stopping: {max_calls} calls made (--max-calls); run it again to resume")
@@ -284,7 +286,7 @@ def ask(
                 batch = [state for state in states[start : start + batch_size] if isinstance(state, str)]
                 call = registry.headless_call(
                     profile,
-                    system_prompt=system_prompt(suite, arm),
+                    system_prompt=system_prompt(suite, arm, notes),
                     model=model,
                     budget_usd=CALL_BUDGET_USD,
                     json_schema=VOTE_SCHEMA,

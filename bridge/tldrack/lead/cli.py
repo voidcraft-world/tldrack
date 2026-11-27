@@ -72,10 +72,25 @@ def status(as_json: bool) -> None:
 @click.option("--plan", "plan", required=True, help="The plan file (or - for stdin).")
 @click.option("--title", required=True)
 @click.option("--parallel", type=click.IntRange(1, MAX_PARALLEL), default=DEFAULT_PARALLEL, show_default=True)
-def start(plan: str, title: str, parallel: int) -> None:
+@click.option(
+    "--repo",
+    help="The repository the run leads: a key from the worktree plugin's /repos, or a path in it. "
+    "Default: the one your session works in, else the plugin's first.",
+)
+def start(plan: str, title: str, parallel: int, repo: str | None) -> None:
     """Start a run from a plan. The bridge keeps a frozen copy and its hash."""
     path = None if plan == "-" else str(Path(plan).expanduser().resolve())
-    show(post("start", {"plan_text": read_text(plan), "plan_path": path, "title": title, "parallel": parallel}))
+    body = {"plan_text": read_text(plan), "plan_path": path, "title": title, "parallel": parallel}
+    if repo is not None:
+        body["repo"] = repo_arg(repo)
+    show(post("start", body))
+
+
+def repo_arg(value: str) -> str:
+    """A directory that exists is sent as its absolute path (the bridge never reads a relative one); anything
+    else goes as written, a repository key."""
+    candidate = Path(value).expanduser()
+    return str(candidate.resolve()) if candidate.is_dir() else value
 
 
 @lead.command()

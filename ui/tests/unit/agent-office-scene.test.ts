@@ -297,3 +297,30 @@ test('a room draws activity sections with tint and dividers, without status text
         assert.equal(named('band-divider').length, 1);
     });
 });
+
+test('the wall monitor stands behind the back row, redraws only when its lines change, and comes down with none', () => {
+    with_scene((scene) => {
+        const layout = build_office(rows);
+        const board = objects(scene, object => object.name === 'board')[0];
+        const screen = objects(scene, object => object.name === 'board-screen')[0];
+        assert.equal(board.visible, false);
+        const lines = [{ text: 'RACK · 2 AGENTS', color: '#8ccdaa' }, { text: '  1 WORKING', color: '#ffffff' }];
+        scene.update(layout);
+        scene.update_board(layout, lines);
+        assert.equal(board.visible, true);
+        assert.ok(board.position.z < -layout.depth / 2, 'behind the back wall, on the empty ground');
+        assert.ok(screen.position.y - screen.scale.y / 2 > 1, 'clear of the desks in front of it');
+        const first = screen.material.map;
+        scene.update_board(layout, lines.map(line => ({ ...line })));
+        assert.equal(screen.material.map, first, 'the same lines keep their texture');
+        let released = 0;
+        first?.addEventListener('dispose', () => { released += 1; });
+        scene.update_board(layout, [...lines, { text: 'ACCOUNTS', color: '#8ccdaa' }]);
+        assert.notEqual(screen.material.map, first);
+        assert.equal(released, 1);
+        scene.update_board(layout, []);
+        assert.equal(board.visible, false);
+        scene.update_board(build_office([]), lines);
+        assert.equal(board.visible, false, 'an empty office has no wall to hang it behind');
+    });
+});

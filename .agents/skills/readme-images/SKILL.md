@@ -1,1 +1,0 @@
-../../../.claude/skills/readme-images/SKILL.md

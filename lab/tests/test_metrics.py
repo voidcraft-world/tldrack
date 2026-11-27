@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from laya_lab import metrics
@@ -161,3 +163,109 @@ def test_calibration_sets_operator_ece_beside_teacher_ece_on_the_same_rows():
     assert block["teacher"]["ece"] < block["ece"], "it agrees with its teacher better than with the operator"
     assert block["temperature"] > 1, "the operator disagrees a third of the time: a refit softens it"
     assert [b["cuts"] for b in block["reliability"]] == [[], [0.4], [], [0.7], []]
+
+
+# ── felt: false ⚠️ per 100, missed 🙋 per 100, the 💬 share ─────────────────────
+
+
+def turns(rows: list[tuple[int, str, bool, bool | None, str | None]]) -> list[metrics.FeltTurn]:
+    """`(how many, band, shown, open, grade)` rows, expanded: an invented table."""
+    return [metrics.FeltTurn(band, shown, is_open, grade) for count, band, shown, is_open, grade in rows for _ in range(count)]
+
+
+TABLE = [
+    (3, "open", T, F, "done"),  # shown ⚠️ graded not open: the false ⚠️
+    (5, "open", T, T, "you"),  # shown ⚠️ that was needed
+    (2, "done", F, T, "you"),  # NEEDS YOU under a ✅: the costly miss
+    (1, "reply", F, T, "you"),  # NEEDS YOU under a 💬
+    (1, "open", F, T, "you"),  # NEEDS YOU under a ⚠️ the rack held back
+    (1, "reply", F, T, None),  # OPEN nobody split: counted apart
+    (1, "reply", F, T, "running"),  # open, but the agent was waiting on its own work: no miss
+    (2, "reply", F, F, "read"),
+    (4, "done", F, F, "done"),
+    (1, "reply", F, F, None),  # a bare DONE from before READ: counted done
+    (4, "reply", F, None, None),  # sampled, never graded
+    (2, "done", F, None, None),
+]
+
+
+def test_felt_counts_each_number_on_its_own_rows():
+    found = metrics.felt(turns(TABLE))
+    assert (found["basis"], found["sampled"], found["graded"], found["min_n"]) == ("live_sample", 27, 21, metrics.FELT_MIN_N)
+    false = found["false_warning"]
+    assert (false["count"], false["n"], false["value"]) == (3, 21, 14.3)
+    missed = found["missed_you"]
+    assert (missed["count"], missed["n"], missed["value"]) == (4, 21, 19.0)
+    assert {name: missed[name]["count"] for name in metrics.MISSED_UNDER} == {"done": 2, "reply": 1, "held": 1}
+    assert missed["unsplit"] == 1
+    reply = found["reply"]
+    assert (reply["count"], reply["n"], reply["value"], reply["graded"]) == (10, 27, 0.37, 6)
+    assert {name: reply[name]["count"] for name in ("open", "done", "read")} == {"open": 3, "done": 1, "read": 2}
+
+
+def test_under_the_minimum_n_a_rate_is_its_count_alone():
+    found = metrics.felt(turns(TABLE))
+    assert found["reply"]["open"] == {"count": 3, "n": 6, "value": None, "lo": None, "hi": None}  # 6 graded 💬 < 20
+    few = metrics.felt(turns([(3, "open", T, F, "done"), (4, "done", F, F, "done")]))
+    assert few["false_warning"] == {"count": 3, "n": 7, "value": None, "lo": None, "hi": None}
+    assert metrics.felt([])["false_warning"] == {"count": 0, "n": 0, "value": None, "lo": None, "hi": None}
+    assert metrics.felt(turns(TABLE), minimum=5)["reply"]["open"]["value"] == 0.5
+    assert "3 of 7, no rate" in metrics.felt_lines(few)[0]
+
+
+def test_the_interval_is_the_deck_s_jeffreys_one_pinned_at_the_ends():
+    lo, hi = agreement.intervals((5, 15, 0, 0))["precision"]
+    assert metrics.felt_rate(5, 20) == {"count": 5, "n": 20, "value": 0.25, "lo": lo, "hi": hi}
+    assert lo < 0.25 < hi
+    per = metrics.felt_rate(5, 20, 100)
+    assert (per["value"], per["lo"], per["hi"]) == (25.0, round(lo * 100, 1), round(hi * 100, 1))
+    none, every = metrics.felt_rate(0, 40, 100), metrics.felt_rate(40, 40, 100)
+    assert none["lo"] == 0 == none["value"] < none["hi"] and every["lo"] < every["value"] == 100 == every["hi"]
+    wider = metrics.felt_rate(50, 200)
+    assert wider["hi"] - wider["lo"] < metrics.felt_rate(5, 20)["hi"] - metrics.felt_rate(5, 20)["lo"]
+
+
+def test_felt_turns_reads_the_live_sample_of_a_store(lab):
+    """End to end on a store: only `live_sample` members count, each by its newest decision's band and the rack's shown."""
+    from conftest import SURFACE, decide
+    from laya_bridge import review_data, review_log, rows
+    from laya_bridge.ledger import Ledger
+    from laya_bridge.review_surfaces import REVIEW_SURFACES
+
+    spec = REVIEW_SURFACES[SURFACE]
+
+    def live(prefix: str, n: int, member: bool = True) -> list[str]:
+        found, i = [], 0
+        while len(found) < n:
+            text = f"{prefix} turn end {i}: the agent reported back"
+            if review_data.is_live_member(spec, rows.state_key(text)) == member:
+                found.append(text)
+            i += 1
+        return found
+
+    wolf, quiet, outside = live("wolf", 1), live("quiet", 1), live("outside", 1, member=False)
+    book = Ledger(lambda: lab.base)
+    [wolf_id] = decide(lab, wolf, p=0.9, threshold=0.7, book=book)
+    decide(lab, quiet, p=0.1, threshold=0.7, book=book)  # under the done cut (0.3): a ✅
+    [outside_id] = decide(lab, outside, p=0.9, threshold=0.7, book=book)
+    assert book.react(wolf_id, "shown")[0] == "ok" and book.react(outside_id, "shown")[0] == "ok"
+    graded = [(wolf[0], F, None), (quiet[0], T, "you"), (outside[0], F, None)]
+    with lab.path("data/agent-open-work-operator.jsonl").open("a", encoding="utf-8") as handle:
+        for text, is_open, needs in graded:
+            row = review_log.answer_row(
+                answer_id=review_log.new_answer_id(),
+                at="2026-11-19T01:02:03Z",
+                surface=SURFACE,
+                key=rows.state_key(text),
+                stratum="live_sample",
+                answer="agree",
+                against={"by": "laya", "open": is_open},
+                laya=None,
+                decision_id=None,
+                held_out=True,
+                needs=needs,
+            )
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+    found = metrics.felt(metrics.felt_turns(review_data.snapshot(lab.base, SURFACE)), minimum=1)
+    assert (found["sampled"], found["graded"]) == (2, 2)  # the non-member is nobody's sample
+    assert found["false_warning"]["count"] == 1 and found["missed_you"]["done"]["count"] == 1

@@ -18,7 +18,7 @@ uv run laya-lab settle agent-open-work      # a signed-off batch loses `provisio
 uv run laya-lab unregister coordinator      # back to the base checkpoint (and the code's cut)
 uv run laya-lab compare agent-open-work --voter laya:served --voter other=http://127.0.0.1:8010
                                             # voters side by side: any loopback /v1/systemone server beside Laya,
-                                            # plus their mean (compare.py)
+                                            # plus their mean and their out-of-fold stack (compare.py)
 uv run laya-lab gate agent-open-work        # the promotion gate train runs: the newest unserved checkpoint vs
                                             # the served model, paired (gate.py); --prospective after a registration;
                                             # --fixture PATH also writes its evidence trimmed to numbers
@@ -56,6 +56,14 @@ unchanged one reused, by checkpoint digest, device and dataset version), an incr
 challenger and the TF-IDF floor, the challenger shadow pass on the day's live verdicts, the stability pass, and
 readiness with a RE-SWEEP dry run at 40/10 and every 10 grades after. While it runs, a lab press waits behind it.
 Owned by `laya_lab/nightly.py` — see the note there.
+
+**What the operator feels.** `laya-lab status` prints three numbers, each from the operator's grades of live verdicts
+in the uniform `live_sample` stratum only, each with its n and a 95% interval, and a bare count under 20 rows:
+- **false ⚠️ per 100**: turns where the rack showed a ⚠️ and the operator graded the work not open, per 100 graded sampled turns.
+- **missed 🙋 per 100**: turns graded NEEDS YOU that drew no shown ⚠️, per 100 graded sampled turns, split by the mark drawn
+  instead (✅, the costly miss; 💬; a ⚠️ the rack held back); an OPEN graded without RUNNING or NEEDS YOU is counted apart.
+- **💬 share**: the sampled verdicts in the reply band, of every sampled verdict, then how many are graded and their open / done / read split.
+`bench --rack` writes the same block into the results file. Owned by `laya_lab/metrics.py` — see "Felt".
 
 **Two meters beside it.** `laya-lab latency agent-open-work` (a read: no model runs, no gpu slot)
 reads the decision ledger: `ms` by state length, machine load and cold start, and the token overflow of the states Laya
@@ -170,6 +178,45 @@ once. The answers land in `data/agent-open-work-votes.jsonl`, and a `votes:<mode
 file. Two arms: `question` asks Laya's own one-line question, `rubric` the teacher's rubric. The model
 labels are Sonnet's and were made on that rubric, so score a rubric vote against the operator's labels
 (`--labels operator`). Why a file and what a row holds: owned by `laya_lab/claude_voter.py` — see the note there.
+
+## Do two voters make different mistakes? (`compare`'s `stack`)
+
+With two voters or more, `compare` adds a `stack` row beside `mean`: one logistic regression over the voters'
+logits, with the same columns as every voter. It is fitted and scored out of fold on the very set it is measured on
+(folds by a stable hash of the row id), so no row is scored by a stack that saw its label. Under each set's table:
+
+- `stack vs <voter>`: the paired ΔAUC against the best single voter and its bootstrap interval
+  (`bench.paired_auc_delta`). A **win only when the interval sits above zero**; a positive point inside a straddling
+  interval is no win.
+- `<a> wrong N → <b> right K`: at each voter's own live cut, of the rows `a` gets wrong, how many `b` gets right.
+
+Measurement only: nothing registers, serves or saves a stack, and its cut is the code's, as `mean`'s is. A set too
+small to fold (fewer than ten rows, or a fold that leaves one class) prints `stack skipped` with the reason. Owned
+by `laya_lab/stack.py` — see the note there.
+
+## Operator notes (`data/operator-notes.md`)
+
+An optional markdown file in the laya store, beside the labels: what you care about, in your own words. Two
+invented lines:
+
+```markdown
+- A failing battle test in project zeta-prime is noise: that turn is done.
+- I am learning about vector clocks, so an answer about them is open until I have read it.
+```
+
+- **Where it goes.** The teacher's rubric, and nowhere else: Sonnet (`label-open-work`), the local teacher
+  (`teacher-kappa`) and the `rubric` arm of `claude-vote` read it as a delimited block after the rubric. Their
+  labels are what a fine-tune trains on, so your notes reach Laya's weights at the next retrain.
+- **What it never does.** It never enters the state Laya judges or Laya's question: an encoder with a 512-token
+  window reads no such file. It moves only what the teacher answers, open or done; it adds no class and no field.
+  It re-asks no old label (the week's teacher cap is small): a new label carries the notes' digest, and
+  `laya-lab status` prints the digest, the size and how many labels were made under it. Because the local teacher's
+  rubric changes with it, an edited file means `teacher-kappa` again before that teacher labels.
+- **What it must be.** A regular file, never a link, at most 4 KB, UTF-8 text. Anything else stops every teacher
+  run with its reason; a missing or blank file leaves every prompt byte-identical to no notes at all.
+- **Private.** Your notes stay on your machine like your labels: never in a report, a results file or a log line.
+  `bench` refuses to write a results file that holds a line of them. Owned by `laya_lab/open_work_data.py`
+  § operator notes — see the note there.
 
 ## The resource lease (optional)
 

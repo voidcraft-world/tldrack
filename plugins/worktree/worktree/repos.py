@@ -132,6 +132,7 @@ class RepoRouter:
         build_spec: Callable[..., RepoSpec] = repo_spec,
     ) -> None:
         self._context = context
+        self._find_main = find_main
         start_dir = str(getattr(context, "start_dir", None) or os.getcwd())
         specs, self._refused = resolve_repos(
             plugin_settings(context).get("repos"), start_dir, find_main=find_main, build_spec=build_spec
@@ -205,6 +206,13 @@ class RepoRouter:
                     for base in (_resolved(spec.root), _resolved(spec.worktree_root))
                     if base is not None
                 ):
+                    return unit, None
+            # A tree made by hand outside `~/worktrees/<repo>` (`.claude/worktrees/x`, `/tmp/spike`): its
+            # repository is the main checkout git names for it. One `git worktree list`, and only for a path
+            # no key, main checkout or worktree root above claimed.
+            found = self._find_main(target if target.is_dir() else target.parent)
+            for spec, unit in self._units:
+                if found is not None and found == _resolved(spec.root):
                     return unit, None
         return None, (
             404,

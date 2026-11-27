@@ -1,5 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { parse_profiles } from '../../src/engine/terminal/terminal-status-logic.ts';
 import {
     OFFICE_LISTENER_TTL_MS,
     create_office_relay,
@@ -63,6 +64,27 @@ describe('the projection a rack relays', () => {
         const rack = office_rack({ sessions: [row('a')], focused: 'a', reachable: true, attached: false });
         assert.equal(rack.frozen, true);
         assert.equal(office_rack({ sessions: [], focused: null, reachable: false }).frozen, false);
+    });
+
+    test('the wall monitor\'s accounts and machines ride the relay, and a rack with neither sends no board', () => {
+        const source: OfficeSource = {
+            sessions: [row('a')], focused: null, reachable: true,
+            profiles: parse_profiles([
+                { id: 'one', label: 'ONE', kind: 'claude', usage: { seven_day: { used_percentage: 41 }, age_seconds: 1 } },
+                { id: 'two', label: 'TWO', kind: 'claude', standing: { state: 'out', error: 'authentication_failed' } },
+                { id: 'shell', label: 'SHELL', kind: 'shell' },
+            ])!,
+        };
+        const message = parse_office_message(JSON.parse(JSON.stringify({ type: 'office:rack', rack: office_rack(source) })));
+        assert.ok(message?.type === 'office:rack');
+        assert.deepEqual(message.rack.board, {
+            accounts: [
+                { label: 'ONE', five_hour: null, week: 41, out: null },
+                { label: 'TWO', five_hour: null, week: null, out: 'signed out' },
+            ],
+            machines: [],
+        });
+        assert.equal('board' in office_rack({ sessions: [row('a')], focused: null, reachable: true }), false);
     });
 });
 

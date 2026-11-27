@@ -30,10 +30,11 @@ export interface ReviewSession {
     aliases?: readonly string[];
 }
 
-/** Where in a view the page stands: the deck's DEAL filter (`review-deck-model.ts` `DEAL_STRATA`), or the RECENT list's
- *  order and session. Each is kept only on its own view, and a default is never written. */
+/** Where in a view the page stands: the deck's DEAL filter (`review-deck-model.ts` `DEAL_STRATA` or `DEAL_BANDS`), or
+ *  the RECENT list's order and session. Each is kept only on its own view, and a default is never written. */
 export interface LayaReviewPlace {
     stratum?: string | null;
+    band?: string | null;
     order?: ReviewRecentOrder;
     session?: ReviewSession | null;
 }
@@ -55,6 +56,7 @@ export function laya_review_href(surface?: string, view: LayaReviewView = 'deck'
             if (place.session.since !== null && SINCE.test(String(place.session.since))) query.set('since', String(place.session.since));
         }
     } else if (place.stratum) query.set('stratum', place.stratum);
+    else if (place.band) query.set('band', place.band);
     const search = query.toString();
     return search ? `${LAYA_REVIEW_PATH}?${search}` : LAYA_REVIEW_PATH;
 }

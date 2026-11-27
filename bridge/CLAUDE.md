@@ -255,6 +255,7 @@ Nine things that must not be simplified:
 - **A lead runs one model and everything under it a weaker one**; the pair, its default and `POST /lead/models`: `tldrack/lead/models.py`.
 - `lead/brief.py` points a LEAD at this repo's `.claude/skills/lead/SKILL.md` by absolute path; `TLDRACK_LEAD_SKILL` overrides it for an install with no checkout.
 - `lead cap <n>` changes a run's live-worker cap; lowering it kills nobody, it only holds new spawns.
+- **A run leads one repository** (`lead start --repo <key or path>`; default the lead's working directory, else the worktree plugin's first): stored on the run (`rack_db.py` V4), sent as `repo` on every worktree-plugin call, and workers branch from that repository's origin/main. Owned by `lead/service.py` `_resolve_repo`.
 
 Tests: `tests/test_lead_*.py`, `tests/test_inbox*.py`, `tests/test_hook_lead.py`, `tests/test_pane_typist.py` (fakes in `tests/lead_fakes.py`).
 

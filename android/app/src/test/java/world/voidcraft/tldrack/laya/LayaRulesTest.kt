@@ -185,6 +185,14 @@ class LayaRulesTest {
         assertTrue(warns(2, 5))
     }
 
+    @Test
+    fun `a down link is asked again quickly for a minute, then slowly`() {
+        assertEquals(3_000L, LayaRules.poll_delay_ms(0))
+        assertEquals(3_000L, LayaRules.poll_delay_ms(59_999))
+        assertEquals(10_000L, LayaRules.poll_delay_ms(60_000))
+        assertTrue(LayaRules.UNLINKED_FIX.startsWith("Turn on Wireless debugging"))
+    }
+
     // ── the list ─────────────────────────────────────────────────────────────
 
     @Test

@@ -8,8 +8,8 @@ against the operator. `open_work_data.teacher_bar` reads the verdict: a teacher 
 - **Its own selection, not `label()`'s.** Every key Sonnet labelled, plus every key the operator graded in REVIEW, that
   still has a text (`open_work_data.texts`). `label()` skips the operator-answered keys, and those are exactly the rows
   teacher-vs-operator κ needs. Public `golden:` answers are not turn ends, so they are left out.
-- **The teacher reads what Sonnet read:** `LABEL_SYSTEM_PROMPT`, `LABEL_SCHEMA` and `batch_prompt` (owned by
-  `open_work_data.py`), `TEACHER_BATCH` texts a call, at temperature 0 and one seed. A level-only family (gpt-oss) hears
+- **The teacher reads what Sonnet read:** `label_rubric` (the rubric and the operator's notes), `LABEL_SCHEMA` and
+  `batch_prompt` (owned by `open_work_data.py`), `TEACHER_BATCH` texts a call, at temperature 0 and one seed. A level-only family (gpt-oss) hears
   `think: low` with the reasoning's own room (`REASONING_TOKENS`): such a family cannot switch thinking off, and a reply
   whose budget the reasoning spent is cut mid-JSON.
 - **On this machine only.** The texts are the operator's own closing messages, so an Ollama URL off loopback is refused (exit 3).
@@ -58,13 +58,17 @@ from laya_lab import infer
 from laya_lab.data import atomic_write_text, jsonl_line, open_private
 from laya_lab.open_work_data import (
     LABEL_SCHEMA,
-    LABEL_SYSTEM_PROMPT,
     STEM,
     SUITE,
     SURFACE,
+    OperatorNotes,
     batch_prompt,
+    label_rubric,
     model_labels,
+    notes_stamp,
     read_labels,
+    read_operator_notes,
+    require_notes,
     require_sources,
     texts,
 )
@@ -106,9 +110,10 @@ REPORT_KIND = "teacher_kappa"
 PAIR_NAMES = ("teacher_sonnet", "teacher_operator", "sonnet_operator")
 
 
-def rubric_digest() -> str:
-    """What the teacher is asked, as one id: the rubric, the answer schema and the batch framing."""
-    text = json.dumps({"system": LABEL_SYSTEM_PROMPT, "schema": LABEL_SCHEMA, "frame": batch_prompt([])}, sort_keys=True)
+def rubric_digest(notes: str = "") -> str:
+    """What the teacher is asked, as one id: the rubric with the operator's notes (`label_rubric`), the answer schema
+    and the batch framing. With no notes it is the digest it was before notes existed."""
+    text = json.dumps({"system": label_rubric(notes), "schema": LABEL_SCHEMA, "frame": batch_prompt([])}, sort_keys=True)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
@@ -176,11 +181,12 @@ def find_teacher(url: str, model: str, get: Callable[[str], dict] = _get_json) -
     raise LookupError(f"Ollama does not list {model}: pull it first (ollama pull {model})")
 
 
-def chat_body(teacher: Teacher, batch: list[dict[str, Any]]) -> dict[str, Any]:
-    """The `/api/chat` request for one batch: Sonnet's rubric and schema, deterministic decoding."""
+def chat_body(teacher: Teacher, batch: list[dict[str, Any]], notes: str = "") -> dict[str, Any]:
+    """The `/api/chat` request for one batch: Sonnet's rubric with the operator's notes, Sonnet's schema, deterministic
+    decoding."""
     return {
         "model": teacher.model,
-        "messages": [{"role": "system", "content": LABEL_SYSTEM_PROMPT}, {"role": "user", "content": batch_prompt(batch)}],
+        "messages": [{"role": "system", "content": label_rubric(notes)}, {"role": "user", "content": batch_prompt(batch)}],
         "stream": False,
         "format": LABEL_SCHEMA,
         "think": "low" if teacher.level_only else False,
@@ -215,11 +221,12 @@ def ask_batch(
     batch: list[dict[str, Any]],
     post: Post = _post_json,
     clock: Callable[[], float] = time.perf_counter,
+    notes: str = "",
 ) -> tuple[dict[str, dict[str, Any]], float]:
     """`({key: {open, why}}, wall ms)` for one batch; ValueError when the call failed (nothing is stored then)."""
     started = clock()
     try:
-        payload = post(f"{url}/api/chat", chat_body(teacher, batch), CALL_TIMEOUT_S)
+        payload = post(f"{url}/api/chat", chat_body(teacher, batch, notes), CALL_TIMEOUT_S)
     except urllib.error.HTTPError as error:
         raise ValueError(f"Ollama answered HTTP {error.code}") from None
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, ValueError) as error:
@@ -257,7 +264,9 @@ def read_answers(base: Path, teacher: Teacher, rubric: str) -> dict[str, bool]:
     return out
 
 
-def append_answers(base: Path, teacher: Teacher, rubric: str, got: Mapping[str, Mapping[str, Any]]) -> None:
+def append_answers(
+    base: Path, teacher: Teacher, rubric: str, got: Mapping[str, Mapping[str, Any]], notes: OperatorNotes | None = None
+) -> None:
     with open_private(teacher_path(base), "a") as handle:
         for key, value in got.items():
             handle.write(
@@ -269,6 +278,7 @@ def append_answers(base: Path, teacher: Teacher, rubric: str, got: Mapping[str, 
                         "by": teacher.model,
                         "digest": teacher.digest,
                         "rubric": rubric,
+                        **(notes_stamp(notes) if notes else {}),
                     }
                 )
             )
@@ -421,6 +431,7 @@ def ask_all(
     minutes_left: MinutesLeft | None = None,
     say: Callable[[str], None] = print,
     clock: Callable[[], float] = time.perf_counter,
+    notes: OperatorNotes | None = None,
 ) -> RunState:
     """Every batch of `todo`, then each key a batch left out once more alone; answers append as each call lands."""
     state = RunState()
@@ -440,7 +451,7 @@ def ask_all(
         state.calls += 1
         began = clock()
         try:
-            got, ms = ask_batch(url, teacher, batch, post, clock)
+            got, ms = ask_batch(url, teacher, batch, post, clock, notes.text if notes else "")
         except ValueError as error:
             state.longest_s = max(state.longest_s or 0.0, clock() - began)
             state.failed_calls += 1
@@ -456,7 +467,7 @@ def ask_all(
             state.unreadable_calls += 1
             say(f"[laya-lab]   call {state.calls}: no label it could read")
             return set()
-        append_answers(base, teacher, rubric, got)
+        append_answers(base, teacher, rubric, got, notes)
         state.call_ms.append(ms)
         state.key_ms.extend([ms / len(batch)] * len(batch))
         say(
@@ -537,6 +548,7 @@ def run(
         print(f"[laya-lab] teacher-kappa refused: {url} is not this machine: the texts are the operator's own and never leave it")
         return REFUSED
     selection = select(base)
+    notes = require_notes(base)
     try:
         teacher = find_teacher(url, model, get)
     except LookupError as error:
@@ -545,7 +557,7 @@ def run(
     except (OSError, ValueError) as error:
         print(f"[laya-lab] teacher-kappa: Ollama at {url} did not answer ({error})")
         return FAILED
-    rubric = rubric_digest()
+    rubric = rubric_digest(notes.text)
     answers = read_answers(base, teacher, rubric)
     todo = [{"key": key, "hand_off": selection.found[key]} for key in selection.keys if key not in answers]
     print(
@@ -559,7 +571,7 @@ def run(
         state.stopped = "time"  # never queue for a slot with no time left to use it (a closed window, a near deadline)
     elif todo:
         infer.hold_slot("gpu", "ollama", teacher.gb, [teacher.model])
-        state = ask_all(base, url, teacher, rubric, todo, max_calls=max_calls, post=post, minutes_left=minutes_left)
+        state = ask_all(base, url, teacher, rubric, todo, max_calls=max_calls, post=post, minutes_left=minutes_left, notes=notes)
         answers = read_answers(base, teacher, rubric)
     scored = score(selection, answers)
     report = build_report(selection, scored, teacher, rubric, state, env_names.read(os.environ, lab_files.EVAL_RUN_ENV))
@@ -626,8 +638,11 @@ def check(base: Path | None, *, get: Callable[[str], dict] = _get_json) -> tuple
     selection = select(base)
     if report.get("dataset_version") != selection.dataset_version:
         return False, f"the labels moved: {report.get('dataset_version')} → {selection.dataset_version}"
-    if report.get("rubric") != rubric_digest():
-        return False, "the labelling rubric changed"
+    notes = read_operator_notes(base)
+    if notes.code not in (files.OK, files.MISSING):
+        return False, f"the operator notes did not read ({notes.code})"
+    if report.get("rubric") != rubric_digest(notes.text):
+        return False, "the labelling rubric changed (its text, or the operator notes)"
     if (report.get("coverage") or 0) < COVERAGE_MIN:
         return False, f"the last run answered {report.get('answered')}/{report['selection']['keys']}: resume it"
     try:

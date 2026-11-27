@@ -122,6 +122,9 @@ PUBLIC_GOLDEN_DIR = LAB_DIR / "golden"
 #: subscription (laya-lab `claude_voter.py`); facts: each text's turn's runtime facts, keyed like the
 #: requests (laya-lab `open_work_data.py` `export`).
 DATA_PARTS = ("labels", "unlabelled", "operator", "laya-p", "teacher", "requests", "votes", "facts")
+#: `data/operator-notes.md`: what the operator cares about, in their own words, read into the teacher's rubric only
+#: (laya-lab `open_work_data.py` § operator notes owns what it changes and what it never does).
+OPERATOR_NOTES_FILENAME = "operator-notes.md"
 MODELS_CAP_BYTES = 1024 * 1024
 
 SURFACE_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
@@ -201,6 +204,10 @@ def data_file(base: Path, stem: str, part: str) -> Path:
     if part not in DATA_PARTS:
         raise ValueError(f"unknown data part {part!r}")
     return base / DATA_DIRNAME / f"{stem}-{part}.jsonl"
+
+
+def operator_notes_path(base: Path) -> Path:
+    return base / DATA_DIRNAME / OPERATOR_NOTES_FILENAME
 
 
 def shadow_path(base: Path, surface: str) -> Path:

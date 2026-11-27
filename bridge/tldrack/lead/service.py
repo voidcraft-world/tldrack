@@ -172,36 +172,132 @@ class LeadService:
 
     # ── the worktree plugin ───────────────────────────────────────────────────
 
-    def _wt(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    def _wt(self, method: str, path: str, body: dict | None = None, *, repo: str | None = None) -> tuple[int, dict]:
+        """One worktree-plugin call. `repo` is the run's repository key: it rides in the query (GET) or the
+        body (POST), the two places the plugin's router reads it. None sends none, so the plugin's first
+        repository answers, as it did for every run before runs named one."""
         plugin = self.bridge.worktree()
         if plugin is None:
             return 503, {"error": "the worktree plugin is not mounted"}
         try:
-            result = plugin.handle_post(path, {}, body or {}) if method == "POST" else plugin.handle_get(path, {})
+            if method == "POST":
+                result = plugin.handle_post(path, {}, {**(body or {}), **({"repo": repo} if repo else {})})
+            else:
+                result = plugin.handle_get(path, {"repo": [repo]} if repo else {})
         except Exception as err:  # a plugin fault is a refusal here, never a bridge crash
             return 500, {"error": f"worktree plugin: {type(err).__name__}: {err}"[:300]}
         status, payload = result[0], result[1]
         return status, payload if isinstance(payload, dict) else {}
 
-    def _groups(self) -> dict[str, dict]:
-        status, payload = self._wt("GET", "/groups")
+    def _groups(self, repo: str | None = None) -> dict[str, dict]:
+        status, payload = self._wt("GET", "/groups", repo=repo)
         groups = payload.get("groups") if status == 200 else None
         return {g["id"]: g for g in groups if isinstance(g, dict) and "id" in g} if isinstance(groups, list) else {}
 
     def _workers(self, run: Mapping, groups: Mapping[str, dict] | None = None) -> dict[str, dict]:
-        group = (groups if groups is not None else self._groups()).get(run.get("group_id") or "")
+        group = (groups if groups is not None else self._groups(run.get("repo"))).get(run.get("group_id") or "")
         return {w["branch"]: w for w in (group or {}).get("workers", []) if isinstance(w, dict)}
 
-    def _trees(self) -> dict[str, dict]:
-        status, payload = self._wt("GET", "/state")
+    def _trees(self, repo: str | None = None) -> dict[str, dict]:
+        status, payload = self._wt("GET", "/state", repo=repo)
         rows = payload.get("worktrees") if status == 200 else None
         return {r["branch"]: r for r in rows if isinstance(r, dict) and r.get("branch")} if isinstance(rows, list) else {}
 
-    def _origin_main(self) -> str:
+    def _repos(self) -> list[dict] | None:
+        """The plugin's `/repos` rows (key, label, `~`-collapsed path and worktree root, default), or None
+        when no plugin that names repositories is mounted (none at all, or one from before `/repos`)."""
+        status, payload = self._wt("GET", "/repos")
+        rows = payload.get("repos") if status == 200 else None
+        if not isinstance(rows, list):
+            return None
+        return [r for r in rows if isinstance(r, dict) and isinstance(r.get("key"), str) and isinstance(r.get("path"), str)]
+
+    @staticmethod
+    def _default_repo(repos: list[dict]) -> dict | None:
+        return next((r for r in repos if r.get("default")), repos[0] if repos else None)
+
+    def _repo_of_path(self, value: str, repos: list[dict]) -> dict | None:
+        """The served repository `value` is inside: its main checkout, its worktree root, or (asked of git)
+        any worktree of it. None for anything else, a relative path included."""
+        target = _absolute(value)
+        if target is None:
+            return None
+        bases = [(r, [b for b in (_absolute(r["path"]), _absolute(r.get("worktree_root"))) if b]) for r in repos]
+        for row, roots in bases:
+            if any(target == base or base in target.parents for base in roots):
+                return row
+        code, common = self.bridge.git(["git", "-C", str(target), "rev-parse", "--path-format=absolute", "--git-common-dir"])
+        main = _absolute(common.strip()) if code == 0 and common.strip() else None
+        if main is None:
+            return None
+        return next((row for row, _roots in bases if main.parent == _absolute(row["path"])), None)
+
+    def _resolve_repo(self, wanted: object, row: Mapping) -> str | None:
+        """The repository a new run leads, as the plugin's key. `--repo` (a key or a path) wins; else the
+        repository the lead's working directory is in, when the plugin serves it; else the plugin's first.
+
+        Stored on the run (rack_db.py V4) and sent on every plugin call the run makes, so the run stays on
+        its repository if the operator reorders `plugins.worktree.repos` later. None only when no plugin
+        names repositories: the run then sends none, which is exactly what runs did before this."""
+        if wanted is not None and (not isinstance(wanted, str) or not wanted.strip() or len(wanted) > 4096):
+            raise LeadError("--repo is a repository key or a path")
+        repos = self._repos()
+        if not repos:
+            if wanted is not None:
+                raise LeadError(
+                    "the worktree plugin names no repositories (not mounted, or too old): restart the bridge, "
+                    "or start without --repo",
+                    503,
+                )
+            return None
+        if wanted is not None:
+            found = next((r for r in repos if r["key"] == wanted), None) or self._repo_of_path(wanted, repos)
+            if found is None:
+                served = ", ".join(f"{r['key']} ({r.get('path')})" for r in repos)
+                raise LeadError(
+                    f"the worktree plugin does not serve {wanted!r}. It serves: {served}. A repository is added "
+                    "to `plugins.worktree.repos` in the operator's settings.json, then the bridge restarted",
+                )
+            return found["key"]
+        cwd = row.get("cwd")
+        found = self._repo_of_path(cwd, repos) if isinstance(cwd, str) else None
+        return (found or self._default_repo(repos) or {}).get("key")
+
+    def _repo_root(self, run: Mapping) -> str:
+        """The main checkout of the run's repository: where its workers branch from. A run with no repo
+        (started before V4, or on a plugin without `/repos`) reads as the plugin's first repository."""
+        key = run.get("repo")
+        repos = self._repos()
+        if repos:
+            row = next((r for r in repos if r["key"] == key), None) if key else self._default_repo(repos)
+            if row is None:
+                raise LeadError(
+                    f"{run['id']} leads {key}, which the worktree plugin no longer serves (`plugins.worktree.repos`)",
+                    409,
+                )
+            root = _absolute(row["path"])
+            if root is not None:
+                return str(root)
+        if key:
+            raise LeadError(f"{run['id']} leads {key}, but the worktree plugin names no repositories", 503)
         if not self.bridge.start_dir:
             raise LeadError("the bridge has no start dir to branch from", 503)
-        self.bridge.git(["git", "-C", self.bridge.start_dir, "fetch", "--quiet", "--no-tags", "origin", "main"])
-        code, sha = self.bridge.git(["git", "-C", self.bridge.start_dir, "rev-parse", "refs/remotes/origin/main"])
+        return self.bridge.start_dir
+
+    def _repo_line(self, run: Mapping) -> str:
+        """`lead status`'s repository: the label and key, or what a run with none reads as."""
+        repos = self._repos() or []
+        key = run.get("repo")
+        row = next((r for r in repos if r["key"] == key), None) if key else self._default_repo(repos)
+        if row is None:
+            return f"{key} (not served by the worktree plugin)" if key else "the worktree plugin's first repository"
+        name = f"{row.get('label') or row['key']} ({row['key']}) · {row.get('path')}"
+        return name if key else f"{name} (the first repository: this run names none)"
+
+    def _origin_main(self, run: Mapping) -> str:
+        root = self._repo_root(run)
+        self.bridge.git(["git", "-C", root, "fetch", "--quiet", "--no-tags", "origin", "main"])
+        code, sha = self.bridge.git(["git", "-C", root, "rev-parse", "refs/remotes/origin/main"])
         if code or not SHA_RE.fullmatch(sha):
             raise LeadError("could not read origin/main", 503)
         return sha
@@ -325,8 +421,9 @@ class LeadService:
             events=events,
             actions=view["next"],
             worker_live=view["worker_live"],
+            repo=self._repo_line(run),
         )
-        return 200, {"ok": True, "run": run["id"], "text": text, "next": view["next"]}
+        return 200, {"ok": True, "run": run["id"], "text": text, "next": view["next"], "repo": run.get("repo")}
 
     def _view(self, run: Mapping, live: Mapping[str, dict]) -> dict:
         steps = self.runs.steps(run["id"])
@@ -393,6 +490,7 @@ class LeadService:
             raise LeadError("the plan text is required (the CLI reads --plan for you)")
         if len(text.encode()) > MAX_PLAN_BYTES:
             raise LeadError("a plan is at most 256 KiB; split it, or point steps at sections")
+        repo = self._resolve_repo(payload.get("repo"), row)
         run = self.runs.start(
             lead_identity=identity,
             lead_session=caller,
@@ -405,11 +503,18 @@ class LeadService:
             # The pair this lead was LAUNCHED with, read off its own stamps.
             lead_model=row.get("launch_model"),
             worker_model=row.get("subagent_model"),
+            repo=repo,
         )
         self._refresh_roles(live)
         # The title is what the lead is about, so it names the rack row (lead/names.py owns why a label).
         label = self.bridge.label_lead(caller, run["title"])
-        return 201, {"ok": True, "run": run["id"], "plan": run["plan_path"], **({"label": label} if label else {})}
+        return 201, {
+            "ok": True,
+            "run": run["id"],
+            "plan": run["plan_path"],
+            "repo": run.get("repo"),
+            **({"label": label} if label else {}),
+        }
 
     def verb_step(self, payload: Mapping[str, Any], caller: str | None) -> tuple[int, dict]:
         _, run = self._lead(caller, self._live())
@@ -446,7 +551,7 @@ class LeadService:
             raise LeadError(f"{step['step_id']} has a live worker ({step['worker_session']}): `lead tell` it instead", 409)
         if step["step_id"] in self.inbox.parked_steps(run["id"]):
             raise LeadError(f"{step['step_id']} is parked by a blocking decision", 409)
-        groups = self._groups()
+        groups = self._groups(run.get("repo"))
         workers = self._workers(run, groups)
         steps = self.runs.steps(run["id"])
         if not follow_up:
@@ -469,7 +574,7 @@ class LeadService:
             refusal = self.bridge.model_refusal(profile, worker_model)
             if refusal:
                 return self._route_wait(run, step, refusal)
-        status, state = self._wt("GET", "/state")
+        status, state = self._wt("GET", "/state", repo=run.get("repo"))
         caps = (state.get("capabilities") or {}) if status == 200 else {}
         if not (
             caps.get("task_group_modes")
@@ -480,10 +585,10 @@ class LeadService:
             raise LeadError("the worktree plugin is too old for a LEAD run; restart the bridge", 503)
         branch = branch_for(run["id"], step["step_id"])
         # A retry after a failed start reuses the tree it already made: /create refuses a branch twice.
-        reuse = follow_up or branch in self._trees()
-        base = None if reuse else self._origin_main()
+        reuse = follow_up or branch in self._trees(run.get("repo"))
+        base = None if reuse else self._origin_main(run)
         if step["kind"] == "change" and not run.get("group_id"):
-            run = self._ensure_group(run, base or self._origin_main())
+            run = self._ensure_group(run, base or self._origin_main(run))
         session = f"wt-{branch.replace('/', '-')}"
         self.runs.note_spawn(
             run["id"],
@@ -498,7 +603,7 @@ class LeadService:
             # `start_sha` is the commit this branch is cut from, so the PR's published-base check holds
             # it to origin/main at spawn, not to the group's first base (a later main may differ).
             join = {"id": run["group_id"], "branch": branch, "start_sha": base or run.get("start_sha")}
-            status, body = self._wt("POST", "/group-join", join)
+            status, body = self._wt("POST", "/group-join", join, repo=run.get("repo"))
             if status >= 400:
                 return self._spawn_failed(run, step, body.get("error") or "could not join the run's task group")
         cli = self.bridge.kind_of(profile)
@@ -519,7 +624,7 @@ class LeadService:
             request["prompt"] = prompt
         # A respawn's new brief replaces any the last attempt never delivered, or both would go.
         self.typist.drop_pending(session, "superseded", kind="brief")
-        status, body = self._wt("POST", "/create", request)
+        status, body = self._wt("POST", "/create", request, repo=run.get("repo"))
         if status >= 400:
             return self._spawn_failed(run, step, body.get("error") or f"worktree create answered {status}")
         session = body.get("session") or session
@@ -551,6 +656,7 @@ class LeadService:
                 "release": "each",
                 "workers": [],
             },
+            repo=run.get("repo"),
         )
         group = body.get("group") if isinstance(body.get("group"), dict) else {}
         if status >= 400 or not group.get("id"):
@@ -667,7 +773,7 @@ class LeadService:
         children = running_descendants(live.values()).get(step.get("worker_session") or "", 0) if row else 0
         questions = [q["id"] for q in self.runs.questions(run["id"]) if q["step_id"] == step["step_id"]]
         questions += self.inbox.open_for_step(run["id"], step["step_id"])
-        tree = self._trees().get(step.get("branch") or "") or {}
+        tree = self._trees(run.get("repo")).get(step.get("branch") or "") or {}
         path = Path(tree["path"]) if tree.get("path") else None
         facts = CloseFacts(
             run_open=run["state"] == "open",
@@ -806,7 +912,8 @@ class LeadService:
     def _report_stage(self, run: Mapping, step: Mapping, fields: dict) -> tuple[int, dict]:
         if not run.get("group_id"):
             raise LeadError("this run has no task group yet", 409)
-        status, body = self._wt("POST", "/group-report", {"id": run["group_id"], "branch": step["branch"], **fields})
+        report = {"id": run["group_id"], "branch": step["branch"], **fields}
+        status, body = self._wt("POST", "/group-report", report, repo=run.get("repo"))
         if status >= 400:
             return status, {"ok": False, "error": body.get("error") or "the task group refused the report"}
         return 200, {"ok": True, "stage": fields["stage"]}
@@ -825,10 +932,10 @@ class LeadService:
 
     def state_view(self) -> dict:
         live = self._live()
-        groups = self._groups()
+        groups = _PerRepo(self._groups)
         out = []
         for run in self.runs.runs():
-            workers = self._workers(run, groups)
+            workers = self._workers(run, groups(run.get("repo")))
             steps = []
             parked = self.inbox.parked_steps(run["id"])
             for s in self.runs.steps(run["id"]):
@@ -859,6 +966,7 @@ class LeadService:
                     "lead_live": lead is not None,
                     "profile": run.get("profile"),
                     "plan_path": run.get("plan_path"),
+                    "repo": run.get("repo"),
                     "created_at": run["created_at"],
                     "steps": steps,
                     "lead_model": run.get("lead_model"),
@@ -952,10 +1060,10 @@ class LeadService:
         self._refresh_roles(live)
         changed = False
         if runs:
-            groups = self._groups()
-            trees = self._trees()
+            # One `/groups` and one `/state` per repository the open runs lead, not per run.
+            groups, trees = _PerRepo(self._groups), _PerRepo(self._trees)
             for run in runs:
-                changed |= self._observe_run(run, live, groups, trees)
+                changed |= self._observe_run(run, live, groups(run.get("repo")), trees(run.get("repo")))
         self._pin_lines(runs)
         typed = self._flush(live)
         for run in self.runs.runs():
@@ -1050,6 +1158,30 @@ class LeadService:
                 self.tick()
             except Exception as err:  # the watcher must outlive any one bad tick
                 self.bridge.log(f"lead watcher: {type(err).__name__}: {err}")
+
+
+class _PerRepo:
+    """A read of the worktree plugin, made once per repository key in one pass (a tick, a state view)."""
+
+    def __init__(self, read: Callable[[str | None], dict[str, dict]]) -> None:
+        self._read = read
+        self._seen: dict[str | None, dict[str, dict]] = {}
+
+    def __call__(self, repo: str | None) -> dict[str, dict]:
+        if repo not in self._seen:
+            self._seen[repo] = self._read(repo)
+        return self._seen[repo]
+
+
+def _absolute(value: object) -> Path | None:
+    """`value` as a resolved absolute path (`~` expanded, as `/repos` collapses it), or None."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        candidate = Path(value).expanduser()
+        return candidate.resolve() if candidate.is_absolute() else None
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 def _deny(reason: str) -> dict:

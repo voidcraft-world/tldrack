@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { reviewCardSchema, reviewRetestCardSchema, reviewRetestRequestSchema, reviewAnswerRequestSchema, reviewStatsSchema, type ReviewCard, type ReviewStats } from '@tldrack/schemas/laya-review.ts';
+import { REVIEW_BANDS, reviewCardSchema, reviewRetestCardSchema, reviewRetestRequestSchema, reviewAnswerRequestSchema, reviewStatsSchema, type ReviewCard, type ReviewStats } from '@tldrack/schemas/laya-review.ts';
 import type { LayaFail } from '../../src/decide/laya-review-client.ts';
 import {
+    DEAL_BANDS,
     DEAL_STRATA,
     PAGE,
     REFILL_AT,
@@ -13,7 +14,10 @@ import {
     card_title,
     challenger_note,
     compact_stats,
+    deal_empty,
+    deal_from_search,
     deal_options,
+    deal_query,
     deal_waiting,
     deck_down,
     deficit_readout,
@@ -255,6 +259,76 @@ describe('DEAL', () => {
         assert.deepEqual(deal_options(empty_sample, null).map((o) => o.deal), [null, 'sample', 'unflagged'], 'an empty SAMPLE still says so');
         assert.deepEqual(deal_options(MIXED, 'disagree').map((o) => o.deal), [null, 'sample', 'disagree', 'unflagged'], 'the way back out stays');
         assert.match(deal_options(MIXED, null)[1].title, /κ is measured on/);
+    });
+
+    describe('the 💬 band', () => {
+        const BANDED: ReviewStats = {
+            ...MIXED,
+            by_stratum: { ...MIXED.by_stratum, uncertain: { reviewed: 4, remaining: 9 } },
+            band_waiting: { done: 3, reply: 7, open: 2 },
+        };
+        const answered_out: ReviewStats = { ...BANDED, band_waiting: { done: 3, reply: 0, open: 2 } };
+
+        it('is a band, never a stratum: the two name sets do not overlap', () => {
+            assert.deepEqual([...DEAL_BANDS], ['reply']);
+            for (const band of DEAL_BANDS) {
+                assert.ok((REVIEW_BANDS as readonly string[]).includes(band), band);
+                assert.ok(!(DEAL_STRATA as readonly string[]).includes(band), `${band} is not a stratum name`);
+            }
+        });
+
+        it('reads ?band= as a bookmark, and a stratum wins when both are there', () => {
+            assert.equal(deal_from_search('?surface=agent_open_work&band=reply'), 'reply');
+            assert.equal(deal_from_search('?band=open'), null, 'only the 💬 band is dealt');
+            assert.equal(deal_from_search('?band=__proto__'), null);
+            assert.equal(deal_from_search('?stratum=sample&band=reply'), 'sample');
+            assert.equal(deal_from_search('?stratum=uncertain'), 'uncertain');
+            assert.equal(deal_from_search(''), null);
+        });
+
+        it('asks the plugin by band and keeps it in the deck view’s address', () => {
+            assert.deepEqual(deal_query('reply'), { stratum: null, band: 'reply' });
+            assert.deepEqual(deal_query('sample'), { stratum: 'sample', band: null });
+            assert.deepEqual(deal_query(null), { stratum: null, band: null });
+            assert.equal(laya_review_href('agent_open_work', 'deck', deal_query('reply')), '/review.html?surface=agent_open_work&band=reply');
+            assert.equal(laya_review_href('agent_open_work', 'recent', deal_query('reply')), '/review.html?surface=agent_open_work&view=recent');
+            assert.equal(deal_from_search(laya_review_href(undefined, 'deck', deal_query('reply')).split('?')[1]), 'reply', 'it round-trips');
+        });
+
+        it('counts its waiting cards off the stats, and 0 from a bridge that predates it', () => {
+            assert.equal(deal_waiting(BANDED, 'reply'), 7);
+            assert.equal(deal_waiting(MIXED, 'reply'), 0);
+            assert.equal(needs_refill(5, BANDED, false, 'reply'), true, '7 wait, 5 are held');
+            assert.equal(needs_refill(7, BANDED, false, 'reply'), false);
+        });
+
+        it('draws right after UNCERTAIN with its count, only while cards wait — or while it is on screen', () => {
+            assert.deepEqual(
+                deal_options(BANDED, null).map((o) => [o.deal, o.waiting]),
+                [[null, 552], ['sample', 12], ['uncertain', 9], ['reply', 7], ['unflagged', 40]],
+            );
+            const reply = deal_options(BANDED, null).find((o) => o.deal === 'reply');
+            assert.equal(reply?.label, '💬');
+            assert.doesNotMatch(reply?.title ?? '', /\.\s/, 'its tooltip is one sentence');
+            assert.ok(!deal_options(answered_out, null).some((o) => o.deal === 'reply'), 'no cards wait: no button');
+            assert.ok(!deal_options(MIXED, null).some((o) => o.deal === 'reply'), 'an older bridge: no button');
+            assert.ok(deal_options(answered_out, 'reply').some((o) => o.deal === 'reply'), 'the way back out stays');
+        });
+
+        it('explains itself, and says so when the band is graded out', () => {
+            assert.match(explain_deal(BANDED, 'reply'), /^Only 💬 cards: Live verdicts between the two cuts/);
+            assert.match(explain_deal(BANDED, 'reply'), /do not count toward κ; they are what a RE-SWEEP and a retrain learn the 💬 band from/);
+            assert.equal(deal_empty(BANDED, 'reply'), null);
+            assert.deepEqual(deal_empty(answered_out, 'reply'), { head: 'NO 💬 CARDS LEFT', why: 'every 💬 verdict is answered · 552 other cards wait' });
+            assert.deepEqual(deal_empty(MIXED, 'golden'), { head: 'NO GOLDEN CARDS LEFT', why: '0 answered of this kind · 552 other cards wait' });
+            assert.equal(deal_empty(BANDED, null), null);
+            assert.equal(deal_empty(null, 'reply'), null);
+        });
+
+        it('the stats contract carries the waiting count, and an older bridge may leave it out', () => {
+            assert.deepEqual(reviewStatsSchema.parse(BANDED).band_waiting, { done: 3, reply: 7, open: 2 });
+            assert.equal(reviewStatsSchema.parse(MIXED).band_waiting, undefined);
+        });
     });
 });
 

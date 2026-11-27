@@ -179,7 +179,16 @@ def test_queue_lists_cards_and_stats(plugin, labelled):
 
 @pytest.mark.parametrize(
     "query",
-    [{"limit": "51"}, {"limit": "-1"}, {"limit": "1.5"}, {"surface": "mail"}, {"stratum": "everything"}, {"cachebust": "1"}],
+    [
+        {"limit": "51"},
+        {"limit": "-1"},
+        {"limit": "1.5"},
+        {"surface": "mail"},
+        {"stratum": "everything"},
+        {"band": "middle"},
+        {"band": "reply", "stratum": "rest"},
+        {"cachebust": "1"},
+    ],
 )
 def test_queue_refuses_a_bad_query(plugin, query):
     assert_refusal(get(plugin, "/review/queue", **query), 400, "bad_query")
@@ -751,6 +760,7 @@ def test_the_queue_deals_blind_retests_before_its_cards_and_only_in_the_mix(plug
     assert stats["retest"]["due"] == 3 and (stats["retest"]["percent"], stats["retest"]["after_days"]) == (10, 7)
     assert get(plugin, "/review/queue", surface=SURFACE, limit="0")[1]["retests"] == []
     assert get(plugin, "/review/queue", surface=SURFACE, limit="20", stratum="rest")[1]["retests"] == []
+    assert get(plugin, "/review/queue", surface=SURFACE, limit="20", band="reply")[1]["retests"] == []
 
 
 def test_a_retest_is_recorded_without_moving_the_label_it_re_tests(plugin, tree, graded):

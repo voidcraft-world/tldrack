@@ -157,6 +157,19 @@ class LayaClientTest {
         return LayaClient(dir, link.url)
     }
 
+    /** A client with a far way: `near` on the phone's loopback, `far` standing in for the Mac's tailnet door. */
+    private fun client_with_far(near: HttpUrl, far: HttpUrl?): LayaClient {
+        val dir = tmp.newFolder()
+        File(dir, LayaClient.TOKEN_FILE).writeText("$token\n")
+        return LayaClient(dir, near, remote = { far })
+    }
+
+    /** A loopback address nothing listens on: a refused connect, as when no tunnel is armed. */
+    private fun nobody(): HttpUrl = FakeLink { Answer(500, ByteArray(0)) }.let { gone ->
+        gone.close()
+        gone.url
+    }
+
     private fun assert_never_shown_the_token(link: FakeLink) {
         for (seen in link.seen) assertTrue(!String(seen.raw, Charsets.ISO_8859_1).contains(token))
     }
@@ -260,6 +273,116 @@ class LayaClientTest {
         repeat(3) { assertEquals(Call.Ok(Unit), laya.health()) }
         val nonces = fake.seen.mapNotNull { it.headers["authorization"]?.single()?.let { h -> AUTH.matchEntire(h)?.groupValues?.get(1) } }
         assertEquals(3, nonces.toSet().size)
+    }
+
+    // ── the far way (the Mac's tailnet door) ──────────────────────────────────
+
+    @Test
+    fun `with no tunnel the call goes the far way, as the same request`() = runBlocking {
+        val far = link(the_link { 200 to """{"hits":[]}""" })
+        val laya = client_with_far(nobody(), far.url)
+        assertEquals(Call.Ok(HistorySearch(hits = emptyList())), laya.search("open work"))
+        // The handshake signs the target, never the host: the far link verified the very MAC the near one would have.
+        assertEquals(listOf("GET", "GET"), far.seen.map { it.method })
+        assertEquals("/ledger/search?q=open%20work", far.seen.last().target)
+        assert_never_shown_the_token(far)
+    }
+
+    @Test
+    fun `a working tunnel is used, and the far way never hears of the call`() = runBlocking {
+        val near = link(the_link { 200 to """{"ok":true,"v":2}""" })
+        val far = link(the_link { 200 to """{"ok":true,"v":2}""" })
+        assertEquals(Call.Ok(Unit), client_with_far(near.url, far.url).health())
+        assertEquals(2, near.seen.size)
+        assertEquals(0, far.seen.size)
+    }
+
+    @Test
+    fun `something on the phone's loopback cannot keep the app from the far way, and sees only a challenge`() = runBlocking {
+        val squatters = listOf<(Seen) -> Answer>(
+            { Answer(200, json("""{"ok":true,"v":2,"nonce":"${"A".repeat(43)}","ttl_s":30}"""), "0".repeat(64)) },
+            // The bytes of the link's own unsigned refusal: anything can send them, so they prove nothing.
+            { Answer(403, json("""{"ok":false,"error":"host_refused"}""")) },
+            { Answer(503, json("""{"ok":false,"error":"busy"}""")) },
+            { Answer(200, ByteArray(0), drop = true) },
+        )
+        for (squat in squatters) {
+            val squatter = link(squat)
+            val far = link(the_link { 200 to """{"message":"Recorded"}""" })
+            assertEquals(Call.Ok(ReviewResult(message = "Recorded")), client_with_far(squatter.url, far.url).answer(answer_request))
+            assertEquals(1, squatter.seen.size)
+            assertNull(squatter.seen.single().headers["authorization"])
+            assert_never_shown_the_token(squatter)
+        }
+    }
+
+    @Test
+    fun `a far way that does not answer leaves the near way's verdict standing`() = runBlocking {
+        // No tunnel and no door: UNLINKED, whose fix (the tile, the cable) is the one in reach.
+        assertEquals(Fail.Unlinked, client_with_far(nobody(), nobody()).health())
+        // The tunnel took the connection and the Mac dropped it: still BRIDGE DOWN.
+        val dropped = link { Answer(200, ByteArray(0), drop = true) }
+        assertEquals(Fail.BridgeDown, client_with_far(dropped.url, nobody()).health())
+        // A far way that is not the link (it cannot sign) is not the link: the near verdict again.
+        val impostor = link { Answer(200, json("""{"ok":true,"v":2,"nonce":"${"A".repeat(43)}","ttl_s":30}"""), "0".repeat(64)) }
+        assertEquals(Fail.Unlinked, client_with_far(nobody(), impostor.url).health())
+        assert_never_shown_the_token(impostor)
+        // And with no far way at all, nothing changes.
+        assertEquals(Fail.Unlinked, client_with_far(nobody(), null).health())
+    }
+
+    @Test
+    fun `the far way's own answer is the answer once it proved itself the link`() = runBlocking {
+        val far = link(the_link { 502 to """{"ok":false,"error":"bridge_down"}""" })
+        assertEquals(Fail.BridgeDown, client_with_far(nobody(), far.url).health())
+    }
+
+    @Test
+    fun `a signed health reply sets the far way's address, and one without it takes it away`() = runBlocking {
+        var body = """{"ok":true,"v":2,"remote":"https://mymac.tail1234.ts.net:7683/"}"""
+        val near = link(the_link { 200 to body })
+        val dir = tmp.newFolder()
+        File(dir, LayaClient.TOKEN_FILE).writeText("$token\n")
+        val laya = LayaClient(dir, near.url)
+        val kept = File(dir, LayaClient.REMOTE_FILE)
+        assertEquals(Call.Ok(Unit), laya.health())
+        assertEquals("https://mymac.tail1234.ts.net:7683/", kept.readText())
+        // An address of any other shape is never kept: the old one goes, and nothing is dialled.
+        body = """{"ok":true,"v":2,"remote":"http://evil.example/"}"""
+        assertEquals(Call.Ok(Unit), laya.health())
+        assertTrue(!kept.exists())
+        body = """{"ok":true,"v":2,"remote":"https://mymac.tail1234.ts.net:7683/"}"""
+        laya.health()
+        assertTrue(kept.exists())
+        body = """{"ok":true,"v":2}"""
+        assertEquals(Call.Ok(Unit), laya.health())
+        assertTrue("the door was switched off", !kept.exists())
+        // A refusal says nothing about the door.
+        File(dir, LayaClient.REMOTE_FILE).writeText("https://mymac.tail1234.ts.net:7683/")
+        val refusing = LayaClient(dir, link(the_link { 500 to """{"ok":false,"error":"boom"}""" }).url)
+        refusing.health()
+        assertTrue(kept.exists())
+    }
+
+    @Test
+    fun `only one machine's https ts-net address with a port is a far way`() {
+        assertEquals("mymac.tail1234.ts.net", LayaClient.remote_url("https://mymac.tail1234.ts.net:7683/")?.host)
+        for (bad in listOf(
+            "http://mymac.tail1234.ts.net:7683/",
+            "https://mymac.tail1234.ts.net/",
+            "https://mymac.tail1234.ts.net:7683",
+            "https://mymac.tail1234.ts.net:7683/x",
+            "https://mymac.tail1234.ts.net:7683/?a=1",
+            "https://user" + "@mymac.tail1234.ts.net:7683/",
+            "https://ts.net:7683/",
+            "https://mymac.tail1234.ts.net.evil.example:7683/",
+            "https://${"mymac".uppercase()}.tail1234.ts.net:7683/",
+            "https://127.0.0.1:7683/",
+            "not a url",
+            "",
+        )) {
+            assertNull(bad, LayaClient.remote_url(bad))
+        }
     }
 
     // ── something else on the port ───────────────────────────────────────────

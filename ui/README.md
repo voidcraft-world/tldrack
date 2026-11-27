@@ -50,6 +50,12 @@ floating names and floor inscriptions have a thin dark outline, and names have a
 backing. Rendering quality is owned by `src/agent-office/office-render-quality.ts`; texture painting
 is owned by `src/engine/terminal/agent-office-scene.ts`.
 
+Each room is cut into up to three bands, left to right: NEEDS YOU, WORKING, IDLE. An agent sits in the
+band its state names and moves when its state crosses one; an empty band takes no floor. A wall monitor
+stands behind the back row with the whole rack on it: the three counts, each account's usage (or that it
+is out), each machine's CPU and memory. The bands are owned by `src/engine/terminal/agent-office-logic.ts`
+and the monitor's lines by `src/engine/terminal/office-board.ts`.
+
 Floor readouts reuse the open DEVICES section's cached session sample: each desk or service, each room,
 and all sections combined. They include only sessions represented in the office; partial totals show
 sample coverage. Missing CPU is an em dash, never zero. Closing DEVICES freezes these readings as stale.

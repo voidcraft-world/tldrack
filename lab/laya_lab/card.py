@@ -43,6 +43,7 @@ from typing import Any
 
 from laya_lab import siblings  # noqa: F401  (puts laya_bridge on sys.path)
 from laya_lab import bench, registry
+from laya_lab import metrics as scoring
 from laya_lab.data import atomic_write_text
 from laya_lab.golden import SUITES
 from laya_bridge import agreement, card_files, files, lab_files, paths, review_data, review_log, rows
@@ -123,15 +124,12 @@ def metrics(base: Path) -> dict[str, Any]:
     snap = review_data.snapshot(base, SURFACE)
     stats = review_data.stats(snap, base)
     pairs: dict[str, list[tuple[bool, bool]]] = {name: [] for name in review_data.LANDING_SPLIT}
-    false = total = 0
     for key, ids in snap.items.decisions_of.items():
         answer = snap.fold.labels.get(key)
         if answer is None or not review_data.is_live_member(snap.spec, key) or not ids:
             continue
         verdict = snap.items.verdicts[ids[0]]
         pairs[verdict.landing_class].append((verdict.flagged, answer["open"]))
-        false += int(verdict.shown and not answer["open"])
-        total += 1
     live = {
         name: {metric: agreement.rate_summary(values, metric) for metric in ("precision", "recall")}
         for name, values in pairs.items()
@@ -141,8 +139,7 @@ def metrics(base: Path) -> dict[str, Any]:
     return {
         "kappa": stats["operator_vs_sonnet"],
         "live": live,
-        "false": false,
-        "sample": total,
+        "felt": scoring.felt(scoring.felt_turns(snap)),
         "latency": latency_row(base, snap.spec),
         "shadow": shadow_summary(shadow, target[0]) if target else None,
         "cut": registry.served_threshold(base, SURFACE, registry.served_model(base, SURFACE))[0],
@@ -466,13 +463,14 @@ def verifier(measured: dict[str, Any], cases: int, at: str, made: str = "", foun
     ]
     for name, block in measured["live"].items():
         lines.append(f"- {name}: precision {rate(block['precision'])}; recall {rate(block['recall'])}.")
-    n = measured["sample"]
+    false = measured["felt"]["false_warning"]
     latency = measured["latency"] or {}
     shadow = measured["shadow"] or {}
     lines += [
         "",
-        f"False shown warnings per 100 graded sampled turn ends: {number(100 * measured['false'] / n if n else None)} "
-        f"(false={measured['false']}, n={n}). This is a sample estimate, not a census.",
+        f"False shown warnings per 100 graded sampled turn ends: {number(false['value'], 1)} "
+        f"(95% CI {number(false['lo'], 1)}, {number(false['hi'], 1)}; false={false['count']}, n={false['n']}). "
+        "This is a sample estimate, not a census.",
         f"Latency: p50 {number(latency.get('p50_ms'), 1)} ms; p90 {number(latency.get('p90_ms'), 1)} ms; "
         f"n={latency.get('decisions', 0)}; measured {latency.get('at') or 'never'}.",
         f"Challenger shadow agreement: {number(shadow.get('agree'))}; n={shadow.get('rows', 0)} across "

@@ -207,6 +207,70 @@ export const benchRackSchema = z.strictObject({
 });
 export type BenchRack = z.infer<typeof benchRackSchema>;
 
+/**
+ * One felt rate: `count` of `n`, scaled to `max` (100 for a rate per 100 turns, 1 for a share), with its 95% interval.
+ * Under the block's `min_n` rows the value and the interval are null: the count alone.
+ */
+function felt_fields(max: number) {
+  const scaled = z.number().finite().min(0).max(max);
+  return { count, n: count, value: scaled.nullable(), lo: scaled.nullable(), hi: scaled.nullable() };
+}
+
+type FeltRateShape = { count: number; n: number; value: number | null; lo: number | null; hi: number | null };
+
+/** The rules every felt rate keeps, on a rate alone or on a block that extends one. */
+function felt_checked<T extends z.ZodType<FeltRateShape>>(schema: T) {
+  return schema.superRefine((r, ctx) => {
+    if (r.count > r.n) ctx.addIssue({ code: 'custom', path: ['count'], message: 'a count is at most its n' });
+    if ((r.value === null) !== (r.lo === null) || (r.value === null) !== (r.hi === null)) {
+      ctx.addIssue({ code: 'custom', path: ['value'], message: 'a value has its interval, and no value has none' });
+    } else if (r.value !== null && !(r.lo! <= r.value && r.value <= r.hi!)) {
+      ctx.addIssue({ code: 'custom', path: ['value'], message: 'lo ≤ value ≤ hi' });
+    }
+  });
+}
+
+const felt_rate = (max: number) => felt_checked(z.strictObject(felt_fields(max)));
+
+/**
+ * What the operator feels, from their grades of live verdicts in the uniform `live_sample` stratum alone: false ⚠️
+ * per 100 graded turns, missed 🙋 (NEEDS YOU under no shown ⚠️) per 100 by what the rack drew instead, and the 💬 band's
+ * share of sampled verdicts with its graded split. Writer: `lab/laya_lab/metrics.py` `felt`, which owns each definition.
+ * Counts and rates only; it rides with `rack` (`--rack`).
+ */
+export const benchFeltSchema = z
+  .strictObject({
+    basis: z.literal('live_sample'),
+    min_n: z.number().int().positive(),
+    sampled: count,
+    graded: count,
+    false_warning: felt_rate(100),
+    missed_you: felt_checked(
+      z.strictObject({ ...felt_fields(100), done: felt_rate(100), reply: felt_rate(100), held: felt_rate(100), unsplit: count }),
+    ),
+    reply: felt_checked(
+      z.strictObject({ ...felt_fields(1), graded: count, open: felt_rate(1), done: felt_rate(1), read: felt_rate(1) }),
+    ),
+  })
+  .superRefine((felt, ctx) => {
+    if (felt.graded > felt.sampled) ctx.addIssue({ code: 'custom', path: ['graded'], message: 'only a sampled turn is graded' });
+    if (felt.false_warning.n !== felt.graded || felt.missed_you.n !== felt.graded) {
+      ctx.addIssue({ code: 'custom', path: ['false_warning'], message: 'a per-100 rate is over the graded turns' });
+    }
+    const { done, reply, held, count: missed } = felt.missed_you;
+    if (done.count + reply.count + held.count !== missed) {
+      ctx.addIssue({ code: 'custom', path: ['missed_you'], message: 'every missed 🙋 sat under one mark' });
+    }
+    const split = felt.reply;
+    if (split.n !== felt.sampled || split.graded > split.count) {
+      ctx.addIssue({ code: 'custom', path: ['reply'], message: 'the 💬 share is of every sampled verdict, and its graded are its own' });
+    }
+    if (split.open.count + split.done.count + split.read.count !== split.graded) {
+      ctx.addIssue({ code: 'custom', path: ['reply', 'graded'], message: 'every graded 💬 took one grade' });
+    }
+  });
+export type BenchFelt = z.infer<typeof benchFeltSchema>;
+
 /** Legacy (step 6.8): the rack block was `fleet` before 0.1.0; a file written then reads as today's. */
 function renamed_rack_block(raw: unknown): unknown {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || !('fleet' in raw) || 'rack' in raw) return raw;
@@ -226,6 +290,8 @@ const benchResultsFields = z
     voters: z.array(benchVoterSchema).min(1).max(BENCH_VOTERS_MAX),
     sets: z.array(benchSetResultSchema).min(1).max(BENCH_SETS.length),
     rack: benchRackSchema.nullable(),
+    /** What the operator feels (`benchFeltSchema`); absent from a file written before it existed. */
+    felt: benchFeltSchema.nullable().optional(),
     /** The one command that re-runs the public set, and which set it is. */
     reproduce: z.strictObject({ command: z.string().min(1).max(300), set: z.literal('golden') }),
   })

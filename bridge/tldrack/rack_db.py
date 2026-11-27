@@ -165,8 +165,14 @@ UPDATE lead_steps SET kind = 'report' WHERE kind = 'scout';
 UPDATE lead_steps SET observed = replace(observed, '"crew_', '"worker_');
 """
 
+#: The repository a run leads: owned by lead/service.py `_resolve_repo` — see the note there. NULL (a run started
+#: before V4) reads as the worktree plugin's first repository, which is what every such run used.
+_SCHEMA_V4 = """
+ALTER TABLE lead_runs ADD COLUMN repo TEXT;
+"""
+
 #: Index i holds the script that takes the schema from version i to i + 1.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

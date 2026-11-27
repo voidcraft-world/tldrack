@@ -220,12 +220,19 @@ export function load_laya_training(surface: string): Promise<LayaCall<LayaTraini
 
 /**
  * `surface` null = the surface with the most `to_review`; `limit` 0 = the stats alone (a `REVIEW · N` readout);
- * `stratum` deals only that stratum (the deck's DEAL filter), null the plugin's round robin over all of them.
+ * `stratum` deals only that stratum (the deck's DEAL filter), null the plugin's round robin over all of them; `band`
+ * only the cards whose live verdict sits in that band, across the strata. The plugin refuses both at once.
  */
-export function load_review_queue(surface: string | null, limit: number, stratum: string | null = null): Promise<LayaCall<ReviewQueue>> {
+export function load_review_queue(
+    surface: string | null,
+    limit: number,
+    stratum: string | null = null,
+    band: string | null = null,
+): Promise<LayaCall<ReviewQueue>> {
     const query = new URLSearchParams({ limit: String(Math.max(0, Math.min(50, Math.trunc(limit)))) });
     if (surface !== null) query.set('surface', surface);
     if (stratum !== null) query.set('stratum', stratum);
+    if (band !== null) query.set('band', band);
     return get_route('review/queue', `?${query}`, reviewQueueSchema);
 }
 

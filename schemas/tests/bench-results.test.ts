@@ -155,6 +155,30 @@ describe('the results contract', () => {
     assert.equal(benchResultsSchema.safeParse({ ...copy(), fleet: rack }).success, false, 'never both');
   });
 
+  it('counts the felt numbers once: per-100 rates over the graded turns, every miss under one mark, every graded 💬 one grade', () => {
+    const over = copy();
+    over.felt!.false_warning.n += 1;
+    refused(over, 'felt.false_warning');
+    const marks = copy();
+    marks.felt!.missed_you.held.count += 1;
+    refused(marks, 'felt.missed_you');
+    const graded = copy();
+    graded.felt!.reply.read.count += 1;
+    refused(graded, 'felt.reply.graded');
+    const outside = copy();
+    outside.felt!.false_warning.value = outside.felt!.false_warning.hi! + 1;
+    refused(outside, 'felt.false_warning.value');
+    const bare = copy();
+    bare.felt!.false_warning.value = null;
+    refused(bare, 'felt.false_warning.value');
+    const counted = copy();
+    Object.assign(counted.felt!.reply.open, { value: null, lo: null, hi: null });
+    assert.ok(benchResultsSchema.safeParse(counted).success, 'under the minimum n a rate is its count alone');
+    assert.ok(benchResultsSchema.safeParse({ ...copy(), felt: null }).success, 'withheld: --rack not asked');
+    const { felt: _felt, ...older } = copy();
+    assert.ok(benchResultsSchema.safeParse(older).success, 'a file from before the felt block');
+  });
+
   it('carries one protocol: a real file drops the fixture flag, never sets it false', () => {
     const { fixture: _flag, ...real } = copy();
     assert.ok(benchResultsSchema.safeParse(real).success);

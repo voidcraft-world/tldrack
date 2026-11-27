@@ -13,12 +13,15 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.ConnectionPool
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
@@ -33,11 +36,27 @@ import world.voidcraft.tldrack.APP_JSON
  * the Mac pushed into this app's private storage on every call (a re-push takes effect at once). It is only an HMAC
  * key: never sent, never logged, never in an error message.
  *
- * `base_url` is phone-link's; a test points it at a fake link on another loopback port.
+ * Two ways to the same listener, and the same handshake on both. The NEAR way is the phone's own loopback, carried
+ * by `adb reverse` (the cable, or Wireless debugging). The FAR way exists only when the operator switched the Mac's
+ * tailnet door on: its address arrives in a signed `/health` reply and is kept in `REMOTE_FILE`. A call goes near
+ * first; when nothing there proves itself the link, it goes far. What the door is, and why its address needs no
+ * trust of its own: owned by plugins/phone-link/README.md § The tailnet door — see the note there.
+ *
+ * `base_url` is phone-link's; a test points it at a fake link on another loopback port. `remote` is the far way's
+ * address, or null: a test hands it another fake link.
  */
-class LayaClient(private val files_dir: File, private val base_url: HttpUrl = BASE_URL) : ReviewCalls, LedgerSource {
+class LayaClient(
+    private val files_dir: File,
+    private val base_url: HttpUrl = BASE_URL,
+    private val remote: (() -> HttpUrl?)? = null,
+) : ReviewCalls, LedgerSource {
 
-    suspend fun health(): Call<Unit> = send(url("health"), null) { status, text -> read_ack("health", status, text) }
+    /** The "linked?" probe. Its signed reply is also where the far way's address comes from, and where it is taken away. */
+    suspend fun health(): Call<Unit> = send(url("health"), null) { status, text ->
+        val got = read_ack("health", status, text)
+        if (got is Call.Ok) keep_remote(text)
+        got
+    }
 
     /** One page of RECENT; `after` is the page before's `summary.next`, for the older page that follows it. */
     suspend fun recent(todo: Boolean, after: String? = null): Call<RecentPage> {
@@ -114,40 +133,94 @@ class LayaClient(private val files_dir: File, private val base_url: HttpUrl = BA
      * the same: nothing unsigned can be told apart from it.) A reply the link did not sign is `unproven`.
      * A 502 is BRIDGE DOWN only when phone-link says `bridge_down`: its `bad_upstream` (the bridge answered, but too
      * much or not JSON) and a bridge's own 502 are refusals.
+     *
+     * Near first. When the near way's nonce step proved nothing (nobody there, or somebody who is not the link), the
+     * far way is tried, if there is one. Whatever sits on the phone's loopback therefore cannot keep the app from the
+     * tailnet door, and it has seen only a random challenge. A far way that does not answer either leaves the near
+     * way's verdict standing: it names the fix the operator can reach from the phone.
      */
     private suspend fun <T> send(url: HttpUrl, json_body: String?, decode: (Int, String) -> Call<T>): Call<T> =
         withContext(Dispatchers.IO) {
             val token = read_token() ?: return@withContext Fail.Unlinked
-            val nonce = when (val issued = issue(token)) {
-                is Call.Ok -> issued.data
-                is Fail -> return@withContext issued
-            }
-            // Hashed and sent as these exact bytes: a String body would let OkHttp append a charset to the type.
-            val body = json_body?.toByteArray(Charsets.UTF_8)
-            val method = if (body != null) "POST" else "GET"
-            val mac = PhoneLinkProof.request_mac(token, nonce, method, PhoneLinkProof.target_of(url), body ?: NO_BYTES)
-            val request = link_request(url).header("Authorization", PhoneLinkProof.authorization(nonce, mac))
-            if (body != null) request.post(body.toRequestBody(JSON_MEDIA)) else request.get()
-            val reply = when (val got = exchange(request.build(), MAX_REPLY_BYTES)) {
-                is Call.Ok -> got.data
-                is Fail -> return@withContext got
-            }
-            if (!PhoneLinkProof.reply_signed(token, nonce, reply.status, reply.body, reply.mac)) {
-                return@withContext unproven(reply)
-            }
-            val text = reply.body.toString(Charsets.UTF_8)
+            val near = attempt(Way(base_url, LINK_HTTP, far = false), url, token, json_body, decode)
+            if (near.proven) return@withContext near.result
+            val far = far_url() ?: return@withContext near.result
+            val away = attempt(Way(far, REMOTE_HTTP, far = true), rebase(url, far), token, json_body, decode)
+            if (away.result is Fail.Unlinked) near.result else away.result
+        }
+
+    /** One way to the link: where it is, the client that goes there, and whether it leaves the phone. */
+    private class Way(val base: HttpUrl, val http: OkHttpClient, val far: Boolean)
+
+    /** A call's outcome on one way. `proven`: its nonce step was answered by the link itself, with a signed nonce. */
+    private class Tried<out T>(val result: Call<T>, val proven: Boolean)
+
+    private fun <T> attempt(way: Way, url: HttpUrl, token: String, json_body: String?, decode: (Int, String) -> Call<T>): Tried<T> {
+        val nonce = when (val issued = issue(way, token)) {
+            is Call.Ok -> issued.data
+            // No signed nonce: nothing here proved itself the link. An unsigned refusal reads as the link's (`unproven`),
+            // but anything on the port can send those bytes, so it does not count either.
+            is Fail -> return Tried(issued, proven = false)
+        }
+        // Hashed and sent as these exact bytes: a String body would let OkHttp append a charset to the type.
+        val body = json_body?.toByteArray(Charsets.UTF_8)
+        val method = if (body != null) "POST" else "GET"
+        val mac = PhoneLinkProof.request_mac(token, nonce, method, PhoneLinkProof.target_of(url), body ?: NO_BYTES)
+        val request = link_request(url).header("Authorization", PhoneLinkProof.authorization(nonce, mac))
+        if (body != null) request.post(body.toRequestBody(JSON_MEDIA)) else request.get()
+        val reply = when (val got = exchange(way, request.build(), MAX_REPLY_BYTES)) {
+            is Call.Ok -> got.data
+            is Fail -> return Tried(got, proven = true)
+        }
+        if (!PhoneLinkProof.reply_signed(token, nonce, reply.status, reply.body, reply.mac)) return Tried(unproven(reply), proven = true)
+        val text = reply.body.toString(Charsets.UTF_8)
+        return Tried(
             when {
                 reply.status == 401 -> Fail.Unlinked
                 reply.status == 502 && envelope_of(parse(text))?.error == BRIDGE_DOWN -> Fail.BridgeDown
                 else -> decode(reply.status, text)
-            }
+            },
+            proven = true,
+        )
+    }
+
+    /** The same path and query on the far way: the handshake signs the target, never the host, so it is one request. */
+    private fun rebase(url: HttpUrl, base: HttpUrl): HttpUrl =
+        url.newBuilder().scheme(base.scheme).host(base.host).port(base.port).build()
+
+    private fun far_url(): HttpUrl? = if (remote != null) remote.invoke() else read_remote()
+
+    /**
+     * The far way's address as the Mac last said it, or null. Only ever an `https` address of one machine's
+     * `*.ts.net` name with a port and nothing else: the file is this app's own, but a value of another shape is
+     * never dialled. A hostile address could at worst be shown a random challenge, which it cannot sign.
+     */
+    private fun read_remote(): HttpUrl? {
+        val raw = try {
+            File(files_dir, REMOTE_FILE).readText().trim()
+        } catch (error: IOException) {
+            return null
         }
+        return remote_url(raw)
+    }
+
+    /** A signed health reply names the door (`remote`) or, by leaving it out, says there is none: keep exactly that. */
+    private fun keep_remote(text: String) {
+        val said = (parse(text) as? JsonObject)?.get("remote")?.let { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+        val file = File(files_dir, REMOTE_FILE)
+        try {
+            val url = said?.let(::remote_url)
+            if (url == null) file.delete() else if (!file.exists() || file.readText() != url.toString()) file.writeText(url.toString())
+        } catch (error: IOException) {
+            // The address is a convenience: the near way does not need it, and the next health reply writes it again.
+        }
+    }
 
     /** Step 1: a nonce, believed only once its reply is signed over this call's own challenge. Nothing token-derived goes out before. */
-    private fun issue(token: String): Call<String> {
+    private fun issue(way: Way, token: String): Call<String> {
         val challenge = PhoneLinkProof.challenge()
-        val url = base_url.newBuilder().addPathSegment("nonce").addQueryParameter("c", challenge).build()
-        val reply = when (val got = exchange(link_request(url).get().build(), NONCE_REPLY_BYTES)) {
+        val url = way.base.newBuilder().addPathSegment("nonce").addQueryParameter("c", challenge).build()
+        val reply = when (val got = exchange(way, link_request(url).get().build(), NONCE_REPLY_BYTES)) {
             is Call.Ok -> got.data
             is Fail -> return got
         }
@@ -176,9 +249,9 @@ class LayaClient(private val files_dir: File, private val base_url: HttpUrl = BA
      * pre-proof refusal, so it is read no further than the longest of those: past that its body stays unread, and an
      * empty body matches no code.
      */
-    private fun exchange(request: Request, max_bytes: Long): Call<LinkReply> {
+    private fun exchange(way: Way, request: Request, max_bytes: Long): Call<LinkReply> {
         return try {
-            LINK_HTTP.newCall(request).execute().use { response ->
+            way.http.newCall(request).execute().use { response ->
                 val mac = response.headers(PhoneLinkProof.REPLY_HEADER).singleOrNull()
                 val body = bounded_body(response, if (mac != null) max_bytes else UNSIGNED_REPLY_BYTES)
                 when {
@@ -190,7 +263,9 @@ class LayaClient(private val files_dir: File, private val base_url: HttpUrl = BA
         } catch (error: ConnectException) {
             Fail.Unlinked
         } catch (error: IOException) {
-            Fail.BridgeDown
+            // Near, the tunnel took the connection and the Mac end dropped it. Far, any failure (no such name with
+            // Tailscale off, a certificate, a timeout) says only that the door was not reached.
+            if (way.far) Fail.Unlinked else Fail.BridgeDown
         }
     }
 
@@ -338,6 +413,18 @@ class LayaClient(private val files_dir: File, private val base_url: HttpUrl = BA
         /** Under `Context.filesDir`; the Mac writes it with `run-as`, so only a debug build can be linked. */
         const val TOKEN_FILE = "phone-link-token"
 
+        /** Under `Context.filesDir`; this app writes it, from a signed health reply. Absent: there is no far way. */
+        const val REMOTE_FILE = "phone-link-remote"
+
+        private val REMOTE_HOST = Regex("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\\.ts\\.net")
+
+        /** `https://<machine>.<tailnet>.ts.net:<port>/` and nothing more, or null (`phone_link/config.py` `TailnetDoor.url`). */
+        internal fun remote_url(text: String): HttpUrl? {
+            val url = text.toHttpUrlOrNull() ?: return null
+            val plain = url.username.isEmpty() && url.password.isEmpty() && url.encodedPath == "/" && url.query == null && url.fragment == null
+            return url.takeIf { it.isHttps && plain && REMOTE_HOST.matches(it.host) && text == "https://${it.host}:${it.port}/" }
+        }
+
         private val BASE_URL: HttpUrl = "http://127.0.0.1:$PHONE_LINK_PORT/".toHttpUrl()
         private val JSON_MEDIA = "application/json".toMediaType()
         private val NO_BYTES = ByteArray(0)
@@ -370,6 +457,18 @@ class LayaClient(private val files_dir: File, private val base_url: HttpUrl = BA
                 .build()
         }
 
+        /**
+         * The far way's client: the link's own settings, with the time a tailnet needs (a relayed first packet, a TLS
+         * handshake) and HTTP/1.1 only, because the handshake is one request per connection.
+         */
+        internal val REMOTE_HTTP: OkHttpClient by lazy {
+            LINK_HTTP.newBuilder()
+                .protocols(listOf(Protocol.HTTP_1_1))
+                .connectTimeout(8, TimeUnit.SECONDS)
+                .callTimeout(20, TimeUnit.SECONDS)
+                .build()
+        }
+
         /** Exactly what `phone_link/token_store.py` mints: `secrets.token_urlsafe(32)`. */
         private val TOKEN_SHAPE = Regex("[A-Za-z0-9_-]{43}")
         private val CODE_SHAPE = Regex("[a-z][a-z0-9_]{0,39}")
@@ -384,7 +483,7 @@ class LayaClient(private val files_dir: File, private val base_url: HttpUrl = BA
         private const val TOO_LARGE = "This request is too large for phone-link"
         private val PRE_PROOF: Map<Int, PreProof> = mapOf(
             400 to PreProof(UNREADABLE, UPDATE_APP, "bad_challenge", "bad_body", "bad_request"),
-            403 to PreProof("phone-link refused this request's headers", UPDATE_APP, "host_refused", "proxy_refused", "browser_refused"),
+            403 to PreProof("phone-link refused this request's headers", UPDATE_APP, "host_refused", "proxy_refused", "browser_refused", "tailnet_refused"),
             411 to PreProof(UNREADABLE, UPDATE_APP, "length_required"),
             413 to PreProof(TOO_LARGE, null, "too_large"),
             414 to PreProof(TOO_LARGE, null, "bad_request"),
