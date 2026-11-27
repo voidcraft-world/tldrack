@@ -35,9 +35,9 @@ A session here starts with no memory. What follows is everything durable it need
    for the person who runs the rack is **operator**. Public code never points back into the private host
    repository it came from. A new leak shape is a new rule in that file, with a planted sample.
 2. **Test what you touched.** The edit hook (`.claude/hooks/affected_tests.py`) runs the purity scan of
-   the changed file and the tests of its project after every edit, and wakes you on a failure. The
-   tests run in a copy outside the tree holding only what git tracks or you wrote, so a file that
-   arrived by `curl` or `tar` is never executed; `git add` it to have it tested. Do not run a wider
+   the changed file and the tests of its project after every edit, and wakes you on a failure your change
+   caused. The tests run in a copy outside the tree holding only what git tracks or you wrote, so a file
+   that arrived by `curl` or `tar` is never executed; `git add` it to have it tested. Do not run a wider
    suite to "make sure": CI runs every project, and `ci-ok` is the one required check.
 3. **Function names are `snake_case`**, in Python and TypeScript alike. Classes and Vue components keep
    `PascalCase`.
