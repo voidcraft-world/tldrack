@@ -364,10 +364,10 @@ def test_an_answer_tells_the_rack_what_now_stands_for_every_decision_of_the_text
     heard = []
     body = {"surface": SURFACE, "key": key, "answer": "flip", "reference_open": True, "needs": "read"}
     assert review.answer(deck.base, body, on_labels=heard.append)[0] == 200
-    assert sorted(heard[0], key=lambda change: change["decision_id"]) == [
-        told(decision_id=first, open=False, needs="read"),
-        told(decision_id=second, open=False, needs="read"),
-    ]
+    by_id = lambda change: change["decision_id"]  # noqa: E731 — decision ids are random: compare as sets of rows
+    assert sorted(heard[0], key=by_id) == sorted(
+        [told(decision_id=first, open=False, needs="read"), told(decision_id=second, open=False, needs="read")], key=by_id
+    )
 
 
 def test_a_skip_and_an_undo_tell_the_rack_no_label_stands(deck):

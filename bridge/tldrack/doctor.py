@@ -21,6 +21,7 @@ itself. The page offers a button for a kind it knows and prints `fix` for the re
 
 from __future__ import annotations
 
+import os
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -95,6 +96,43 @@ class Facts:
     #: The feature switches that are off (features.py), and why its file could not be read, if so.
     features_off: tuple[str, ...] = ()
     features_error: str | None = None
+    #: The main checkouts the worktree plugin serves (its `GET /repos`), or None when no plugin answers.
+    worktree_repos: tuple[str, ...] | None = None
+
+
+def served_worktree_repos(payload: object) -> tuple[str, ...] | None:
+    """The worktree plugin's `GET /repos` body as absolute main-checkout paths, or None for anything else."""
+    repos = payload.get("repos") if isinstance(payload, Mapping) else None
+    if not isinstance(repos, list):
+        return None
+    paths = (repo.get("path") for repo in repos if isinstance(repo, Mapping))
+    return tuple(os.path.normpath(os.path.expanduser(path)) for path in paths if isinstance(path, str) and path)
+
+
+def worktree_repos_check(snapshot: Mapping[str, Any] | None, served: tuple[str, ...] | None) -> Check | None:
+    """A live session works in a worktree of a repository the worktree plugin does not serve: the rack
+    draws its island from git's own files (work_trees.py), but has no PR, CLEAN or harbor for it until
+    the operator lists the repository. None when there is nothing to say (no bridge, no plugin)."""
+    if snapshot is None or served is None:
+        return None
+    sessions = snapshot.get("sessions")
+    mains: set[str] = set()
+    for row in sessions if isinstance(sessions, list) else ():
+        tree = row.get("work_tree") if isinstance(row, Mapping) and row.get("live") else None
+        main = tree.get("main") if isinstance(tree, Mapping) else None
+        if isinstance(main, str) and main:
+            mains.add(os.path.normpath(main))
+    unlisted = sorted(mains - set(served))
+    if not unlisted:
+        return Check("worktree repos", OK, f"{len(served)} served" + (f", {len(mains)} in use" if mains else ""))
+    entries = ", ".join(f'"{main}"' for main in unlisted)
+    return Check(
+        "worktree repos",
+        WARN,
+        f"agents work in worktrees of {', '.join(unlisted)}, which the worktree plugin does not serve:"
+        " islands only, no PR / CLEAN",
+        f"add {entries} to settings.json plugins.worktree.repos, then restart the bridge",
+    )
 
 
 def tool_checks(tools: Mapping[str, str | None]) -> list[Check]:
@@ -203,6 +241,8 @@ def optional_checks(facts: Facts) -> list[Check]:
     checks.append(
         plugin_settings_check(facts.plugin_settings, facts.snapshot.get("plugins") if facts.snapshot is not None else None)
     )
+    if (repos := worktree_repos_check(facts.snapshot, facts.worktree_repos)) is not None:
+        checks.append(repos)
     return checks
 
 

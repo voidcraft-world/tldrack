@@ -107,6 +107,7 @@ from collections.abc import Callable
 
 from tldrack import paths
 from tldrack.atomic_store import atomic_write
+from tldrack.checkouts import checkout_root, repo_identity
 from tldrack.snapshot import SESSION_NAME_RE
 
 MISSION_FILE_VERSION = 1
@@ -223,40 +224,9 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else f"{text[: limit - 1].rstrip()}…"
 
 
-@lru_cache(maxsize=512)
-def _repo_root(directory: str) -> str | None:
-    """The nearest ancestor holding `.git` (a file in a worktree, a directory otherwise)."""
-    current = directory
-    while True:
-        if os.path.exists(os.path.join(current, ".git")):
-            return current
-        parent = os.path.dirname(current)
-        if parent == current:
-            return None
-        current = parent
-
-
-@lru_cache(maxsize=512)
-def _repo_identity(root: str) -> str:
-    """One name for a repo and all its worktrees: its common git directory. A worktree's
-    `.git` is a file naming a private directory, whose `commondir` leads back to the shared
-    one; a submodule's has no `commondir`, and is a repo of its own."""
-    dot_git = os.path.join(root, ".git")
-    if os.path.isdir(dot_git):
-        return os.path.realpath(dot_git)
-    try:
-        with open(dot_git, encoding="utf-8") as handle:
-            pointer = handle.read().strip()
-    except OSError:
-        return os.path.realpath(root)
-    if not pointer.startswith("gitdir:"):
-        return os.path.realpath(root)
-    private = os.path.normpath(os.path.join(root, pointer.removeprefix("gitdir:").strip()))
-    try:
-        with open(os.path.join(private, "commondir"), encoding="utf-8") as handle:
-            return os.path.realpath(os.path.join(private, handle.read().strip()))
-    except OSError:
-        return os.path.realpath(private)
+#: Cached for good: a file an agent edited does not change checkout. The rules: owned by checkouts.py.
+_repo_root = lru_cache(maxsize=512)(checkout_root)
+_repo_identity = lru_cache(maxsize=512)(repo_identity)
 
 
 def repo_file(path: object, cwd: object) -> tuple[str, str] | None:
