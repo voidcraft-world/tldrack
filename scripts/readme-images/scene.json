@@ -1,0 +1,333 @@
+{
+  "viewport": {
+    "width": 1920,
+    "height": 1320
+  },
+  "focus": "demo-lead",
+  "sessions": [
+    {
+      "session": "demo-lead",
+      "auto_name": "Search update",
+      "state": "busy",
+      "profile": "claude",
+      "model": "claude-opus-4-6",
+      "tasks": {
+        "done": 2,
+        "total": 4,
+        "current": "Review implementation wave 2"
+      },
+      "lead": {
+        "run": "demo-search",
+        "open_decisions": 0
+      },
+      "activity": {
+        "zone": "codebase",
+        "tool": "Read",
+        "detail": "Reviewing worker changes"
+      }
+    },
+    {
+      "session": "demo-search-api",
+      "auto_name": "Search API",
+      "state": "busy",
+      "profile": "codex",
+      "model": "gpt-6.2",
+      "parent": "demo-lead",
+      "branch": "feat/search-api",
+      "tasks": {
+        "done": 2,
+        "total": 4,
+        "current": "Implement pagination"
+      },
+      "worker": {
+        "run": "demo-search",
+        "step": "api"
+      },
+      "activity": {
+        "zone": "codebase",
+        "tool": "Edit",
+        "detail": "Adding pagination support"
+      }
+    },
+    {
+      "session": "demo-search-ui",
+      "auto_name": "Search UI",
+      "state": "background",
+      "background_jobs": 1,
+      "profile": "claude",
+      "model": "claude-sonnet-4-6",
+      "parent": "demo-lead",
+      "branch": "feat/search-ui",
+      "tasks": {
+        "done": 3,
+        "total": 4,
+        "current": "Implement empty-result states"
+      },
+      "worker": {
+        "run": "demo-search",
+        "step": "ui"
+      },
+      "activity": {
+        "zone": "computer",
+        "tool": "Bash",
+        "detail": "Generating search components"
+      }
+    },
+    {
+      "session": "demo-search-docs",
+      "auto_name": "Search guide",
+      "state": "free",
+      "profile": "claude",
+      "model": "claude-sonnet-4-6",
+      "parent": "demo-lead",
+      "branch": "docs/search-guide",
+      "merged": true,
+      "work_done": true,
+      "tasks": {
+        "done": 4,
+        "total": 4,
+        "current": null
+      },
+      "worker": {
+        "run": "demo-search",
+        "step": "docs"
+      }
+    },
+    {
+      "session": "demo-shortcuts",
+      "auto_name": "Keyboard shortcuts",
+      "state": "busy",
+      "profile": "claude",
+      "model": "claude-sonnet-4-6",
+      "activity": {
+        "zone": "codebase",
+        "tool": "Edit",
+        "detail": "Adding keyboard navigation"
+      }
+    },
+    {
+      "session": "demo-theme",
+      "auto_name": "Theme contrast",
+      "state": "attention",
+      "profile": "codex",
+      "model": "gpt-6.2",
+      "branch": "fix/theme-contrast",
+      "activity": {
+        "zone": "codebase",
+        "tool": "Read",
+        "detail": "Choose the highlight color"
+      }
+    },
+    {
+      "session": "demo-empty",
+      "auto_name": "Empty state",
+      "state": "free",
+      "profile": "claude",
+      "model": "claude-sonnet-4-6",
+      "branch": "fix/empty-state",
+      "merged": true,
+      "work_done": true
+    },
+    {
+      "session": "svc-web",
+      "auto_name": "Web preview",
+      "state": "unknown",
+      "profile": null,
+      "model": null
+    },
+    {
+      "session": "svc-checks",
+      "auto_name": "Check runner",
+      "state": "unknown",
+      "profile": null,
+      "model": null
+    }
+  ],
+  "terminal": [
+    {
+      "tone": "muted",
+      "text": "DEMO SESSION  /  Claude Code  /  LEAD"
+    },
+    {
+      "tone": "prompt",
+      "text": "\u276f Complete all phases of the design document. Run linters and end-to-end tests after all implementation waves are complete."
+    },
+    {
+      "tone": "normal",
+      "text": "I read the design document, mapped its dependencies, and assigned workers in implementation waves."
+    },
+    {
+      "tone": "heading",
+      "text": "Search update"
+    },
+    {
+      "tone": "success",
+      "text": "\u2713 Read the design and plan the waves"
+    },
+    {
+      "tone": "success",
+      "text": "\u2713 Wave 1: API contract and guide"
+    },
+    {
+      "tone": "active",
+      "text": "\u25cf Wave 2: API and UI implementation"
+    },
+    {
+      "tone": "muted",
+      "text": "\u25cb Final validation: linters + end-to-end tests"
+    },
+    {
+      "tone": "heading",
+      "text": "Workers"
+    },
+    {
+      "tone": "normal",
+      "text": "Build the search API     Codex         working"
+    },
+    {
+      "tone": "normal",
+      "text": "Polish search results    Claude Code   working"
+    },
+    {
+      "tone": "success",
+      "text": "Document the search API  Claude Code   merged"
+    },
+    {
+      "tone": "heading",
+      "text": "Reviewing the API worker\u2019s patch"
+    },
+    {
+      "tone": "muted",
+      "text": "  search.ts"
+    },
+    {
+      "tone": "removed",
+      "text": "\u2212 return results;"
+    },
+    {
+      "tone": "success",
+      "text": "+ return { items: results, next_cursor };"
+    },
+    {
+      "tone": "normal",
+      "text": "Wave 1 is merged. Wave 2 workers are implementing pagination and empty-result states."
+    },
+    {
+      "tone": "normal",
+      "text": "Linters and end-to-end tests are queued until all waves finish. Then I will fix failures and report the results."
+    },
+    {
+      "tone": "active",
+      "text": "Working\u2026"
+    }
+  ],
+  "annotations": [
+    {
+      "selector": ".rack__launch",
+      "title": "Launch agents",
+      "text": "Choose a CLI, then start here, in a worktree, or as a LEAD."
+    },
+    {
+      "selector": ".row--family",
+      "title": "LEAD + workers",
+      "text": "The LEAD plans the waves and assigns workers in separate worktrees."
+    },
+    {
+      "selector": ".row:has-text(\"Keyboard shortcuts\")",
+      "title": "Independent sessions",
+      "text": "Regular CLI sessions work alongside the LEAD and its workers."
+    },
+    {
+      "selector": ".row--child:has-text(\"Search guide\")",
+      "title": "Worktrees, through merge",
+      "text": "Separate branches carry PR state; the check marks landed work."
+    },
+    {
+      "selector": ".rack-window__term",
+      "title": "Your agent terminal",
+      "text": "Open a session to read its answer, review a diff, or keep working."
+    },
+    {
+      "selector": ".canvas",
+      "title": "Office, files + canvases",
+      "text": "See activity across the rack and open the selected agent\u2019s deliverables."
+    },
+    {
+      "selector": ".row--cohort:has-text(\"SERVICES\")",
+      "title": "Services",
+      "text": "Keep servers and long-running jobs beside your agent sessions."
+    },
+    {
+      "selector": ".rack__devices",
+      "title": "Devices",
+      "text": "Monitor CPU, memory and GPU use across local and remote compute."
+    }
+  ],
+  "canvas": {
+    "title": "Search update",
+    "summary": "Wave 1 is merged. Wave 2 is in progress. Linters and end-to-end tests follow all implementation waves.",
+    "progress": "2 / 4 steps complete",
+    "rows": [
+      [
+        "Search API",
+        "Working"
+      ],
+      [
+        "Search UI",
+        "Working"
+      ],
+      [
+        "Search guide",
+        "Merged"
+      ]
+    ],
+    "files": [
+      "search-review.html",
+      "search-api.md"
+    ]
+  },
+  "services": [
+    {
+      "key": "web",
+      "label": "WEB",
+      "session": "svc-web",
+      "status": "running",
+      "port": 5173
+    },
+    {
+      "key": "checks",
+      "label": "CHECKS",
+      "session": "svc-checks",
+      "status": "running",
+      "port": null
+    }
+  ],
+  "devices": [
+    {
+      "name": "local",
+      "local": true,
+      "state": "up",
+      "os": "Darwin arm64",
+      "cores": 12,
+      "cpu_busy": 3.6,
+      "mem_used": 19327352832,
+      "mem_total": 34359738368,
+      "gpu_pct": 22,
+      "age_s": 0.4
+    },
+    {
+      "name": "compute",
+      "local": false,
+      "state": "up",
+      "os": "Linux x86_64",
+      "cores": 32,
+      "cpu_busy": 12.8,
+      "mem_used": 27917287424,
+      "mem_total": 68719476736,
+      "gpu_pct": 68,
+      "gpu_mem_used": 12884901888,
+      "gpu_mem_total": 25769803776,
+      "age_s": 0.8
+    }
+  ]
+}

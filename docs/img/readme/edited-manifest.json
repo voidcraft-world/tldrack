@@ -1,0 +1,10 @@
+{
+  "method": "built-in imagegen edit of an operator-provided screenshot",
+  "content": "Illustrative public sessions, transcript and canvas diagram; configured host controls retained.",
+  "source_sha256": "6b3ed698aa8878a908bd60bd212586eead3270399b06db1e3e17b7f6c39ed2a8",
+  "images": {
+    "rack-demo-edited.webp": "81a474b10dde29f6c60e2e0b863f3d777d8b5287b48512957ee106d4cd6810ee",
+    "rack-annotated-edited.webp": "f4185170d7aba60be1324bddf8937eea2c313a4a6732ced251a97570a1a3724c"
+  },
+  "example_prompt": "Complete all phases of the design document. Run linters and end-to-end tests after all implementation waves are complete."
+}

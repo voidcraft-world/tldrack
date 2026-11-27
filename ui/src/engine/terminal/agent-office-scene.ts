@@ -730,7 +730,7 @@ function build_room(room: OfficeRoom, chrome: LineBasicMaterial): { group: Group
     });
 
     // The name, painted on the floor along the room's front (+z) edge.
-    const head = room.kind === 'team' ? `TEAM ${room.label}` : room.label;
+    const head = room.kind === 'team' ? `FEATURE ${room.label}` : room.label;
     const { texture, aspect } = text_texture([{ text: head, color: hex_css(PALETTE.chrome) }], { px: 56 });
     const label_h = OFFICE_GEOMETRY.label_strip * 0.5;
     const service_icon_size = room.kind === 'services' ? OFFICE_GEOMETRY.label_strip * 0.55 : 0;

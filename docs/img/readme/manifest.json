@@ -1,0 +1,19 @@
+{
+  "scene": "scripts/readme-images/scene.json",
+  "source_commit": "c0a8278d41c498ab7a8f635e512b577187b65a60",
+  "sources_sha256": "632994dfacb3cafecad00369eb3915cafd0e706475de5913e249a66c2e93beaa",
+  "scene_sha256": "f277bf0f9ecbc097b7887866b9e79f3a562a3a2d22b4e50800c32b0a25891ce2",
+  "viewport": {
+    "width": 1920,
+    "height": 1320
+  },
+  "blocked": [
+    "/missions",
+    "/update",
+    "POST /rack-metrics/event"
+  ],
+  "images": {
+    "rack-demo.webp": "e4779cd38371c238a2744cbe2441192e8d5aff854aa5a105503f8e5a45437302",
+    "rack-annotated.webp": "44fde54b364761eb2e54f99583db787e791d08673f577a8c131e77fe43457f8e"
+  }
+}
