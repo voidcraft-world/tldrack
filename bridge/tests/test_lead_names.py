@@ -17,10 +17,26 @@ def test_a_built_lead_name_is_recognised_and_suffixed_when_taken():
     assert second == f"{first}-2" and is_generated(second)
 
 
+@pytest.mark.parametrize("name", ["wt-lead-r0101-abcd-s2", "wt-lead-r1127-5916-s011", "wt-lead-r0101-abcd-fix-rows"])
+def test_a_lead_worker_name_is_generated(name):
+    # The run and step ids say nothing about the work, so the step's label replaces them (session_names.py).
+    assert is_generated(name)
+
+
 @pytest.mark.parametrize(
-    "name", ["wt-lead-r0101-abcd-s2", "lead", "lead-one", "my-lead-0101-1200", "lead-One-0101-1200", "vc-3x"]
+    "name",
+    [
+        "wt-my-branch",  # a worktree the operator named
+        "wt-lead-r0101-abcd",  # a run with no step: not a worker
+        "wt-lead-r0101-ABCD-s2",
+        "lead",
+        "lead-one",
+        "my-lead-0101-1200",
+        "lead-One-0101-1200",
+        "vc-3x",
+    ],
 )
-def test_worker_and_custom_names_are_not_generated(name):
+def test_custom_names_are_not_generated(name):
     assert not is_generated(name)
 
 
