@@ -1,7 +1,7 @@
 {
   "viewport": {
     "width": 1920,
-    "height": 1200
+    "height": 1320
   },
   "focus": "demo-lead",
   "sessions": [
@@ -127,6 +127,20 @@
       "branch": "fix/empty-state",
       "merged": true,
       "work_done": true
+    },
+    {
+      "session": "svc-web",
+      "auto_name": "Web preview",
+      "state": "unknown",
+      "profile": null,
+      "model": null
+    },
+    {
+      "session": "svc-checks",
+      "auto_name": "Check runner",
+      "state": "unknown",
+      "profile": null,
+      "model": null
     }
   ],
   "terminal": [
@@ -230,9 +244,19 @@
       "text": "Open a session to read its answer, review a diff, or keep working."
     },
     {
-      "selector": ".canvas__frame",
+      "selector": ".canvas",
       "title": "Office, files + canvases",
       "text": "See activity across the rack and open the selected agent\u2019s deliverables."
+    },
+    {
+      "selector": ".row--cohort:has-text(\"SERVICES\")",
+      "title": "Services",
+      "text": "Keep servers and long-running jobs beside your agent sessions."
+    },
+    {
+      "selector": ".rack__devices",
+      "title": "Devices",
+      "text": "Monitor CPU, memory and GPU use across local and remote compute."
     }
   ],
   "canvas": {
@@ -257,5 +281,49 @@
       "search-review.html",
       "search-api.md"
     ]
-  }
+  },
+  "services": [
+    {
+      "key": "web",
+      "label": "WEB",
+      "session": "svc-web",
+      "status": "running",
+      "port": 5173
+    },
+    {
+      "key": "checks",
+      "label": "CHECKS",
+      "session": "svc-checks",
+      "status": "running",
+      "port": null
+    }
+  ],
+  "devices": [
+    {
+      "name": "local",
+      "local": true,
+      "state": "up",
+      "os": "Darwin arm64",
+      "cores": 12,
+      "cpu_busy": 3.6,
+      "mem_used": 19327352832,
+      "mem_total": 34359738368,
+      "gpu_pct": 22,
+      "age_s": 0.4
+    },
+    {
+      "name": "compute",
+      "local": false,
+      "state": "up",
+      "os": "Linux x86_64",
+      "cores": 32,
+      "cpu_busy": 12.8,
+      "mem_used": 27917287424,
+      "mem_total": 68719476736,
+      "gpu_pct": 68,
+      "gpu_mem_used": 12884901888,
+      "gpu_mem_total": 25769803776,
+      "age_s": 0.8
+    }
+  ]
 }

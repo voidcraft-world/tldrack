@@ -1,20 +1,19 @@
 {
   "scene": "scripts/readme-images/scene.json",
-  "source_commit": "910743005dc207c37ad8ce72ed2fc0f85676e29b",
-  "sources_sha256": "61b7b24bff9a66e4165c3d81710b7bd475bc73547debfc41c6b48410cafc444b",
-  "scene_sha256": "25c8f3b27d8206fc066d1aedad8383031cf56757a9092922e63304bba07d2af8",
+  "source_commit": "6dbd4624bf8617067f528f2ede8b628674ef3182",
+  "sources_sha256": "4d3d2d8d21c3897a7f5964f909807014de7baaa216c85667a9d56ee2032ea19b",
+  "scene_sha256": "65f0eb6d897209aacb52ff8d6ce4d35c043304866e1f455a108e08f3038ef84e",
   "viewport": {
     "width": 1920,
-    "height": 1200
+    "height": 1320
   },
   "blocked": [
     "/missions",
-    "/plugin/devices/state",
     "/update",
     "POST /rack-metrics/event"
   ],
   "images": {
-    "rack-demo.webp": "a042dc711415c545e7f437dccb7b8a242c77ae5f1ea9c9a9febdbea4290a15a0",
-    "rack-annotated.webp": "a6298d94087890c37a9eb6f7d362d6afcd9974f48b53944dacce7ebf12edf410"
+    "rack-demo.webp": "3693a286af9fd1ec03ab7aa1465ce3bcab6048f362eaa9d4211aba2892224e56",
+    "rack-annotated.webp": "e42cb75601fbe9f99308d4b68f36c273ad80c6d1294d75c62bf8a0236c550794"
   }
 }

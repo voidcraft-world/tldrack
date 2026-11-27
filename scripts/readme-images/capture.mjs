@@ -35,6 +35,7 @@ const names = new Set(scene.sessions.map((row) => row.session));
 if (names.size !== scene.sessions.length) throw new Error('Duplicate session name');
 for (const row of scene.sessions) {
     if (!/^[a-z0-9_-]{1,64}$/.test(row.session) || typeof row.auto_name !== 'string') throw new Error('Invalid session name or label');
+    if (row.session.startsWith('svc-') && !scene.services?.some((service) => service.session === row.session)) throw new Error(`Service row without readout: ${row.session}`);
     if (row.parent && !names.has(row.parent)) throw new Error(`Unknown parent for ${row.session}`);
     if (row.worker && !scene.sessions.some((lead) => lead.session === row.parent && lead.lead?.run === row.worker.run)) throw new Error(`Worker without matching LEAD: ${row.session}`);
     if (row.merged && (!row.branch || row.state !== 'free')) throw new Error(`Merged example must be a finished worktree: ${row.session}`);
@@ -96,12 +97,14 @@ const runs = sessions.filter((row) => row.lead).map((row) => ({
     })),
 }));
 const responses = {
-    '/snapshot': { sessions, profiles: [{ id: 'claude', kind: 'claude', label: 'CLAUDE', default: true, hooks_ok: true }, { id: 'codex', kind: 'codex', label: 'CODEX', hooks_ok: true }], plugins: ['worktree', 'agent-canvas', 'laya'], launch_pick: { id: 'claude', label: 'CLAUDE', reason: 'Available' } },
+    '/snapshot': { sessions, profiles: [{ id: 'claude', kind: 'claude', label: 'CLAUDE', default: true, hooks_ok: true }, { id: 'codex', kind: 'codex', label: 'CODEX', hooks_ok: true }], plugins: ['worktree', 'agent-canvas', 'laya', 'devices'], launch_pick: { id: 'claude', label: 'CLAUDE', reason: 'Available' } },
     '/plugin/worktree/state': { root: '/worktrees/demo', base: 'main', worktrees, worktree_paths: worktrees.map((row) => row.path), worktree_trees: worktrees.map((row) => ({ path: row.path, branch: row.branch, landing: row.landing, pr: { number: Number(row.pr_url.split('/').at(-1)), state: row.pr_status, url: row.pr_url } })), pr_known: true },
     '/lead/state': { runs },
     '/launch-directories': { directories: [{ label: 'DEMO', path: '/code/demo' }], default_path: '/code/demo', bridge_path: '/code/demo' },
     '/profile-availability': { paused: [], error: null },
     '/activity': { entries: [] },
+    '/plugin/dev-services/state': { services: scene.services ?? [] },
+    '/plugin/devices/state': { sample_s: 2, devices: scene.devices ?? [] },
 };
 function escape_html(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 function terminal_page() {
@@ -151,6 +154,7 @@ try {
         localStorage.setItem('tldrack:agent-canvas-size', JSON.stringify({ column_px: 560, under_px: null }));
         localStorage.setItem('tldrack:rack-prefs-v1', JSON.stringify({ office: true, office_quality: 'light', motion: false }));
         localStorage.setItem('tldrack:rack-complete-open', '1');
+        localStorage.setItem('tldrack:rack-devices-open', '1');
         localStorage.setItem('tldrack:canvas-section-height:office', '460');
         localStorage.setItem('tldrack:canvas-section-height:details', '340');
         localStorage.setItem('tldrack:canvas-section-height:document', '320');
@@ -165,7 +169,7 @@ try {
     await page.getByText(scene.sessions.find((row) => row.session === scene.focus).auto_name, { exact: true }).first().click();
     await page.locator('.rack__project').click();
     await page.locator('.rack__chip').filter({ hasText: 'CLAUDE' }).last().click();
-    await wrapper.mouse.move(1000, 20);
+    await page.locator('.row--family').hover();
     await page.locator('.artifact-shelf__file').first().waitFor();
     await page.frameLocator('.canvas__frame').getByText(scene.canvas.progress, { exact: true }).waitFor();
     await page.locator('.canvas-section[aria-label="3D office"] canvas').waitFor();

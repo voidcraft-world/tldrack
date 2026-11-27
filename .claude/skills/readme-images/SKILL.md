@@ -19,15 +19,17 @@ For the rack pair, edit `scripts/readme-images/scene.json`:
 - `sessions`: public, invented names and states. `parent` and `worker` connect a worker to its
   LEAD; omit both for independent CLI sessions. `branch` gives a worktree; `merged: true` on a
   finished row shows landed work. Keep the worker's run equal to its parent's run.
+- `services` and `devices`: invented service readouts and local/remote resource meters. Every
+  `svc-` session needs a matching service entry. Keep both sections visible in the capture.
 - `focus`, `terminal`, and `canvas`: the selected session and its illustrative transcript,
   progress, worker table and file names. Keep these consistent with the session rows.
 - `annotations`: the portions the operator wants explained, each with a Playwright `selector`,
-  `title`, and `text`. Match existing UI elements. Missing targets fail the capture. Six short
+  `title`, and `text`. Match existing UI elements. Missing targets fail the capture. Eight short
   callouts fit the default layout. Change the copy and selectors rather than paint fictional
   controls over the screenshot.
 
 The default includes one LEAD, three workers, independent sessions, working and waiting states,
-active and merged worktrees, a terminal, the 3D office, files and a canvas. LEAD and coordinator
+active and merged worktrees, Services, Devices, a terminal, the 3D office, files and a canvas. LEAD and coordinator
 are different features; name the one actually shown.
 
 ## Capture and inspect
@@ -53,6 +55,12 @@ Inspect both PNGs at full size. Check that session names are readable, the LEAD'
 visibly grouped, independent sessions are separate, both branch states appear, and the selected
 terminal and canvas agree. Check every annotation against what it points to. Use the real UI's
 layout controls and scene data to fix composition; don't edit application code for a screenshot.
+If the operator authorizes a live capture, inspect their actual rack using available browser tools.
+Open display-only controls to show the relevant buttons. Keep a raw capture in ignored output and
+check all visible text for private names, paths and account details before publishing. If browser
+access fails, report that limitation and use the demo capture; do not describe it as a live shot.
+Never add host-only controls to the standalone rack merely for its documentation.
+
 The office uses WebGL: the scenario is repeatable, but animation/GPU rasterization is not promised
 to be byte-identical across machines.
 
