@@ -77,10 +77,11 @@ def status(as_json: bool) -> None:
     help="The repository the run leads: a key from the worktree plugin's /repos, or a path in it. "
     "Default: the one your session works in, else the plugin's first.",
 )
-def start(plan: str, title: str, parallel: int, repo: str | None) -> None:
+@click.option("--base", default="main", show_default=True, help="Branch on origin for worker worktrees and PRs.")
+def start(plan: str, title: str, parallel: int, repo: str | None, base: str) -> None:
     """Start a run from a plan. The bridge keeps a frozen copy and its hash."""
     path = None if plan == "-" else str(Path(plan).expanduser().resolve())
-    body = {"plan_text": read_text(plan), "plan_path": path, "title": title, "parallel": parallel}
+    body = {"plan_text": read_text(plan), "plan_path": path, "title": title, "parallel": parallel, "base": base}
     if repo is not None:
         body["repo"] = repo_arg(repo)
     show(post("start", body))

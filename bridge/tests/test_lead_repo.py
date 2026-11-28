@@ -164,4 +164,33 @@ def test_a_v3_rack_db_gains_the_column_and_keeps_its_runs(tmp_path):
     conn.close()
     with rack_db.RackDb(path).read() as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == rack_db.SCHEMA_VERSION
-        assert dict(conn.execute("SELECT id, repo FROM lead_runs").fetchone()) == {"id": "R0001-abcd", "repo": None}
+        assert dict(conn.execute("SELECT id, repo, base FROM lead_runs").fetchone()) == {
+            "id": "R0001-abcd",
+            "repo": None,
+            "base": "main",
+        }
+
+
+def test_run_base_targets_the_group_and_each_worker_uses_its_current_tip(tmp_path):
+    service, fake, _ = build(tmp_path)
+    lead = launch(service)
+    base = "integration/staging"
+    ref = f"refs/remotes/origin/{base}"
+    original = fake.git
+    tips = iter((A_MAIN, B_MAIN))
+
+    def git(argv):
+        if argv[-2:] == ["rev-parse", ref]:
+            return 0, next(tips)
+        return original(argv)
+
+    service.bridge.git = git
+    run_id = ok(start(service, lead, base=base))["run"]
+    assert service.runs.run(run_id)["base"] == base
+    assert f"base: {base}" in ok(service.handle("status", {}, lead))["text"]
+    for step, tip in (("S1", A_MAIN), ("S2", B_MAIN)):
+        ok(service.handle("step", {"id": step, "title": step, "brief": "work"}, lead))
+        ok(service.handle("spawn", {"step": step}, lead))
+        assert fake.worktree.creates[-1]["base"] == tip
+    assert fake.worktree.group["base"] == base
+    assert sum(a[-1] == f"+refs/heads/{base}:{ref}" for a in original.calls) == 2

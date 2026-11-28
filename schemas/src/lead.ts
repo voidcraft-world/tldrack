@@ -82,6 +82,7 @@ const lead_run_fields = z.object({
     /** False when no live session wears the run's lead identity: the row offers RESUME. */
     lead_live: z.boolean(),
     profile: z.string().nullable(),
+    base: z.string().min(1).max(255).optional(),
     plan_path: z.string().nullable(),
     created_at: z.number(),
     steps: z.array(lead_step_schema).max(64),

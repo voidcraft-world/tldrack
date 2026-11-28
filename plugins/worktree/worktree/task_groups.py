@@ -34,7 +34,7 @@ import time
 import uuid
 from pathlib import Path
 
-from worktree.names import validate_branch, session_name_for
+from worktree.names import validate_branch, validate_existing_branch, session_name_for
 
 STAGES = {"queued": 0, "research": 20, "implement": 50, "validate": 80, "ready": 100, "blocked": 0, "failed": 0}
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
@@ -154,6 +154,11 @@ def new_group(body: dict, parent: dict) -> dict:
     auto = body.get("auto_pr", True)
     if not isinstance(auto, bool):
         raise ValueError("auto_pr must be boolean")
+    if "base" in body:
+        base = body["base"]
+        error = validate_existing_branch(base)
+        if error or base != base.strip() or base == "HEAD":
+            raise ValueError(error or "base must be a branch name")
     workers: list[dict] = []
     for lane in lanes:
         workers.append(new_member(lane, workers))
@@ -164,6 +169,7 @@ def new_group(body: dict, parent: dict) -> dict:
         "parent_session": parent["parent_name"],
         "start_sha": start,
         "auto_pr": auto,
+        **({"base": body["base"]} if "base" in body else {}),
         "membership": membership,
         "release": release,
         "sealed": False,
@@ -227,7 +233,7 @@ class TaskGroups:
                         (branch, row)
                         for branch, row in prs.items()
                         if (branch == explicit if explicit else branch == approved or branch.startswith(prefix))
-                        and row.get("base_ref") == base
+                        and row.get("base_ref") == current.get("base", base)
                         and row.get("state") in ("open", "merged")
                         and not row.get("draft")
                         and row.get("url")
@@ -254,7 +260,7 @@ class TaskGroups:
         """Is any worker of any group still undelivered? The plugin asks before it pays for a landing sweep."""
         return any(not delivered(w) for g in self.list() for w in g["workers"])
 
-    def reconcile_landing(self, landings: dict[str, dict]):
+    def reconcile_landing(self, landings: dict[str, dict], base: str = "main", default_base: str = "main"):
         """Stamp `landing` on every undelivered worker whose branch, or the
         publication branch it prepared, is in `landings`: `{branch: {how, pr}}`
         for each branch whose OWN work the harbor proved on the base
@@ -263,7 +269,7 @@ class TaskGroups:
         if not landings:
             return
         for group in self.list():
-            if all(delivered(w) for w in group["workers"]):
+            if group.get("base", default_base) != base or all(delivered(w) for w in group["workers"]):
                 continue
 
             def update(current):
