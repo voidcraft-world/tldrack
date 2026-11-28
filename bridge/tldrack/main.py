@@ -1585,7 +1585,7 @@ def build_status_handler(
         index = index_after_write(session)
         entry = index.get(session)
         shells_now = functools.cache(lambda: shells_of(entry) if entry is not None else arbiter.last_work().get(session, 0))
-        state = settled_state(store.get(session)["state"], entry, shells_now)
+        state = settled_state(store.get(session)["state"], entry, shells_now, session in arbiter.unbacked_shells())
         descendants = children_now().get(session, 0)
         agents, workflows = in_process_now(session, index)
         reason = held_reason(state, descendants, agents + workflows)

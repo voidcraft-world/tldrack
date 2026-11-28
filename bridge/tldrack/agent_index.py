@@ -71,6 +71,15 @@ binaries themselves, and live sessions):
   `statusline.py` and `caffeinate -i -t 300`. None of them is work. A FOREGROUND
   Bash command is the same wrapper, so children count only once the index says
   the turn is over. One `ps -A` per arbiter tick, never one per row.
+- **A `shell` the process tree contradicts is not believed.** A subagent may end
+  its turn with a Bash job of its own still running: Claude parks it ("waiting
+  on its own background work") and keeps the job in its task table. Measured
+  2026-11-27 on 2.1.332: that job is a direct child of the claude pid behind the
+  same wrapper, like any other. And when Claude misses a job's exit the task is
+  never closed, so the index said `shell` for five hours with no work child
+  alive, until the parked agent was stopped by hand. Closing that session kills
+  nothing, so the row is `free`: `state_arbiter.py` rule 6 owns the rule and its
+  guards, which is why an entry carries its Claude `version`.
 - **Agents have no pid.** Their count comes from the transcript (`transcript.py`
   `fold_background_agents`, and `fold_background_workflows` for a Workflow run,
   whose launch names a `taskId` and no `agentId`; measured 2.1.319), a label
@@ -119,6 +128,9 @@ IDENTITY_CACHE_SECONDS = 60.0
 #: `ps` is a local process-table read; this is a wedged-system backstop.
 PS_TIMEOUT_SECONDS = 2.0
 
+#: A Claude version is a short dotted number; anything longer is not one.
+VERSION_MAX = 40
+
 #: `waitingFor` is Claude's own short label ("permission prompt"); it becomes
 #: the row's `message`, which notify.py never sends anywhere. Capped anyway.
 WAITING_FOR_MAX = 120
@@ -137,6 +149,7 @@ class IndexEntry:
     proc_start: str
     pane: str | None = None  # `%3` — the join to the row (rule 3 above)
     root: str = ""  # the config dir it was read under (agents_cli.py reconciles per root)
+    version: str = ""  # the Claude that wrote it; "" when the entry names none (state_arbiter.py rule 6)
 
 
 def tmux_session_of(raw: object) -> str | None:
@@ -181,6 +194,7 @@ def parse_index_entry(raw: object, pid: int) -> IndexEntry | None:
         return None
     waiting_for = raw.get("waitingFor")
     agent_id = raw.get("sessionId")
+    version = raw.get("version")
     return IndexEntry(
         session=session,
         state=state,
@@ -190,6 +204,7 @@ def parse_index_entry(raw: object, pid: int) -> IndexEntry | None:
         pid=pid,
         proc_start=" ".join(proc_start.split()),
         pane=tmux_pane_of(raw.get("tmux")),
+        version=version if isinstance(version, str) and len(version) <= VERSION_MAX else "",
     )
 
 

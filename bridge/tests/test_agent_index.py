@@ -47,7 +47,13 @@ def test_an_entry_parses_into_the_bridge_vocabulary():
         pid=50001,
         proc_start="Thu Oct 1 09:00:00 2026",  # whitespace-normalized
         pane="%2",
+        version="2.1.294",
     )
+
+
+def test_an_entry_without_a_usable_version_names_none():
+    for version in (None, 2, "9" * 41):
+        assert parse_index_entry(raw(version=version), 50001).version == ""
 
 
 def test_status_words_map_and_unknown_words_contribute_nothing():
