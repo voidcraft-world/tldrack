@@ -5,7 +5,7 @@ import type { RackSession } from '../engine/terminal/multi-terminal-layout.ts';
 import { session_graph } from '../engine/terminal/session-graph.ts';
 import { display_state_color_css, fresh_session_shown, session_state_emoji } from '../config/terminal-status-flags.ts';
 import IslandMark from './IslandMark.vue';
-import TaskGroupBar from './TaskGroupBar.vue';
+import TaskGroupDisclosure from './TaskGroupDisclosure.vue';
 import { groups_for_parent, type TaskGroup } from './task-groups.ts';
 import '@vue-flow/core/dist/style.css';
 
@@ -39,8 +39,8 @@ const { fitView, zoomIn, zoomOut } = useVueFlow();
                         : fresh_session_shown(data.state, data.fresh, false) ? 'new' : data.state }}</small>
                     <IslandMark v-if="data.island" class="session-graph__island" :island="data.island" />
                 </button>
-                <TaskGroupBar v-for="group in groups_for_parent(groups, id)" :key="group.id" class="session-graph__group nodrag nopan"
-                    :group="group" :disabled="disabled" @control="(group_id, action) => emit('control', group_id, action)" />
+                <TaskGroupDisclosure class="session-graph__group nodrag nopan"
+                    :groups="groups_for_parent(groups, id)" :disabled="disabled" @control="(group_id, action) => emit('control', group_id, action)" />
                 <Handle type="source" :position="Position.Right" />
             </template>
         </VueFlow>
