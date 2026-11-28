@@ -111,7 +111,7 @@ const payload = ref<RackPayload | null>(null);
 import { mdiCheck, mdiClose, mdiCog, mdiOfficeBuildingOutline, mdiPause, mdiPencilOutline, mdiStar, mdiStarOutline, mdiThumbsUpDown, mdiUnfoldLessHorizontal, mdiUnfoldMoreHorizontal } from '../config/icons.ts';
 import { open_laya_review } from '../laya-review/open.ts';
 import { create_office_relay } from '../engine/terminal/agent-office-link.ts';
-import TaskGroupBar from './TaskGroupBar.vue';
+import TaskGroupDisclosure from './TaskGroupDisclosure.vue';
 import FamilyFoldLine from './FamilyFoldLine.vue';
 import MissionBar from './MissionBar.vue';
 import { mission_row_title, type MissionRequest } from './missions-client.ts';
@@ -408,7 +408,11 @@ const FAMILY_INDENT_MAX_DEPTH = 8;
  *  read (the note at `.row__indent` owns how). */
 function family_depth_style(row: RackRow): Record<string, string> | undefined {
     const depth = Math.min(row.depth ?? 0, FAMILY_INDENT_MAX_DEPTH);
-    return depth > 0 ? { '--rack-depth': String(depth) } : undefined;
+    const root = row.ancestors?.[0] ?? row.node_id;
+    if (!root || (!depth && !row.child_count)) return undefined;
+    let hash = 0;
+    for (const char of root) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
+    return { '--rack-depth': String(depth), '--family-color': `hsl(${hash % 360} 55% 74%)` };
 }
 
 /** A new session nobody has prompted yet (`fresh_session_shown`). */
@@ -2624,11 +2628,9 @@ onUnmounted(() => {
                 <span v-else class="row__text">{{ row.kind === 'cohort' ? band_label(row) : row.text }}</span>
                 <FamilyFoldLine v-if="row.kind === 'session' && row.node_id && fold_readouts.has(row.node_id)"
                     class="row__line2" :readout="fold_readouts.get(row.node_id)!" />
-                <template v-else>
-                    <TaskGroupBar v-for="group in groups_for_parent(payload.task_groups, row.node_id)" :key="group.id"
-                        class="row__group" :group="group" :disabled="frozen"
-                        @control="(id, action) => send('group_control', id, action)" />
-                </template>
+                <TaskGroupDisclosure v-else-if="row.node_id" class="row__group"
+                    :groups="groups_for_parent(payload.task_groups, row.node_id)" :disabled="frozen"
+                    @control="(id, action) => send('group_control', id, action)" />
             </li>
         </ul>
 
@@ -3681,8 +3683,14 @@ span.mark__open-work { cursor: default; }
 </style>
 
 <style scoped>
-.row--child { background: color-mix(in srgb, var(--color-accent-green, #93ffd4) 4%, transparent); border-left: 2px solid color-mix(in srgb, var(--color-accent-green, #93ffd4) 18%, transparent); }
-.row--family { border-top: 1px solid color-mix(in srgb, var(--color-accent-green, #93ffd4) 12%, transparent); }
+.row:is(.row--family, .row--child) {
+    background-image: linear-gradient(color-mix(in srgb, var(--family-color) 7%, transparent) 0 100%);
+}
+.row:is(.row--family, .row--child):not(.row--focused) {
+    border-left-color: color-mix(in srgb, var(--family-color) 56%, transparent);
+}
+.row--family { border-top: 1px solid color-mix(in srgb, var(--family-color) 22%, transparent); }
+.row--session:has(.row__group) { row-gap: 0; }
 .row__family-toggle { flex-shrink: 0; cursor: pointer; min-width: 28px; min-height: 28px; padding: 0 4px; gap: 2px; }
 .row__family-toggle .fui-key { margin-left: 0; }
 .row__family-toggle--folded { color: var(--color-accent-green, #93ffd4); }
