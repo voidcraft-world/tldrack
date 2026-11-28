@@ -201,6 +201,7 @@ def status_text(
             lines += [f"  {o['id']}  {o['title']}" for o in orphans]
         return "\n".join(lines)
     lines.append(f"RUN {run['id']} · {run['title']} · plan {run.get('plan_path')} (sha {str(run.get('plan_sha256'))[:12]})")
+    lines.append(f"base: {run.get('base', 'main')}")
     if repo:
         lines.append(f"repo: {repo}")
     over = (

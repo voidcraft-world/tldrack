@@ -75,7 +75,7 @@ from worktree import brief as brief_mod
 from worktree import landing as landing_mod
 from worktree import pr as pr_mod
 from worktree import ship as ship_mod
-from worktree.task_groups import TaskGroupConflict, TaskGroups, new_group
+from worktree.task_groups import TaskGroupConflict, TaskGroups, delivered, new_group
 from worktree.task_group_runner import GroupRunner
 from worktree.dirty import DirtyTier
 from worktree.harbor import (
@@ -212,9 +212,11 @@ class WorktreePlugin:
         self._occupants_at: float | None = None
         # The content proofs (landing.py): squash / rebase / shipped-in-another-
         # PR, read by every verdict, filled by a background worker.
+        self._patch_ids = landing_mod.PatchIdStore(landing_mod.resolve_patch_id_path(resolve_pr_index_path(store_path)))
+        self._group_content: dict[str, landing_mod.ContentTier] = {}
         self._content = landing_mod.ContentTier(
             self._repo_root,
-            landing_mod.PatchIdStore(landing_mod.resolve_patch_id_path(resolve_pr_index_path(store_path))),
+            self._patch_ids,
             start_thread=lambda target: self._start_background(target, "worktree-content"),
             on_ready=lambda: self._harbor.invalidate(),
         )
@@ -398,9 +400,43 @@ class WorktreePlugin:
         self._maybe_refresh_prs(branches_mod.fetch_head_mtime(self._repo_root))
         fetched_at, prs = self._pr_index.snapshot()
         self._groups.reconcile_prs(prs, self._base, fetched_at)
-        if self._groups.awaiting_delivery():
+        pending: dict[str, set[str]] = {}
+        for group in self._groups.list():
+            for worker in group["workers"]:
+                if not delivered(worker):
+                    names = pending.setdefault(group.get("base", self._base), set())
+                    names.update(
+                        filter(
+                            None, (worker["branch"], worker.get("publication_branch"), worker.get("approved_publication_branch"))
+                        )
+                    )
+        for base in self._group_content.keys() - pending.keys():
+            del self._group_content[base]
+        if self._base in pending:
             taken, _rows, _trees, _probe, refs = self._git_snapshot()
-            self._groups.reconcile_landing(own_landings(self._state_landing(taken, refs, fetched_at)))
+            self._groups.reconcile_landing(own_landings(self._state_landing(taken, refs, fetched_at)), self._base, self._base)
+        for base, names in pending.items():
+            if base != self._base:
+                self._sync_group_landing(base, names, prs)
+
+    def _sync_group_landing(self, base, names, prs):
+        # A run can target a remote branch with no local checkout. Pin both the sweep
+        # and the content proofs to the same object, even if a fetch moves the ref.
+        tip, error = adopt_mod.rev_of(self._repo_root, f"refs/remotes/origin/{base}")
+        if error or not tip:
+            return
+        refs, _, error = branches_mod.sweep_refs(self._repo_root, tip)
+        if error:
+            return
+        rows = [row for row in refs if row["branch"] in names]
+        branches_mod.join_landing(rows, prs.get, self._ancestry.contains, base)
+        rows.append({"is_base": True, "oid": tip})
+        if base not in self._group_content:
+            self._group_content[base] = landing_mod.ContentTier(
+                self._repo_root, self._patch_ids, start_thread=lambda target: self._start_background(target, "worktree-content")
+            )
+        self._group_content[base].judge(rows, base=base, prs=prs)
+        self._groups.reconcile_landing(own_landings({row["branch"]: row for row in rows if "branch" in row}), base, self._base)
 
     def _managed(self, records: list[dict] | None = None) -> list[dict]:
         """Every worktree of OURS, newest git order preserved.
@@ -484,6 +520,7 @@ class WorktreePlugin:
             # exists. `create_respawn`: `/create {existing}` re-enters a managed tree whose session died.
             "capabilities": {
                 "create_base": True,
+                "task_group_base": True,
                 "task_groups": True,
                 "cleanup": True,
                 # `gh` missing: every PR verb refuses, so a client hides them.
@@ -2460,7 +2497,9 @@ class WorktreePlugin:
         # A group worker whose landed branch goes now keeps its delivery: the
         # runner's next landing sweep would no longer find the branch.
         if row is not None and row.get("landed") is True:
-            self._groups.reconcile_landing(own_landings({branch: {"landed": True, "landing": row.get("landing")}}))
+            self._groups.reconcile_landing(
+                own_landings({branch: {"landed": True, "landing": row.get("landing")}}), self._base, self._base
+            )
 
         # A forced delete of work nothing PROVED safe pins its tip first, and
         # refuses when it cannot (`archive.py` owns why).

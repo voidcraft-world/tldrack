@@ -1,6 +1,6 @@
 {
   "name": "@tldrack/schemas",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "The zod contracts tldrack's bridge, plugins and pages agree on: every wire the rack reads, the Laya ledger, and the eval results file.",
   "license": "MIT",
   "repository": {

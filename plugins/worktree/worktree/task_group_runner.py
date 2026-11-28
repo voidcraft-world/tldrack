@@ -35,7 +35,7 @@ from worktree.task_groups import (
 CI_REFRESH_SECONDS = 60
 #: One `gh pr view` — a read, so a short bound; a timeout keeps the last reading.
 CI_VIEW_TIMEOUT_SECONDS = 30
-CI_VIEW_FIELDS = "statusCheckRollup,headRefOid,state"
+CI_VIEW_FIELDS = "statusCheckRollup,headRefOid,state,baseRefName"
 FOLLOW_UP_REFUSAL = "a follow-up must fast-forward the open PR"
 QUIET = {"GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1"}
 
@@ -159,9 +159,11 @@ def follow_up(group, worker, managed, base) -> dict:
         )
     )
     state = str(view.get("state") or "").lower()
+    if view.get("baseRefName") != base or view.get("headRefName") != branch:
+        raise ValueError("the PR no longer matches the publication branch and base")
     if state in PR_FINISHED:
         return {**pr_state_fields(state), "error": f"the PR is {state}; ship the follow-up as a new step"}
-    if state != "open" or view.get("headRefName") != branch or view.get("baseRefName") != base:
+    if state != "open":
         raise ValueError("the open PR no longer heads the publication branch")
     fast_forward(path, branch, view.get("headRefOid"), worker["head"])
     return {"pr_head": worker["head"], "pr_state": "open", "error": None}
@@ -173,9 +175,9 @@ def pr_state_fields(state: str) -> dict:
     return {"pr_state": state, **({"closed_seen_at": time.time()} if state == "closed" else {})}
 
 
-def ci_reading(view: object) -> dict | None:
+def ci_reading(view: object, base: str) -> dict | None:
     """`gh pr view --json statusCheckRollup,headRefOid,state` → the worker's CI fields."""
-    if not isinstance(view, dict):
+    if not isinstance(view, dict) or view.get("baseRefName") != base:
         return None
     state = str(view.get("state") or "").lower()
     if state not in ("open", *PR_FINISHED):
@@ -229,9 +231,9 @@ class GroupRunner:
             else:
                 self.release_batch(group)
 
-    def fetch_base(self):
+    def fetch_base(self, base):
         checked(
-            ["git", "fetch", "origin", f"+refs/heads/{self.base}:refs/remotes/origin/{self.base}"],
+            ["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"],
             self.repo,
             pr.NETWORK_TIMEOUT_SECONDS,
         )
@@ -240,13 +242,14 @@ class GroupRunner:
         if not releasable(group) or not any(batch_due(w) for w in group["workers"]):
             return
         self.active = group["label"]
+        base = group.get("base", self.base)
         try:
-            self.fetch_base()
+            self.fetch_base(base)
             managed = self.managed()
             # Validate the WHOLE group before the first outward mutation.
             for worker in group["workers"]:
                 if batch_due(worker):
-                    preflight(group, worker, managed, self.base)
+                    preflight(group, worker, managed, base)
             for worker in group["workers"]:
                 if not batch_due(worker):
                     continue
@@ -259,7 +262,7 @@ class GroupRunner:
                         break
                     self.store.worker_result(group["id"], worker["branch"], pr_status="opening")
                 try:
-                    url = publish(group, worker, managed, self.base)
+                    url = publish(group, worker, managed, base)
                     self.store.worker_result(
                         group["id"],
                         worker["branch"],
@@ -287,7 +290,7 @@ class GroupRunner:
         self.active = group["label"]
         try:
             try:
-                self.fetch_base()
+                self.fetch_base(group.get("base", self.base))
                 managed = self.managed()
             except Exception as exc:
                 for worker in due:
@@ -310,12 +313,12 @@ class GroupRunner:
             self.store.worker_result(group_id, worker["branch"], pr_status="opening")
         try:
             if worker.get("pr_url"):
-                result = follow_up(latest, worker, managed, self.base)
+                result = follow_up(latest, worker, managed, latest.get("base", self.base))
                 # A new head has new checks: read them on the next tick, not a minute later.
                 self.ci_read_at.pop((group_id, worker["branch"]), None)
                 self.store.worker_result(group_id, worker["branch"], pr_status="open", **result)
             else:
-                url = publish(latest, worker, managed, self.base)
+                url = publish(latest, worker, managed, latest.get("base", self.base))
                 self.store.worker_result(
                     group_id, worker["branch"], pr_url=url, pr_status="open", pr_state="open", pr_head=worker["head"], error=None
                 )
@@ -342,7 +345,8 @@ class GroupRunner:
                         checked(
                             ["gh", "pr", "view", worker["pr_url"], "--json", CI_VIEW_FIELDS], self.repo, CI_VIEW_TIMEOUT_SECONDS
                         )
-                    )
+                    ),
+                    group.get("base", self.base),
                 )
             except (ValueError, TypeError) as exc:
                 failed.append(f"{worker['branch']}: {str(exc)[:120]}")

@@ -172,7 +172,11 @@ ALTER TABLE lead_runs ADD COLUMN repo TEXT;
 """
 
 #: Index i holds the script that takes the schema from version i to i + 1.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4)
+_SCHEMA_V5 = """
+ALTER TABLE lead_runs ADD COLUMN base TEXT NOT NULL DEFAULT 'main';
+"""
+
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4, _SCHEMA_V5)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 

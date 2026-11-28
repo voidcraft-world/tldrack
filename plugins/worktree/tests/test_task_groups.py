@@ -446,3 +446,28 @@ def test_landing_is_final_and_waits_for_a_publication_in_flight(store):
     store.reconcile_landing({"other": LANDED})
     assert delivered(store.list()[0]["workers"][0])
     assert store.awaiting_delivery()
+
+
+def test_squash_landing_on_remote_group_base_without_a_local_base_branch(repo, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from worktree.plugin import WorktreePlugin
+
+    path, start, _ = repo
+    target = "integration/staging"
+    branch = "batch/lane-0"
+    git(path, "switch", "--detach", start)
+    git(path, "merge", "--squash", branch)
+    git(path, "commit", "-m", "Combined work")
+    git(path, "update-ref", f"refs/remotes/origin/{target}", git(path, "rev-parse", "HEAD"))
+    monkeypatch.setenv("TLDRACK_WORKTREE_PATH", str(tmp_path / "prs.json"))
+    plugin = WorktreePlugin(SimpleNamespace(start_dir=path, log=lambda _: None))
+    monkeypatch.setattr(plugin, "_start_background", lambda fn, _name: fn())
+    monkeypatch.setattr(plugin, "_maybe_refresh_prs", lambda _: None)
+    group = plugin._groups.create(
+        new_group({"label": "Run", "start_sha": start, "base": target, "workers": [{"branch": branch}]}, PARENT)
+    )
+    for _ in range(3):
+        plugin._sync_group_prs()
+    assert plugin._groups.get(group["id"])["workers"][0]["landing"] == {"branch": branch, "how": "squash", "pr": None}
+    assert git(path, "rev-parse", "main") == start

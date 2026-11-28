@@ -388,7 +388,12 @@ class Clock:
 
 def ci_view(state="OPEN", head=SHA, conclusion="SUCCESS"):
     return json.dumps(
-        {"state": state, "headRefOid": head, "statusCheckRollup": [{"status": "COMPLETED", "conclusion": conclusion}]}
+        {
+            "state": state,
+            "baseRefName": "main",
+            "headRefOid": head,
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": conclusion}],
+        }
     )
 
 
@@ -481,3 +486,27 @@ def test_summary_counts_an_open_groups_joined_workers(store):
     view = ready(store, group["id"], "lead/s1")
     assert (view["total"], view["percent"], view["phase"]) == (2, 50, "working")
     assert summary({**view, "workers": []})["phase"] == "working"
+
+
+def test_group_base_controls_publication_and_delivery(store, monkeypatch):
+    base = "integration/staging"
+    branch = "lead/s1"
+    group = store.create(
+        new_group({"label": "Run", "start_sha": SHA, "release": "each", "base": base, "workers": [{"branch": branch}]}, PARENT)
+    )
+    ready(store, group["id"], branch)
+    calls = []
+    monkeypatch.setattr(runner, "checked", lambda cmd, *args: calls.append(cmd) or "")
+    targets = []
+    monkeypatch.setattr(runner, "publish", lambda g, w, m, b: targets.append(b) or URL)
+    job(store).tick()
+    assert targets == [base]
+    assert calls[0][-1] == f"+refs/heads/{base}:refs/remotes/origin/{base}"
+    pr = {"state": "merged", "head_oid": SHA, "url": URL, "base_ref": "main"}
+    store.reconcile_prs({branch: pr}, "main")
+    store.reconcile_landing({branch: {"how": "pr", "pr": 1}}, "main", "main")
+    member = store.get(group["id"])["workers"][0]
+    assert member["pr_state"] == "open" and not member.get("landing")
+    assert runner.ci_reading(json.loads(ci_view(state="MERGED")), base) is None
+    store.reconcile_prs({branch: {**pr, "base_ref": base}}, "main")
+    assert store.get(group["id"])["workers"][0]["pr_state"] == "merged"

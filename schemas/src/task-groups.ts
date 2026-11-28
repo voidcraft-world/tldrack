@@ -12,6 +12,7 @@ export const task_group_schema = z.object({
     parent_session: z.string(),
     auto_pr: z.boolean(),
     sealed: z.boolean(),
+    base: z.string().min(1).max(255).optional(),
     membership: z.enum(['fixed', 'open']).optional(),
     release: z.enum(['batch', 'each']).optional(),
     percent: z.number().int().min(0).max(100),

@@ -94,7 +94,7 @@ def branch_for(run_id: str, step_id: str) -> str:
 
 
 def deps_met(step: Mapping[str, Any], steps: Mapping[str, Mapping[str, Any]], merged: set[str]) -> bool:
-    """A change dependency must be MERGED (its code is on main for the next worker to branch from); a
+    """A change dependency must be MERGED (its code is on the run’s base for the next worker to branch from); a
     report dependency must be CLOSED (its report is saved)."""
     for dep in step["after"]:
         other = steps.get(dep)
@@ -158,6 +158,7 @@ class LeadRuns:
         lead_model: str | None = None,
         worker_model: str | None = None,
         repo: str | None = None,
+        base: str = "main",
     ) -> dict:
         name = flat(title, 200)
         if not name:
@@ -183,8 +184,8 @@ class LeadRuns:
             digest = hashlib.sha256(plan_text.encode()).hexdigest()
             conn.execute(
                 "INSERT INTO lead_runs (id, title, plan_path, plan_sha256, lead_identity, lead_session, profile, "
-                "parallel_max, spawn_cap, state, created_at, lead_model, worker_model, repo) "
-                "VALUES (?,?,?,?,?,?,?,?,?, 'open', ?,?,?,?)",
+                "parallel_max, spawn_cap, state, created_at, lead_model, worker_model, repo, base) "
+                "VALUES (?,?,?,?,?,?,?,?,?, 'open', ?,?,?,?,?)",
                 (
                     run_id,
                     name,
@@ -199,6 +200,7 @@ class LeadRuns:
                     lead_model,
                     worker_model,
                     repo,
+                    base,
                 ),
             )
             started = {"plan": plan_path or str(copy), "sha256": digest[:12], **({"repo": repo} if repo else {})}

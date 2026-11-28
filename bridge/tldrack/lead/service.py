@@ -295,12 +295,16 @@ class LeadService:
         name = f"{row.get('label') or row['key']} ({row['key']}) · {row.get('path')}"
         return name if key else f"{name} (the first repository: this run names none)"
 
-    def _origin_main(self, run: Mapping) -> str:
+    def _origin_base(self, run: Mapping) -> str:
         root = self._repo_root(run)
-        self.bridge.git(["git", "-C", root, "fetch", "--quiet", "--no-tags", "origin", "main"])
-        code, sha = self.bridge.git(["git", "-C", root, "rev-parse", "refs/remotes/origin/main"])
+        base = run["base"]
+        ref = f"refs/remotes/origin/{base}"
+        code, _ = self.bridge.git(["git", "-C", root, "fetch", "--quiet", "--no-tags", "origin", f"+refs/heads/{base}:{ref}"])
+        if code:
+            raise LeadError(f"could not fetch origin/{base}", 503)
+        code, sha = self.bridge.git(["git", "-C", root, "rev-parse", ref])
         if code or not SHA_RE.fullmatch(sha):
-            raise LeadError("could not read origin/main", 503)
+            raise LeadError(f"could not read origin/{base}", 503)
         return sha
 
     # ── dispatch ──────────────────────────────────────────────────────────────
@@ -424,7 +428,14 @@ class LeadService:
             worker_live=view["worker_live"],
             repo=self._repo_line(run),
         )
-        return 200, {"ok": True, "run": run["id"], "text": text, "next": view["next"], "repo": run.get("repo")}
+        return 200, {
+            "ok": True,
+            "run": run["id"],
+            "text": text,
+            "next": view["next"],
+            "repo": run.get("repo"),
+            "base": run["base"],
+        }
 
     def _view(self, run: Mapping, live: Mapping[str, dict]) -> dict:
         steps = self.runs.steps(run["id"])
@@ -491,6 +502,16 @@ class LeadService:
             raise LeadError("the plan text is required (the CLI reads --plan for you)")
         if len(text.encode()) > MAX_PLAN_BYTES:
             raise LeadError("a plan is at most 256 KiB; split it, or point steps at sections")
+        base = payload.get("base", "main")
+        if (
+            not isinstance(base, str)
+            or not 1 <= len(base) <= 255
+            or base.startswith("-")
+            or base in ("HEAD", "@")
+            or "\x00" in base
+            or self.bridge.git(["git", "check-ref-format", f"refs/heads/{base}"])[0]
+        ):
+            raise LeadError("--base must be a branch name on origin")
         repo = self._resolve_repo(payload.get("repo"), row)
         run = self.runs.start(
             lead_identity=identity,
@@ -504,6 +525,7 @@ class LeadService:
             # The pair this lead was LAUNCHED with, read off its own stamps.
             lead_model=row.get("launch_model"),
             worker_model=row.get("subagent_model"),
+            base=base,
             repo=repo,
         )
         self._refresh_roles(live)
@@ -513,6 +535,7 @@ class LeadService:
             "ok": True,
             "run": run["id"],
             "plan": run["plan_path"],
+            "base": run["base"],
             "repo": run.get("repo"),
             **({"label": label} if label else {}),
         }
@@ -579,6 +602,7 @@ class LeadService:
         caps = (state.get("capabilities") or {}) if status == 200 else {}
         if not (
             caps.get("task_group_modes")
+            and (caps.get("task_group_base") or run["base"] == state.get("base", "main"))
             and caps.get("create_respawn")
             and WORKER_PERMISSION_MODE in (caps.get("permission_modes") or ())
             and (caps.get("launch_models") or not worker_model)
@@ -587,9 +611,9 @@ class LeadService:
         branch = branch_for(run["id"], step["step_id"])
         # A retry after a failed start reuses the tree it already made: /create refuses a branch twice.
         reuse = follow_up or branch in self._trees(run.get("repo"))
-        base = None if reuse else self._origin_main(run)
+        base = None if reuse else self._origin_base(run)
         if step["kind"] == "change" and not run.get("group_id"):
-            run = self._ensure_group(run, base or self._origin_main(run))
+            run = self._ensure_group(run, base or self._origin_base(run))
         session = f"wt-{branch.replace('/', '-')}"
         self.runs.note_spawn(
             run["id"],
@@ -602,7 +626,7 @@ class LeadService:
         )
         if step["kind"] == "change" and branch not in workers:
             # `start_sha` is the commit this branch is cut from, so the PR's published-base check holds
-            # it to origin/main at spawn, not to the group's first base (a later main may differ).
+            # it to the run’s base at spawn, which may advance after group creation.
             join = {"id": run["group_id"], "branch": branch, "start_sha": base or run.get("start_sha")}
             status, body = self._wt("POST", "/group-join", join, repo=run.get("repo"))
             if status >= 400:
@@ -652,6 +676,7 @@ class LeadService:
                 "parent_session": run["lead_session"],
                 "label": f"LEAD {run['id']} · {run['title']}"[:120],
                 "start_sha": base,
+                "base": run["base"],
                 "auto_pr": True,
                 "membership": "open",
                 "release": "each",
@@ -970,6 +995,7 @@ class LeadService:
                     "repo": run.get("repo"),
                     "created_at": run["created_at"],
                     "steps": steps,
+                    "base": run["base"],
                     "lead_model": run.get("lead_model"),
                     "worker_model": run.get("worker_model"),
                     "decisions": self.inbox.open_rows(run["id"]),

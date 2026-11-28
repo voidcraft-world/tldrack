@@ -60,6 +60,7 @@ class FakeWorktree:
                 "capabilities": {
                     "task_groups": True,
                     "task_group_modes": True,
+                    "task_group_base": True,
                     "create_respawn": True,
                     "permission_modes": ["auto"],
                     "launch_models": self.launch_models,
@@ -70,7 +71,7 @@ class FakeWorktree:
     def handle_post(self, path, query, body):
         self.calls.append(("POST", path, body.get("repo")))
         if path == "/group-create":
-            self.group = {"id": str(uuid.uuid4()), "workers": [], **{k: body[k] for k in ("membership", "release")}}
+            self.group = {"id": str(uuid.uuid4()), "workers": [], **{k: body[k] for k in ("membership", "release", "base")}}
             return 200, {"group": self.group}
         if path == "/group-join":
             assert body.get("start_sha"), "a worker branch names the commit it was cut from"
