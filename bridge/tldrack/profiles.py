@@ -690,7 +690,11 @@ def build_inner(
 #:   tmux's own `-c` does.
 #: - No command after the directory: the pane's login shell (`$SHELL` is tmux's
 #:   `default-shell` inside a pane), which is what tmux runs when given none.
-PANE_CD_SCRIPT = 'cd -- "$1" 2>/dev/null || cd; shift; [[ -n "$1" ]] && exec "$@"; exec "${SHELL:-/bin/zsh}" -l'
+#: - An agent loads the interactive profile for PATH and shell functions. Suppress
+#:   Oh My Zsh's default update question before that profile can read worker input.
+PANE_CD_SCRIPT = (
+    'cd -- "$1" 2>/dev/null || cd; shift; [[ -n "$1" ]] && DISABLE_AUTO_UPDATE=true exec "$@"; exec "${SHELL:-/bin/zsh}" -l'
+)
 
 
 def directory_args(cwd: str | os.PathLike[str], command: Iterable[str] = ()) -> list[str]:

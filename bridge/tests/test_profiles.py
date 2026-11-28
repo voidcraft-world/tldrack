@@ -602,6 +602,24 @@ def test_a_cwd_ending_in_a_semicolon_cannot_split_the_command(tmp_path):
 needs_zsh = pytest.mark.skipif(not os.path.exists("/bin/zsh"), reason="the pane command runs /bin/zsh")
 
 
+@needs_zsh
+def test_worker_brief_reaches_the_agent_after_interactive_startup(tmp_path):
+    (tmp_path / ".zshrc").write_text('[[ "$DISABLE_AUTO_UPDATE" == true ]] || exit 81\ncodex() { print -r -- "$1"; exit 0; }\n')
+    brief = "review the worker's change"
+    argv = spawn_argv(Profile("codex", "CODEX", "codex", None, False), "worker", tmp_path, [brief])
+    pane = argv[7 : argv.index(";")]
+    result = subprocess.run(
+        pane,
+        env={"HOME": str(tmp_path), "ZDOTDIR": str(tmp_path), "PATH": os.defpath},
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert brief in result.stdout.splitlines()
+
+
 def run_pane_cd(target, command, cwd, home):
     """The pane command `directory_args` builds, run for real from `cwd`."""
     argv = directory_args(target, command)[2:]
