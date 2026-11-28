@@ -19,7 +19,7 @@ That one rule covers every measured leak with no per-case branches: Esc
 (attention → busy), the early prompt (busy → attention ~5 s before the
 Notification hook), and an out-of-order Stop (free → busy).
 
-Two refinements make room for `background` (the turn is over, work still runs):
+Three refinements make room for `background` (the turn is over, work still runs):
 
 4. **The settle zone.** When both the stored state and the index's verdict mean
    "the turn is over" (`free` / `background`), the verdict wins regardless of
@@ -33,6 +33,21 @@ Two refinements make room for `background` (the turn is over, work still runs):
    outlasted that hook by HOLD_SECONDS, is `background`: Claude stays busy while
    a background agent runs, and would have flipped to idle/shell by now if its
    turn were all that was keeping it busy.
+
+6. **An unbacked `shell`.** An index `shell` whose Claude has had no work child
+   for UNBACKED_SHELL_SECONDS reads as `free`: Claude can keep a job in its task
+   table long after the process is gone (agent_index.py § BACKGROUND WORK owns
+   the measurement), and `background` means "closing this kills work". Three
+   guards, because a wrong `free` invites the operator to close a session that is
+   still working (`ShellBacking`):
+   - the streak is every tick's read since the last work child, in any state, so
+     a row that was already stale does not flash `background` at each turn end;
+   - a process table that could not be read is not a zero, and ends every streak;
+   - zero is believed only for a Claude version whose jobs this bridge has
+     counted at least once. The count is a match on Claude's own wrapper command;
+     a release that changes the wrapper would otherwise turn every real job into
+     an unbacked one. Until some session on that version shows a job, its
+     `shell` is believed as before.
 
 Writes are compare-and-set on the store's `seq` (`StatusStore.correct`), so a
 hook arriving between this read and this write is never overwritten. A
@@ -69,20 +84,65 @@ HOLD_SECONDS = 2.0
 #: Tick period. Latency of a correction is HOLD_SECONDS + up to one tick.
 ARBITER_TICK_SECONDS = 2.0
 
+#: How long a Claude must show no work child before its index `shell` is not
+#: believed (rule 6): five ticks. A job that really ended flips the index to
+#: idle within a second, so this only ever waits on a `shell` that is wrong.
+UNBACKED_SHELL_SECONDS = 10.0
 
-def index_verdict(entry: IndexEntry, shells: int) -> str:
+
+def index_verdict(entry: IndexEntry, shells: int, unbacked: bool = False) -> str:
     """What the index and the process tree say, before any hook is weighed. Pure.
 
     `shells` counts the work children of the entry's pid. It is consulted only
     when the index says idle — a foreground Bash in a busy turn is the same
-    kind of child (agent_index.py § BACKGROUND WORK).
+    kind of child (agent_index.py § BACKGROUND WORK). `unbacked` is rule 6's
+    answer for this entry (`ShellBacking`), consulted only when the index says
+    `shell`.
     """
     if entry.state == "free" and shells > 0:
         return "background"
+    if entry.state == "background" and unbacked:
+        return "free"
     return entry.state
 
 
-def decide_correction(current: Mapping | None, entry: IndexEntry, now: float, shells: int = 0) -> str | None:
+class ShellBacking:
+    """Rule 6's memory: how long each Claude has gone without a work child, and
+    which Claude versions the work-child match has been seen to work on. The
+    module header owns why each guard exists. Not thread-safe: one tick owns it.
+    """
+
+    def __init__(self) -> None:
+        # (pid, procStart) → when its current run of empty reads began.
+        self._empty_since: dict[tuple[int, str], float] = {}
+        self._counted_versions: set[str] = set()
+
+    def observe(self, index: Mapping[str, IndexEntry], work: Mapping[str, int] | None, now: float) -> frozenset[str]:
+        """One tick's read → the sessions whose index `shell` is unbacked.
+
+        `work` is session → work children, or None when the process table could
+        not be read. An entry missing from one read starts its streak again.
+        """
+        if work is None:
+            self._empty_since = {}
+            return frozenset()
+        empty_since: dict[tuple[int, str], float] = {}
+        unbacked: set[str] = set()
+        for session, entry in index.items():
+            if work.get(session, 0) > 0:
+                self._counted_versions.add(entry.version)
+                continue
+            key = (entry.pid, entry.proc_start)
+            since = empty_since[key] = self._empty_since.get(key, now)
+            if entry.state == "background" and entry.version in self._counted_versions and now - since >= UNBACKED_SHELL_SECONDS:
+                unbacked.add(session)
+        self._empty_since = empty_since
+        return frozenset(unbacked)
+
+
+def decide_correction(
+    current: Mapping | None, entry: IndexEntry, now: float, shells: int = 0, unbacked: bool = False
+) -> str | None:
     """The state to write for one row, or None to leave it. Pure.
 
     `current` is `StatusStore.versions()[session]` (`state`, `wall_at`, `seq`),
@@ -91,7 +151,7 @@ def decide_correction(current: Mapping | None, entry: IndexEntry, now: float, sh
     """
     if now - entry.status_at < HOLD_SECONDS:
         return None
-    verdict = index_verdict(entry, shells)
+    verdict = index_verdict(entry, shells, unbacked)
     if current is None:
         return verdict
     stored = current.get("state")
@@ -128,11 +188,12 @@ def refine_turn_end(state: str, event: str, evidence: Callable[[], tuple[int, in
     return "background" if shells + agents > 0 else state
 
 
-def settled_state(stored: object, entry: IndexEntry | None, shells: Callable[[], int]) -> object:
+def settled_state(stored: object, entry: IndexEntry | None, shells: Callable[[], int], unbacked: bool = False) -> object:
     """A turn-over row's state as rule 4 (the settle zone) reads it NOW, without waiting out
     HOLD_SECONDS — for a caller that must judge the row before the next tick has written it
     (main.py's landing record). Pure but for `shells`, the entry's work children, called only
-    when the index says idle (`index_verdict` reads it nowhere else).
+    when the index says idle (`index_verdict` reads it nowhere else). `unbacked` is the last
+    tick's rule 6 answer for the row (`StateArbiter.unbacked_shells`).
 
     A Stop stores `background` whenever the transcript holds a launch with no notification, because
     the index still says `busy` at that instant; a resumed conversation's old launch is one
@@ -142,7 +203,7 @@ def settled_state(stored: object, entry: IndexEntry | None, shells: Callable[[],
     """
     if entry is None or stored not in TURN_OVER_STATES:
         return stored
-    verdict = index_verdict(entry, shells() if entry.state == "free" else 0)
+    verdict = index_verdict(entry, shells() if entry.state == "free" else 0, unbacked)
     return verdict if verdict in TURN_OVER_STATES else stored
 
 
@@ -193,6 +254,8 @@ class StateArbiter:
         self._lock = threading.Lock()
         self._last_index: dict[str, IndexEntry] = {}
         self._last_work: dict[str, int] = {}
+        self._backing = ShellBacking()
+        self._last_unbacked: frozenset[str] = frozenset()
         # When the last tick's index read BEGAN (the `clock`, epoch s); None until the first tick.
         self._last_read_at: float | None = None
         # Every entry believed at some point and not yet known to be dead —
@@ -238,6 +301,11 @@ class StateArbiter:
         with self._lock:
             return dict(self._last_work)
 
+    def unbacked_shells(self) -> frozenset[str]:
+        """The sessions whose index `shell` the last tick did not believe (rule 6)."""
+        with self._lock:
+            return self._last_unbacked
+
     def _run(self) -> None:
         while not self._stop.wait(self._interval):
             try:
@@ -245,13 +313,14 @@ class StateArbiter:
             except Exception as err:  # noqa: BLE001 — the timer may never die
                 print(f"tldrack: state arbiter tick failed ({err})")
 
-    def _read_work(self, index: Mapping[str, IndexEntry]) -> dict[str, int]:
-        """ONE process-table read for every believable entry this tick."""
+    def _read_work(self, index: Mapping[str, IndexEntry]) -> dict[str, int] | None:
+        """ONE process-table read for every believable entry this tick; None when
+        the table could not be read, which is not the same as nobody working."""
         if not index:
             return {}
         text = self._process_table()
         if text is None:
-            return {}
+            return None
         by_pid = work_children(parse_ps_table(text), (entry.pid for entry in index.values()))
         return {session: by_pid.get(entry.pid, 0) for session, entry in index.items()}
 
@@ -259,10 +328,13 @@ class StateArbiter:
         """One pass. Returns `(session, new_state)` for every correction written."""
         read_at = self._clock()
         index = self._reader.read()
-        work = self._read_work(index)
+        read = self._read_work(index)
+        unbacked = self._backing.observe(index, read, read_at)
+        work = read or {}
         with self._lock:
             self._last_index = dict(index)
             self._last_work = dict(work)
+            self._last_unbacked = unbacked
             self._last_read_at = read_at
         if self._on_index is not None:
             self._on_index(index)
@@ -271,7 +343,7 @@ class StateArbiter:
         written: list[tuple[str, str]] = []
         for session, entry in sorted(index.items()):
             current = versions.get(session)
-            state = decide_correction(current, entry, now, work.get(session, 0))
+            state = decide_correction(current, entry, now, work.get(session, 0), session in unbacked)
             if state is not None and self._write(session, current, state, message_for(entry, state)):
                 written.append((session, state))
         written.extend(self._release_departed(index, versions))

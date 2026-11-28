@@ -8,7 +8,15 @@ agent_index.py § BACKGROUND WORK).
 from tldrack.activity import KEEP_ACTIVITY
 from tldrack.agent_index import IndexEntry
 from tldrack.main import StatusStore
-from tldrack.state_arbiter import HOLD_SECONDS, StateArbiter, decide_correction, refine_turn_end, settled_state
+from tldrack.state_arbiter import (
+    HOLD_SECONDS,
+    UNBACKED_SHELL_SECONDS,
+    ShellBacking,
+    StateArbiter,
+    decide_correction,
+    refine_turn_end,
+    settled_state,
+)
 
 
 def entry(state, at, session="vc-2", waiting_for=None):
@@ -343,6 +351,145 @@ def test_a_departed_session_that_was_not_background_is_not_touched():
     reader.index, reader.running = {}, set()
     assert arbiter.tick() == []
     assert store.get("vc-2")["state"] == "busy"
+
+
+# ── an unbacked `shell`: the index says a job runs, the process tree says none ──
+# The timeline measured on 2.1.332 (2026-11-27, agent_index.py § BACKGROUND WORK): a parked
+# subagent's job was never closed, and the row read `background` for five hours.
+
+V = "2.1.332"
+
+
+def claude(state, session="vc-2", pid=1, version=V, at=1.0):
+    return IndexEntry(session, state, at, None, None, pid, "x", version=version)
+
+
+def proven(backing, now=0.0):
+    """A backing that has counted a job on version V, so its zero is believed."""
+    backing.observe({"vc-9": claude("busy", "vc-9", pid=9)}, {"vc-9": 1}, now)
+    return backing
+
+
+def test_a_shell_with_no_job_for_the_hold_is_unbacked():
+    backing = proven(ShellBacking())
+    index = {"vc-2": claude("background")}
+    assert backing.observe(index, {"vc-2": 0}, 100.0) == frozenset()
+    assert backing.observe(index, {"vc-2": 0}, 100.0 + UNBACKED_SHELL_SECONDS - 0.1) == frozenset()
+    assert backing.observe(index, {"vc-2": 0}, 100.0 + UNBACKED_SHELL_SECONDS) == {"vc-2"}
+
+
+def test_a_live_job_ends_the_streak():
+    backing = proven(ShellBacking())
+    index = {"vc-2": claude("background")}
+    backing.observe(index, {"vc-2": 0}, 100.0)
+    backing.observe(index, {"vc-2": 1}, 105.0)
+    assert backing.observe(index, {"vc-2": 0}, 100.0 + UNBACKED_SHELL_SECONDS) == frozenset()
+    assert backing.observe(index, {"vc-2": 0}, 200.0) == {"vc-2"}
+
+
+def test_an_unreadable_process_table_is_not_a_zero():
+    backing = proven(ShellBacking())
+    index = {"vc-2": claude("background")}
+    backing.observe(index, {"vc-2": 0}, 100.0)
+    assert backing.observe(index, None, 150.0) == frozenset()
+    assert backing.observe(index, {"vc-2": 0}, 151.0) == frozenset()  # the streak began again
+
+
+def test_zero_is_not_believed_for_a_version_whose_jobs_were_never_counted():
+    # A release that changed the wrapper: every job on it would read as zero.
+    backing = proven(ShellBacking())
+    index = {"vc-2": claude("background", version="3.0.0")}
+    backing.observe(index, {"vc-2": 0}, 100.0)
+    assert backing.observe(index, {"vc-2": 0}, 500.0) == frozenset()
+    # One counted job on that version, in any session, is the proof.
+    backing.observe({**index, "vc-3": claude("busy", "vc-3", pid=3, version="3.0.0")}, {"vc-2": 0, "vc-3": 1}, 501.0)
+    assert backing.observe(index, {"vc-2": 0}, 502.0) == {"vc-2"}
+
+
+def test_the_streak_runs_through_a_turn_so_a_stale_row_does_not_flash():
+    backing = proven(ShellBacking())
+    backing.observe({"vc-2": claude("background")}, {"vc-2": 0}, 100.0)
+    backing.observe({"vc-2": claude("busy")}, {"vc-2": 0}, 150.0)  # a turn that ran no job
+    assert backing.observe({"vc-2": claude("background", at=160.0)}, {"vc-2": 0}, 162.0) == {"vc-2"}
+
+
+def test_only_a_shell_is_ever_unbacked():
+    backing = proven(ShellBacking())
+    for state in ("free", "busy", "attention"):
+        index = {"vc-2": claude(state)}
+        backing.observe(index, {"vc-2": 0}, 100.0)
+        assert backing.observe(index, {"vc-2": 0}, 500.0) == frozenset()
+
+
+def test_another_process_under_the_same_pid_starts_its_own_streak():
+    backing = proven(ShellBacking())
+    backing.observe({"vc-2": claude("background")}, {"vc-2": 0}, 100.0)
+    recycled = {"vc-2": IndexEntry("vc-2", "background", 1.0, None, None, 1, "y", version=V)}
+    assert backing.observe(recycled, {"vc-2": 0}, 500.0) == frozenset()
+
+
+def test_an_unbacked_shell_is_free_in_the_settle_zone_whatever_the_order():
+    stale = claude("background", at=250.0)
+    for wall_at in (200.0, 300.0):  # a Stop older than the index's shell, and a newer one
+        current = {"state": "background", "wall_at": wall_at, "seq": 7}
+        assert decide_correction(current, stale, 400.0, unbacked=True) == "free"
+        assert decide_correction(current, stale, 400.0) is None
+    assert decide_correction({"state": "free", "wall_at": 300.0, "seq": 8}, stale, 400.0, unbacked=True) is None
+
+
+def test_an_unbacked_shell_gives_a_row_the_restart_lost_free_not_background():
+    assert decide_correction(None, claude("background"), 400.0, unbacked=True) == "free"
+
+
+def test_a_landing_reads_an_unbacked_shell_as_free():
+    assert settled_state("background", claude("background"), lambda: 0, unbacked=True) == "free"
+    assert settled_state("background", claude("background"), lambda: 0) == "background"
+
+
+def ticking(store, index, processes, log=None):
+    """An arbiter on a clock the test moves: `clock[0] += …`."""
+    clock = [1000.0]
+    seen = log if log is not None else []
+    arbiter = StateArbiter(
+        store,
+        FakeReader(index),
+        on_correction=lambda s, prev, state, act: seen.append((s, prev.get("state"), state)),
+        on_changed=lambda: None,
+        process_table=processes,
+        clock=lambda: clock[0],
+    )
+    return arbiter, clock
+
+
+def test_tick_releases_a_shell_row_whose_jobs_are_gone():
+    store = StatusStore()
+    processes = FakeProcesses(job(50, 1))
+    log = []
+    arbiter, clock = ticking(store, {"vc-2": claude("background")}, processes, log)
+    assert arbiter.tick() == [("vc-2", "background")]  # the job runs: believed, and the version proven
+    processes.text = ""  # the job ended and Claude never closed its task
+    clock[0] += 2.0
+    assert arbiter.tick() == [] and arbiter.unbacked_shells() == frozenset()
+    clock[0] += UNBACKED_SHELL_SECONDS
+    assert arbiter.tick() == [("vc-2", "free")]
+    assert arbiter.unbacked_shells() == {"vc-2"}
+    assert (store.get("vc-2")["state"], store.get("vc-2")["state_source"]) == ("free", "index")
+    assert log == [("vc-2", None, "background"), ("vc-2", "background", "free")]
+    clock[0] += 2.0
+    assert arbiter.tick() == []  # released once
+
+
+def test_tick_keeps_a_shell_row_while_ps_cannot_be_read():
+    store = StatusStore()
+    processes = FakeProcesses(job(50, 1))
+    arbiter, clock = ticking(store, {"vc-2": claude("background")}, processes)
+    arbiter.tick()
+    processes.text = None
+    for _ in range(4):
+        clock[0] += UNBACKED_SHELL_SECONDS
+        assert arbiter.tick() == []
+    assert store.get("vc-2")["state"] == "background"
+    assert arbiter.last_work() == {}
 
 
 # ── refine_turn_end: the hook path, before any client sees a free frame ────────
