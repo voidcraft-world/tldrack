@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { worker_stage_word, type TaskGroup } from './task-groups.ts';
-const props = defineProps<{ group: TaskGroup; disabled?: boolean }>();
+const props = defineProps<{ group: TaskGroup; disabled?: boolean; expanded?: boolean }>();
 const emit = defineEmits<{ control: [id: string, action: string] }>();
 const armed = ref<string | null>(null);
 function control(action: string) {
@@ -15,17 +15,17 @@ function control(action: string) {
     <div class="task-group" @click.stop @contextmenu.stop>
         <div class="task-group__readout fui-techtext">
             <span :title="group.label">{{ group.label }}</span>
-            <strong :title="`${group.ready}/${group.total} workers reported validation; merged PRs count as delivered. Milestones, not a time estimate.`">{{ group.percent }}%</strong>
-            <span>PR {{ group.opened }}/{{ group.total }}</span>
+            <strong v-if="!expanded" :title="`${group.ready}/${group.total} workers reported validation; merged PRs count as delivered. Milestones, not a time estimate.`">{{ group.percent }}%</strong>
+            <span v-if="!expanded">PR {{ group.opened }}/{{ group.total }}</span>
             <span v-if="group.blockers" class="fui-tag fui-tag--warn">{{ group.blockers }} blocked</span>
             <span v-else-if="!group.sealed" class="fui-tag">launching</span>
             <span v-else-if="group.phase === 'opening'" class="fui-tag">opening PRs</span>
         </div>
-        <div class="fui-meter" role="progressbar" :aria-label="`${group.label} milestones`" :aria-valuenow="group.percent" :aria-valuemin="0" :aria-valuemax="100">
+        <div v-if="!expanded" class="fui-meter" role="progressbar" :aria-label="`${group.label} milestones`" :aria-valuenow="group.percent" :aria-valuemin="0" :aria-valuemax="100">
             <i class="fui-meter__fill" :style="{ width: `${group.percent}%` }" />
         </div>
-        <details>
-            <summary class="fui-techtext">{{ group.auto_pr ? 'Auto PR on' : 'Auto PR paused' }} · workers</summary>
+        <component :is="expanded ? 'div' : 'details'">
+            <summary v-if="!expanded" class="fui-techtext">{{ group.auto_pr ? 'Auto PR on' : 'Auto PR paused' }} · workers</summary>
             <div v-for="worker in group.workers" :key="worker.branch" class="task-group__worker">
                 <span>{{ worker.session }} · {{ worker_stage_word(worker) }}</span>
                 <a v-if="worker.pr_url" :href="worker.pr_url" target="_blank" rel="noopener noreferrer">PR ↗</a>
@@ -37,7 +37,7 @@ function control(action: string) {
                 <button v-if="group.workers.some(w => w.error)" type="button" class="fui-btn" :disabled="disabled"
                     @click="control('retry')">{{ armed === 'retry' ? 'Retry PRs?' : 'Retry PRs' }}</button>
             </div>
-        </details>
+        </component>
     </div>
 </template>
 
